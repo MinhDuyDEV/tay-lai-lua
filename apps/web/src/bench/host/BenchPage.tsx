@@ -255,6 +255,8 @@ export default function BenchPage() {
             catchup: CATCHUP,
             clockStepUs: clockStep,
             simProbe: probe,
+            // Live wasm instances holding the K sessions: 1 (sim.ts), not K; see its header.
+            wasmInstances: h.instances,
             gates,
             hashOk: gates.length > 0 && gates.every((g) => g.ok),
           },

@@ -41,6 +41,8 @@ const CELL_MS = quick ? 5000 : 15000;
 const SHORT_MS = quick ? 5000 : 8000;
 /** A cell runs past its length if needed, to complete one trace pass (the pass is its hash check). */
 const GRACE_S = 8;
+/** Sweep Ks (reported only, not deciding). 10 000 fits one wasm instance; see run.json if one fails. */
+const SWEEP_KS = [100, 1000, 10000];
 /** Calibration spin loop per call; the measured ratios are what matter, not the absolute size. */
 const SPIN_ITERS = Number(args.get('spin-iters') ?? 1_000_000);
 
@@ -92,7 +94,8 @@ const matrix = () => {
   for (const host of ['main', 'worker']) {
     for (const throttle of [1, 4, 6]) once.push(cell('k1', host, 1, throttle, CELL_MS));
     for (const throttle of [1, 4]) once.push(cell('decision', host, 20, throttle, CELL_MS));
-    for (const throttle of [1, 4]) for (const k of [10, 100, 400]) once.push(cell('sweep', host, k, throttle, SHORT_MS));
+    // The sweep exists to find where a host starts to pay: 100, 1 000 and 10 000 sessions per tick.
+    for (const throttle of [1, 4]) for (const k of SWEEP_KS) once.push(cell('sweep', host, k, throttle, SHORT_MS));
     once.push(cell('uncapped', host, 20, 1, SHORT_MS, { uncapped: true }));
   }
   once.push(cell('unpadded', 'worker', 20, 4, CELL_MS, { slow: 1 }));
@@ -326,6 +329,8 @@ try {
     results.push(result);
     write(`cell-${String(i).padStart(2, '0')}-${c.id}.json`, result);
     const h = result.header;
+    // K=1000 and K=10000 only fit because the K sessions share one wasm instance (sim.ts).
+    if (h.wasmInstances !== 1) problems.push(`${c.id}: ${h.wasmInstances} wasm instances, expected 1 (K sessions share one)`);
     const done = h.gates.filter((g) => g.measured);
     const verdict = h.hashOk ? `${done.length} measured pass(es), final ${h.gates.at(-1).hash} golden` : 'HASH MISMATCH';
     console.log(

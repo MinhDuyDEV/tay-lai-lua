@@ -133,7 +133,11 @@ export function report(dir) {
       a[0].config.host.localeCompare(b[0].config.host),
   );
 
-  const header = ['config', 'n', 'p50', 'p95', 'p99', 'cpu p95', 't/fr', 'step us', 'sim/fr', 'LT', 'busy', 'L', 'L_sub', 'valid'];
+  const header = [
+    'config', 'n', 'p50', 'p95', 'p99',
+    'cpu p50', 'cpu p95', 'cpu p99',
+    't/fr', 'step us', 'sim/fr', 'LT', 'busy', 'L', 'L_sub', 'valid',
+  ];
   const table = [header];
   for (const list of rows) {
     const { use, ok } = pick(list);
@@ -142,10 +146,12 @@ export function report(dir) {
       const per = fr.filter((x) => x.delta.length).map((x) => pct(sorted(x.delta), q));
       return per.length ? median(per) : null;
     };
-    const cpuP95 = (() => {
-      const per = fr.filter((x) => x.cpu.length).map((x) => pct(sorted(x.cpu), 95));
+    // Callback CPU (en - st): sim plus the scene's own submit, the half of a frame the display cannot hide.
+    const cpuP = (q) => {
+      const per = fr.filter((x) => x.cpu.length).map((x) => pct(sorted(x.cpu), q));
       return per.length ? median(per) : null;
-    })();
+    };
+    const cpuP95 = cpuP(95);
     const step = median(use.map((c) => c.header.simProbe?.kUsPerStep).filter((v) => typeof v === 'number'));
     const tpf = median(fr.map((x) => x.ticksPerFrame));
     const lt = median(use.map((c) => c.longtasks.filter((t) => t.start >= c.header.startTs + (c.header.warmupMs ?? WARMUP_MS)).length));
@@ -160,7 +166,9 @@ export function report(dir) {
       f(p(50)),
       f(p(95)),
       f(p(99)),
+      f(cpuP(50)),
       f(cpuP95),
+      f(cpuP(99)),
       f(tpf),
       f(step, 1),
       f((step * tpf) / 1000),
@@ -175,27 +183,84 @@ export function report(dir) {
   push(`\nms unless marked; step us = one tick of all K sessions, from a tight loop (clock step ${f(cells[0]?.header?.clockStepUs, 0)} us); sim/fr = step x ticks per frame, derived\n`);
   for (const r of table) push(r.map((v, i) => v.padEnd(widths[i])).join('  '));
 
-  // Break-even K from the sweep cells at the same throttle (main thread: it is main that has to stay
-  // under the line; the Worker is reported beside it).
-  for (const host of ['main', 'worker']) {
-    for (const throttle of [1, 4]) {
-      const points = rows
-        .filter((list) => list[0].config.tag === 'sweep' && list[0].config.host === host && list[0].config.throttle === throttle)
-        .map((list) => {
-          const { use } = pick(list);
-          const per = use.map(frames).filter((x) => x.delta.length);
-          return { k: use[0].config.k, p95: per.length ? median(per.map((x) => pct(sorted(x.delta), 95))) : null };
-        })
-        .filter((x) => x.p95 !== null)
-        .sort((a, b) => a.k - b.k);
-      if (points.length < 2) continue;
-      const over = points.find((x) => x.p95 > FRAME);
-      push(
-        `\nbreak-even ${host} ${throttle}x: ` +
-          (over ? `p95 passes 16.7 ms at K=${over.k}` : `p95 stays under 16.7 ms up to the largest K measured`) +
-          ` (${points.map((x) => `K${x.k} ${f(x.p95)} ms`).join(', ')})`,
-      );
+  // Break-even K per host and throttle, from every K measured on that host at that throttle
+  // (K=1, 20, 100, 1000, 10000 cells all count). Two lines: frame-time p95 and callback-CPU p95
+  // past 16.7 ms, the second interpolated and marked "extrapolated" when no cell crosses it.
+  /** Smallest K where `value(k)` passes 16.7; `line` is null when it never does. */
+  const crossing = (points, pick) => {
+    const xs = points.map((x) => x.k).sort((a, b) => a - b);
+    for (let i = 0; i < xs.length; i += 1) {
+      const y = pick(xs[i]);
+      if (y === null) continue;
+      if (y > FRAME) {
+        const prev = i > 0 ? xs[i - 1] : null;
+        const prevY = prev === null ? null : pick(prev);
+        // Linear interpolation inside the crossing bracket: K where the line meets 16.7 ms.
+        if (prev === null || prevY === null || y === prevY) return { line: xs[i], extrapolated: false };
+        const k = prev + ((FRAME - prevY) / (y - prevY)) * (xs[i] - prev);
+        return { line: k, extrapolated: false };
+      }
     }
+    // Nothing crossed: extrapolate the last segment (the two largest K) forward.
+    const known = xs.map((k) => ({ k, y: pick(k) })).filter((x) => x.y !== null);
+    if (known.length < 2) return { line: null, extrapolated: false };
+    const [a2, b2] = known.slice(-2);
+    if (b2.y <= a2.y) return { line: null, extrapolated: false };
+    // Extrapolated only when the crossing lies beyond the largest K measured; inside the measured
+    // range with a bracketed segment it is bracketed, and these lines are noisy by nature.
+    const line = a2.k + ((FRAME - a2.y) / (b2.y - a2.y)) * (b2.k - a2.k);
+    return { line, extrapolated: line > b2.k };
+  };
+
+  const byHostThrottle = (host, throttle) =>
+    rows.filter((list) => list[0].config.host === host && list[0].config.throttle === throttle);
+
+  for (const host of ['main', 'worker']) {
+    for (const throttle of [1, 4, 6]) {
+      const lists = byHostThrottle(host, throttle);
+      if (!lists.length) continue;
+      const points = lists.map((list) => {
+        const { use } = pick(list);
+        const fr = use.map(frames).filter((x) => x.delta.length);
+        return {
+          k: use[0].config.k,
+          frame: fr.length ? median(fr.map((x) => pct(sorted(x.delta), 95))) : null,
+          cpu: fr.length ? median(fr.map((x) => pct(sorted(x.cpu), 95))) : null,
+        };
+      });
+      const frame = crossing(points, (k) => points.find((x) => x.k === k)?.frame ?? null);
+      const cpu = crossing(points, (k) => points.find((x) => x.k === k)?.cpu ?? null);
+      const say = (name, c) =>
+        c.line === null ? `${name} never passes 16.7 ms in the K measured` : `${name} passes 16.7 ms at K=${c.line.toFixed(0)}${c.extrapolated ? ' (extrapolated)' : ''}`;
+      push(`break-even ${host} ${throttle}x: ${say('frame-time p95', frame)}; ${say('callback-CPU p95', cpu)}`);
+      if (host === 'worker' && throttle > 1) {
+        push(`  (the Worker's CPU is modelled by dilating its sim only; the callback-CPU line above is the main thread's)`);
+      }
+      push(`  K measured: ${points.map((x) => `K${x.k} frame ${f(x.frame)} / cpu ${f(x.cpu)}`).join(', ')}`);
+    }
+  }
+  // The Worker's own sim workload, dilated: when the sim alone would take a whole 16.7 ms frame.
+  const simPoints = rows
+    .filter((list) => list[0].config.host === 'worker' && list[0].config.slow > 1)
+    .map((list) => {
+      const { use } = pick(list);
+      const fr = use.map(frames).filter((x) => x.delta.length);
+      const step = use[0].header.simProbe?.kUsPerStep ?? null;
+      const tpf = fr.length ? median(fr.map((x) => x.ticksPerFrame)) : null;
+      // Sim time per frame as the Worker has to spend it: step x ticks per frame x dilation.
+      return { k: use[0].config.k, throttle: use[0].config.throttle, sim: step !== null && tpf !== null ? (step * tpf * use[0].config.slow) / 1000 : null };
+    })
+    .filter((x) => x.sim !== null)
+    .sort((a, b) => a.k - b.k);
+  if (simPoints.length >= 2) {
+    const c = crossing(simPoints, (k) => simPoints.find((x) => x.k === k)?.sim ?? null);
+    push(
+      `break-even worker (padded) sim batch alone: ` +
+        (c.line === null
+          ? `never reaches 16.7 ms per frame at K up to ${simPoints.at(-1).k}`
+          : `K=${c.line.toFixed(0)}${c.extrapolated ? ' (extrapolated)' : ''}`) +
+        ` (${simPoints.map((x) => `K${x.k} ${f(x.sim)} ms/${x.throttle}x`).join(', ')})`,
+    );
   }
 
   const decisionP95 = (host) => {

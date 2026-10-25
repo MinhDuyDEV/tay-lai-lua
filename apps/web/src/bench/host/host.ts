@@ -15,6 +15,8 @@ export interface Host {
   readonly ready: Promise<void>;
   /** Trace passes completed inside the run so far. */
   readonly passes: number;
+  /** Live wasm instances holding the sim sessions (the bench keeps K sessions on one, see sim.ts). */
+  readonly instances: number;
   /** A key was seen: the next tick that runs consumes it. Never reaches the sim input. */
   mark(id: number): void;
   /** Called once per rAF with the rAF timestamp. */
@@ -50,6 +52,9 @@ export function createMainHost(assets: Assets, k: number): Host {
     run,
     get passes() {
       return stepper.passes;
+    },
+    get instances() {
+      return stepper.instances;
     },
     ready: Promise.resolve(),
     mark: (id) => markers.push(id),
@@ -113,6 +118,7 @@ export function createWorkerHost(assets: Assets, k: number, slow: number): Host 
     get passes() {
       return passes;
     },
+    instances: 1,
     ready,
     mark: (id) => markers.push(id),
     frame(ts) {

@@ -26,6 +26,8 @@ export interface Stepper {
   readonly reopens: number;
   /** Trace passes completed inside the run so far: the cells that carry a hash check. */
   readonly passes: number;
+  /** Live wasm instances holding the K sessions: always 1 here (sim.ts), never K. */
+  readonly instances: number;
   /** Run the ticks due at rAF time `ts` (ms); `markers` are key ids seen since the last call. */
   advance(ts: number, markers: readonly number[]): Advance;
   /** Step the first session alone to the end of the current trace, gate it, and return every gate. */
@@ -108,6 +110,9 @@ export function createStepper(assets: Assets, k: number): Stepper {
     },
     get passes() {
       return gates.length;
+    },
+    get instances() {
+      return 1;
     },
     advance(ts, markers) {
       const real = lastMs === null ? 0 : (ts - lastMs) / 1000;
