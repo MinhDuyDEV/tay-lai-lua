@@ -56,12 +56,14 @@ tasks:
       - cd {{.WEB}} && pnpm install --frozen-lockfile
 
   web:assets:
-    desc: copy sim.wasm and the engine sound processor into the static assets the site serves
+    desc: copy sim.wasm, the engine sound processor and the bench's golden traces into the static assets the site serves
     deps: [build]
     cmds:
       - mkdir -p {{.WEB}}/public/audio
       - cp {{.WASM}} {{.WEB_WASM}}
       - cp {{.ROOT_DIR}}/packages/audio/engine-processor.js {{.WEB}}/public/audio/engine-processor.js
+      # /bench replays these two traces; the .hash next to each is the golden hash it must end on.
+      - cp {{.GOLDEN}}/xuat_phat_messy.trace {{.GOLDEN}}/xuat_phat_messy.hash {{.GOLDEN}}/dung_khoi_hanh_doc_messy.trace {{.GOLDEN}}/dung_khoi_hanh_doc_messy.hash {{.WEB}}/public/
 
   web:build:
     desc: static-export the web app
@@ -81,6 +83,22 @@ tasks:
     cmds:
       - cd tools/browser && npm ci --no-audit --no-fund
       - cd tools/browser && node e2e.mjs --site {{.WEB}}/out --wasm {{.WASM}}
+
+  # The sim-core placement bench (main thread vs Worker). Takes the Owner's screen for ~12 minutes:
+  # headed Chromium on the real GPU. BENCH_QUICK=1 is the smoke run (one ~5 s cell per config).
+  # Raw JSON goes to ~/.litter/bench/<run-id>/; `task bench:report -- <run-dir>` prints the table.
+  bench:
+    desc: run the placement bench (calibration, then the cell matrix); exits non-zero on a hash mismatch or a hidden tab
+    deps: [web:build]
+    cmds:
+      - cd tools/browser && npm ci --no-audit --no-fund
+      # BENCH_QUICK=1 is a make-style variable here, so hand it to the script as one.
+      - cd tools/browser && BENCH_QUICK={{.BENCH_QUICK | default "0"}} node bench.mjs --site {{.WEB}}/out
+
+  bench:report:
+    desc: print the table for a bench run directory (default is the newest)
+    cmds:
+      - cd tools/browser && node bench-report.mjs {{.CLI_ARGS}}
 
   web:preview:
     desc: build and serve the site at http://localhost:4173/thi

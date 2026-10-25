@@ -49,7 +49,7 @@ function find(root, urlPath) {
   return null;
 }
 
-/** Start serving `dir`; resolves with the server once it listens (port 0 picks a free one). */
+/** Start serving `dir` on 127.0.0.1 only; resolves with the server once it listens (port 0 picks a free one). */
 export function serve(dir, port) {
   const root = resolve(dir);
   if (!existsSync(root)) throw new Error(`${root} does not exist — run \`task web:build\` first`);
@@ -66,7 +66,7 @@ export function serve(dir, port) {
   });
   return new Promise((done, fail) => {
     server.once('error', fail);
-    server.listen(port, () => done(server));
+    server.listen(port, '127.0.0.1', () => done(server));
   });
 }
 
