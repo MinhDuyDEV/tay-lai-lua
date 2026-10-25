@@ -1,4 +1,4 @@
-//! Golden traces: two recorded input scripts the runners replay, and the tests that keep the hash
+//! Golden traces: recorded input scripts the runners replay (two for bài 1, two for bài 3), and the tests that keep the hash
 //! honest.
 //!
 //! File format (what the runners are written against):
@@ -15,6 +15,7 @@ const LEFT: u8 = TickInput::FLAG_SIGNAL_LEFT;
 const RIGHT: u8 = TickInput::FLAG_SIGNAL_RIGHT;
 const IGN: u8 = TickInput::FLAG_IGNITION;
 const ORDER: u8 = TickInput::FLAG_START_ORDER;
+const HANDBRAKE: u8 = TickInput::FLAG_HANDBRAKE;
 
 /// Ticks of cold cranking every trace spends before its start order. `crank_ticks` is 18, so 20
 /// leaves the starter a margin; the prelude is unscored, so it costs the run nothing.
@@ -28,16 +29,29 @@ pub struct Golden {
 
 /// Record a trace: drive a real session with a state-aware driver and freeze the inputs it sent.
 /// The trace is a fixed script afterwards — replay never looks at the state to decide the input.
-fn record(seed: u64, ticks: u32, mut driver: impl FnMut(&crate::View, u32) -> TickInput) -> Vec<TickInput> {
+fn record(seed: u64, ticks: u32, driver: impl FnMut(&crate::View, u32) -> TickInput) -> Vec<TickInput> {
+    record_while(seed, |_, t| t < ticks, driver)
+}
+
+/// Record a bài 3 trace up to and including the step that ends the run. The runners' negative
+/// control flips a bit in the last record, so a trace that goes on after the end would ignore it.
+fn record_to_the_end(seed: u64, driver: impl FnMut(&crate::View, u32) -> TickInput) -> Vec<TickInput> {
+    record_while(seed, |v, t| v.phase != crate::Phase::Done && t < 5000, driver)
+}
+
+fn record_while(
+    seed: u64,
+    mut going: impl FnMut(&crate::View, u32) -> bool,
+    mut driver: impl FnMut(&crate::View, u32) -> TickInput,
+) -> Vec<TickInput> {
     let mut s = Session::new(seed).expect("a known exercise");
-    let mut inputs = Vec::with_capacity(ticks as usize);
-    for t in 0..ticks {
-        let input = {
-            let v = s.view();
-            driver(&v, t)
-        };
+    let mut inputs = Vec::new();
+    let mut t = 0;
+    while going(&s.view(), t) {
+        let input = driver(&s.view(), t);
         s.step(input);
         inputs.push(input);
+        t += 1;
     }
     inputs
 }
@@ -174,8 +188,102 @@ pub fn messy_run() -> Golden {
     Golden { name: "xuat_phat_messy", seed, inputs }
 }
 
-pub fn all() -> [Golden; 2] {
-    [clean_pass(), messy_run()]
+/// Bài 3 seeds carry the exercise id in the top byte (see `sim_create`).
+const HILL: u64 = 3 << 56;
+
+/// Predicted stopping point of a car braking at about 6.9 m/s² on the slope: where the front
+/// bumper will be when it stops, if the brake goes on now.
+fn stopping_point(v: &crate::View) -> f64 {
+    v.front_bumper_m + v.speed_mps * v.speed_mps / (2.0 * 6.9)
+}
+
+/// A clean bài 3: climb to the line, brake to a stop 0.3 m short of it, handbrake on, then the hill
+/// start — clutch up to the bite with throttle, handbrake off — and over the line. No rule fires.
+/// A little steering keeps the heading and the sin/cos paths moving.
+pub fn hill_clean() -> Golden {
+    let seed = HILL | 1;
+    let mut stopped_at: Option<u32> = None;
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if v.phase == crate::Phase::Stopped && stopped_at.is_none() {
+            stopped_at = Some(t);
+        }
+        match stopped_at {
+            None if t < 20 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            None => {
+                braking |= v.front_bumper_m > 0.0 && stopping_point(v) >= 6.0 - 0.3;
+                if braking {
+                    TickInput { gear: 1, clutch: 255, brake: 255, steering: 300, ..Default::default() }
+                } else {
+                    TickInput { gear: 1, clutch: 168, throttle: 70, steering: 300, ..Default::default() }
+                }
+            }
+            // Held on the handbrake for two seconds.
+            Some(at) if t - at < 120 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            Some(at) => {
+                let clutch = 255u32.saturating_sub((t - at - 120) * 2).max(180) as u8;
+                let flags = if clutch > 180 { HANDBRAKE } else { 0 };
+                TickInput { gear: 1, clutch, throttle: 70, steering: -150, flags, ..Default::default() }
+            }
+        }
+    });
+    Golden { name: "dung_khoi_hanh_doc_clean", seed, inputs }
+}
+
+/// A messy bài 3: over-revved in neutral, a dead stall and a restart on the approach, a stop 1.2 m
+/// short of the line (CHUA_DEN_VACH), then a hill start with the handbrake let go too early, so
+/// the car rolls back a little (under 500 mm), grips, and goes over the line. Several deductions,
+/// the run still ends by crossing the line, and the trace ends on the step that crosses it.
+pub fn hill_messy() -> Golden {
+    let seed = HILL | 0x0123_4567_89ab;
+    let mut stage = 0u8;
+    let mut stopped_at: Option<u32> = None;
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if v.phase == crate::Phase::Stopped && stopped_at.is_none() {
+            stopped_at = Some(t);
+        }
+        match stage {
+            0 if t >= 20 => stage = 1,
+            1 if v.rpm > 4300.0 => stage = 2,
+            2 if v.rpm < 900.0 => stage = 3,
+            3 if !v.engine_on => stage = 4,
+            4 if v.engine_on => stage = 5,
+            _ => {}
+        }
+        match stage {
+            // Idle, then rev it in neutral past 4000.
+            0 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            1 => TickInput { clutch: 255, throttle: 255, flags: HANDBRAKE, ..Default::default() },
+            // Back to idle, then first gear with the clutch dropped and no throttle: dead stall.
+            2 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            3 => TickInput { gear: 1, clutch: 0, ..Default::default() },
+            // Restart: clutch in, neutral, key held.
+            4 => TickInput { clutch: 255, flags: TickInput::FLAG_IGNITION, ..Default::default() },
+            _ => match stopped_at {
+                None => {
+                    braking |= v.front_bumper_m > 0.0 && stopping_point(v) >= 6.0 - 1.2;
+                    if braking {
+                        TickInput { gear: 1, clutch: 255, brake: 255, steering: -200, ..Default::default() }
+                    } else {
+                        TickInput { gear: 1, clutch: 150, throttle: 120, steering: 200, ..Default::default() }
+                    }
+                }
+                Some(at) if t - at < 60 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+                // The handbrake goes before the clutch bites, so the car rolls back a little.
+                Some(at) => {
+                    let clutch = 255u32.saturating_sub((t - at - 60) / 2).max(185) as u8;
+                    let flags = if clutch > 245 { HANDBRAKE } else { 0 };
+                    TickInput { gear: 1, clutch, throttle: 60, flags, ..Default::default() }
+                }
+            },
+        }
+    });
+    Golden { name: "dung_khoi_hanh_doc_messy", seed, inputs }
+}
+
+pub fn all() -> [Golden; 4] {
+    [clean_pass(), messy_run(), hill_clean(), hill_messy()]
 }
 
 pub fn run(g: &Golden) -> Session {
@@ -215,9 +323,11 @@ pub fn hash_line(s: &Session) -> String {
 mod tests {
     use super::*;
 
-    const COMMITTED: [(&str, &str); 2] = [
+    const COMMITTED: [(&str, &str); 4] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
+        ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
+        ("dung_khoi_hanh_doc_messy", include_str!("../../../golden/dung_khoi_hanh_doc_messy.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the
@@ -320,6 +430,37 @@ mod tests {
         let v = v.view();
         assert_eq!(v.fired_ids(), Vec::<&str>::new(), "clean run must be clean");
         assert_eq!(v.score, 100);
+    }
+
+    /// The bài 3 goldens must be what they claim: the clean one scores nothing and ends over the
+    /// line; the messy one takes several deductions, rolls back a little without being charged,
+    /// and still ends by crossing the line.
+    #[test]
+    fn hill_goldens_are_what_they_claim() {
+        let clean = run(&hill_clean());
+        let v = clean.view();
+        assert_eq!((v.fired_ids(), v.score, v.phase), (Vec::<&str>::new(), 100, crate::Phase::Done));
+
+        let mut messy = Session::new(hill_messy().seed).unwrap();
+        let mut peak_rollback: f64 = 0.0;
+        for &input in &hill_messy().inputs {
+            messy.step(input);
+            peak_rollback = peak_rollback.max(messy.snapshot()[23]);
+        }
+        let v = messy.view();
+        assert_eq!(v.fired_ids(), vec!["SH.X.RPM", "SH.X.CHET_MAY", "SH.03.CHUA_DEN_VACH"]);
+        assert_eq!((v.score, v.disqualified, v.phase), (85, false, crate::Phase::Done));
+        assert!(peak_rollback > 0.1 && peak_rollback < 0.5, "a rollback inside 500 mm, got {peak_rollback}");
+
+        // The last record is the step that ends the run: the runners' negative control flips a bit
+        // in it, and a step after the end would ignore the flip.
+        for g in [hill_clean(), hill_messy()] {
+            let mut s = Session::new(g.seed).unwrap();
+            for &input in &g.inputs[..g.inputs.len() - 1] {
+                s.step(input);
+            }
+            assert_ne!(s.view().phase, crate::Phase::Done, "{} runs on after the end", g.name);
+        }
     }
 
     /// The snapshot the web reads (`sim_state`) must say what the core actually consumed: feed a
