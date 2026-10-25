@@ -118,8 +118,9 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
   const enter = useCallback(() => {
     audio.start();
     setEntered(true);
-    // The key that dismissed the overlay must not also count as an order or a toggle.
-    runRef.current?.keyboard.clear();
+    // The key that dismissed the overlay must not also count as an order or a toggle. The keyboard
+    // module hears this same event after us, so clear once the event has been fully dispatched.
+    setTimeout(() => runRef.current?.keyboard.clear(), 0);
   }, [audio]);
 
   // The run owns restart (Esc/Backspace and this button alike); `onRestart` clears the feed.
@@ -148,6 +149,8 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
       data-belt="no"
       data-signal="off"
       data-gear="0"
+      data-clutch="0.00"
+      data-handbrake="yes"
       data-speed="0"
       data-bumper="-1.000"
       data-rpm="850"
@@ -232,6 +235,8 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, ente
   d.belt = s.belt ? 'yes' : 'no';
   d.signal = s.signal;
   d.gear = String(s.gear);
+  d.clutch = s.clutch.toFixed(2);
+  d.handbrake = s.handbrake ? 'yes' : 'no';
   d.speed = s.speedMps.toFixed(3);
   d.bumper = s.frontBumperM.toFixed(3);
   d.rpm = Math.round(s.rpm).toString();

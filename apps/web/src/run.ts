@@ -115,6 +115,8 @@ export function createRun(options: RunOptions): Run {
   let frame = 0;
   let disposed = false;
   let frameHook: (() => void) | undefined;
+  /** Key presses seen but not yet given to a tick. */
+  let waiting: string[] = [];
 
   const drain = (events: SimEvent[]) => {
     for (const event of events) {
@@ -134,6 +136,7 @@ export function createRun(options: RunOptions): Run {
     accumulator = 0;
     lastMs = 0;
     alpha = 1;
+    waiting = [];
     keyboard.clear();
     options.onRestart?.();
   };
@@ -156,6 +159,8 @@ export function createRun(options: RunOptions): Run {
       state = cockpitState(input, ruleset, options.idleRpm);
       return;
     }
+    // Finished: the core is frozen and so is the record, so the trace and hash on screen match.
+    if (state.phase === 'done') return;
     const result = session.step(input);
     previous = state;
     state = result.state;
@@ -167,15 +172,17 @@ export function createRun(options: RunOptions): Run {
     lastMs = nowMs;
     accumulator += Math.max(0, real);
 
-    const pressed = keyboard.drainPressed();
-    if (pressed.some((code) => RESTART_CODES.includes(code))) {
+    // A frame can run zero ticks; a press must wait for the tick that will consume it.
+    waiting.push(...keyboard.drainPressed());
+    if (waiting.some((code) => RESTART_CODES.includes(code))) {
       reset();
       return;
     }
 
     let steps = 0;
     while (accumulator >= DT && steps < CATCHUP) {
-      tick(steps === 0 ? pressed : []);
+      tick(waiting);
+      waiting = [];
       accumulator -= DT;
       steps += 1;
     }
