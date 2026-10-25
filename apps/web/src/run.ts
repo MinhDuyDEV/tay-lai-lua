@@ -13,7 +13,8 @@ import { createDriver, DT, type Driver } from '../input/driver.ts';
 import { attachKeyboard, type Keyboard } from '../input/keyboard.ts';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { toPenalty } from './ruleset.ts';
-import { markDone, type StepId } from './steps.ts';
+import type { Exercise } from './exercise.ts';
+import type { StepId } from './steps.ts';
 import type { Session, SimState } from './sim/session.ts';
 
 /** One frame may run at most this many ticks; beyond that the run drops time rather than spiral. */
@@ -31,7 +32,7 @@ export interface Run {
   readonly previous: SimState;
   /** 0..1, how far the last rendered frame sits between `previous` and `state`. */
   readonly alpha: number;
-  /** True once the start order has been given. */
+  /** True once the core has left `waiting` (the start order in bài 1; bài 3 never waits). */
   readonly ordered: boolean;
   /** The checklist steps done so far in this run; cleared on restart. */
   readonly stepsDone: ReadonlySet<StepId>;
@@ -47,6 +48,7 @@ export interface Run {
 }
 
 export interface RunOptions {
+  exercise: Exercise;
   ruleset: Ruleset;
   openSession(): Session;
   target: Window;
@@ -57,12 +59,12 @@ export interface RunOptions {
 }
 
 export function createRun(options: RunOptions): Run {
-  const { ruleset, target, onPenalty } = options;
+  const { exercise, ruleset, target, onPenalty } = options;
   const keyboard = attachKeyboard(target, new Set([...options.handledCodes, ...RESTART_CODES]));
   const penalties: Penalty[] = [];
 
   const stepsDone = new Set<StepId>();
-  const mark = () => markDone(stepsDone, state, state.phase !== 'waiting', ruleset.course.signal_off_early_m);
+  const mark = () => exercise.mark(stepsDone, state, ruleset);
 
   let driver = createDriver();
   let session = options.openSession();

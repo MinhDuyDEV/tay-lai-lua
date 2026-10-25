@@ -7,18 +7,38 @@
 // x and y maps to -z, so a heading of 0 points down +x and `rotation.y = heading` turns it the same
 // way the core turns the car. Ground is y = 0.
 //
+// Bài 3 adds a slope: height is three's y. The core measures x along the road, so on the slope a
+// metre of x is `cos` of a metre on the ground: `roadToWorld` does that one conversion for the
+// course, the car and the camera. The car's height and pitch come from the core's snapshot (road
+// height under the car, grade), the slope and the stop line from the ruleset's `hill` block, so the
+// picture is drawn from the numbers the scorer uses.
+//
 // Nothing here is React state: the run's loop owns the numbers and `useFrame` copies them onto refs.
 
 import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import type { Ruleset } from '../ruleset.ts';
+import type { Exercise } from '../exercise.ts';
+import { hillOf, type Ruleset } from '../ruleset.ts';
 import type { Run } from '../run.ts';
 
 const Y = 0.02; // planes sit just above the ground to avoid z-fighting
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
+}
+
+/**
+ * The sim's x (metres along the road) to three's x (metres on the ground). Identity in bài 1; in
+ * bài 3 the slope's 15 m of road span `cos` times that on the ground and what follows shifts back.
+ */
+type RoadToWorld = (x: number) => number;
+
+function roadToWorldFor(exercise: Exercise, ruleset: Ruleset): RoadToWorld {
+  if (exercise.lesson !== 3) return (x) => x;
+  const { foot_x_m: foot, slope_length_m: length, grade } = hillOf(ruleset);
+  const cos = 1 / Math.sqrt(1 + grade * grade);
+  return (x) => (x <= foot ? x : x <= foot + length ? foot + (x - foot) * cos : x - length * (1 - cos));
 }
 
 /** Planes on the ground: one material, drawn as a single geometry per line. */
@@ -29,6 +49,7 @@ function Strip({
   length,
   colour,
   opacity = 1,
+  y = Y,
 }: {
   x: number;
   z: number;
@@ -36,9 +57,10 @@ function Strip({
   length: number;
   colour: string;
   opacity?: number;
+  y?: number;
 }) {
   return (
-    <mesh position={[x, Y, z]} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh position={[x, y, z]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[length, width]} />
       <meshBasicMaterial color={colour} transparent={opacity < 1} opacity={opacity} />
     </mesh>
@@ -95,6 +117,145 @@ function Course({ ruleset }: { ruleset: Ruleset }) {
   );
 }
 
+/** A pole with a plate on it, the plate facing the car as it comes up the road (normal toward -x). */
+function Sign({ x, y, z, children }: { x: number; y: number; z: number; children: React.ReactNode }) {
+  return (
+    <group position={[x, y, z]}>
+      <mesh position={[0, 1.05, 0]}>
+        <cylinderGeometry args={[0.04, 0.04, 2.1, 6]} />
+        <meshStandardMaterial color="#9aa0a6" />
+      </mesh>
+      <group position={[0, 2.3, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        {children}
+      </group>
+    </group>
+  );
+}
+
+/** "Dừng lại": a red octagon with a white bar, no lettering. */
+function StopFace() {
+  return (
+    <>
+      <mesh rotation={[0, 0, Math.PI / 8]}>
+        <circleGeometry args={[0.45, 8]} />
+        <meshBasicMaterial color="#c8102e" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, 0, 0.01]}>
+        <planeGeometry args={[0.62, 0.12]} />
+        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} />
+      </mesh>
+    </>
+  );
+}
+
+/** "Dốc lên nguy hiểm": a red-edged triangle with a black wedge rising to the right. */
+function UphillFace() {
+  const wedge = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.22, -0.2);
+    shape.lineTo(0.22, -0.2);
+    shape.lineTo(0.22, 0.06);
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }, []);
+  return (
+    <>
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <circleGeometry args={[0.6, 3]} />
+        <meshBasicMaterial color="#c8102e" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, 0, 0.01]} rotation={[0, 0, Math.PI / 2]}>
+        <circleGeometry args={[0.4, 3]} />
+        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, -0.02, 0.02]} geometry={wedge}>
+        <meshBasicMaterial color="#111111" side={THREE.DoubleSide} />
+      </mesh>
+    </>
+  );
+}
+
+/**
+ * Bài 3: the flat before the foot, the slope, the level top, the stop line across the lane with
+ * the 500 mm window before it, and the two signs of the figure. The downhill drawn after the top in
+ * the law's figure is not scored and not drawn here.
+ */
+function HillCourse({ ruleset }: { ruleset: Ruleset }) {
+  const hill = hillOf(ruleset);
+  const laneW = ruleset.course.lane_width_m;
+  const half = laneW / 2;
+  const theta = Math.atan(hill.grade);
+  // Lengths in the hill block are along the road: on the slope they are the tilted frame's x.
+  const slopeLen = hill.slope_length_m;
+  const run = slopeLen * Math.cos(theta); // the slope's footprint on the ground
+  const topH = slopeLen * Math.sin(theta);
+  const stopLocal = hill.stop_line_from_foot_m;
+  const foot = hill.foot_x_m;
+  const topStart = foot + run;
+  const from = foot + hill.start_front_bumper_from_foot_m - 8;
+  const to = topStart + hill.flat_top_m + 4;
+  const wedge = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(run, topH);
+    shape.lineTo(run, 0);
+    shape.closePath();
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: laneW + 6, bevelEnabled: false });
+    geometry.translate(0, 0, -(laneW + 6) / 2);
+    return geometry;
+  }, [run, topH, laneW]);
+  const stopHeight = stopLocal * Math.sin(theta);
+
+  return (
+    <group>
+      {/* The flat road under everything. */}
+      <mesh position={[(from + to) / 2, 0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[to - from, laneW + 6]} />
+        <meshStandardMaterial color="#3b3f45" roughness={1} />
+      </mesh>
+      <Strip x={(from + foot) / 2} z={-half} width={0.1} length={foot - from} colour="#e8e8e8" />
+      <Strip x={(from + foot) / 2} z={half} width={0.1} length={foot - from} colour="#e8e8e8" />
+
+      {/* The slope: a wedge, with its markings in a frame tilted to lie on its surface. */}
+      <mesh geometry={wedge} position={[foot, 0, 0]}>
+        <meshStandardMaterial color="#4a5058" roughness={1} />
+      </mesh>
+      <group position={[foot, 0, 0]} rotation={[0, 0, theta]}>
+        <Strip x={slopeLen / 2} z={-half} width={0.1} length={slopeLen} colour="#e8e8e8" />
+        <Strip x={slopeLen / 2} z={half} width={0.1} length={slopeLen} colour="#e8e8e8" />
+        {/* The foot, so the change of slope reads. */}
+        <Strip x={0} z={0} width={laneW} length={0.08} colour="#d0d0d0" opacity={0.6} />
+        {/* The window the front bumper must stop in, ending at the line. */}
+        <Strip
+          x={stopLocal - hill.max_a_m / 2}
+          z={0}
+          width={laneW - 0.3}
+          length={hill.max_a_m}
+          colour="#5fd18a"
+          opacity={0.35}
+        />
+        {/* "Vạch dừng xe". */}
+        <Strip x={stopLocal} z={0} width={laneW} length={ruleset.course.start_line_width_m} colour="#ffffff" />
+      </group>
+
+      {/* The level top. */}
+      <mesh position={[topStart + hill.flat_top_m / 2, topH / 2, 0]}>
+        <boxGeometry args={[hill.flat_top_m, topH, laneW + 6]} />
+        <meshStandardMaterial color="#3b3f45" roughness={1} />
+      </mesh>
+      <Strip x={topStart + hill.flat_top_m / 2} z={-half} width={0.1} length={hill.flat_top_m} colour="#e8e8e8" y={topH + Y} />
+      <Strip x={topStart + hill.flat_top_m / 2} z={half} width={0.1} length={hill.flat_top_m} colour="#e8e8e8" y={topH + Y} />
+
+      <Sign x={foot - 1.5} y={0} z={half + 0.7}>
+        <UphillFace />
+      </Sign>
+      <Sign x={foot + stopLocal * Math.cos(theta)} y={stopHeight} z={half + 0.7}>
+        <StopFace />
+      </Sign>
+    </group>
+  );
+}
+
 /** A small tick across the lane used to mark a metre on the course. */
 function SliceMark({ x, z, colour, tall = false }: { x: number; z: number; colour: string; tall?: boolean }) {
   return <Strip x={x} z={z} width={tall ? 0.5 : 0.24} length={tall ? 0.16 : 0.1} colour={colour} />;
@@ -119,7 +280,7 @@ function wheelLayout(ruleset: Ruleset) {
   };
 }
 
-function Car({ run, ruleset }: { run: Run; ruleset: Ruleset }) {
+function Car({ run, ruleset, toWorld }: { run: Run; ruleset: Ruleset; toWorld: RoadToWorld }) {
   const body = useRef<THREE.Group>(null);
   const frontLeft = useRef<THREE.Group>(null);
   const frontRight = useRef<THREE.Group>(null);
@@ -129,14 +290,16 @@ function Car({ run, ruleset }: { run: Run; ruleset: Ruleset }) {
   useFrame(({ clock }) => {
     const { state, previous, alpha } = run;
     const t = alpha;
-    const x = lerp(previous.carX, state.carX, t);
+    const x = lerp(toWorld(previous.carX), toWorld(state.carX), t);
     const y = lerp(previous.carY, state.carY, t);
     const heading = lerp(previous.heading, state.heading, t);
     const steer = lerp(previous.steerRad, state.steerRad, t);
 
     if (body.current) {
-      body.current.position.set(x, 0, -y);
-      body.current.rotation.y = heading;
+      // Yaw first, then pitch about the car's own side axis: nose up on the grade.
+      body.current.rotation.order = 'YZX';
+      body.current.position.set(x, lerp(previous.elevationM, state.elevationM, t), -y);
+      body.current.rotation.set(0, heading, Math.atan(lerp(previous.grade, state.grade, t)));
     }
     // Steered front wheels turn about their own vertical axis.
     if (frontLeft.current) frontLeft.current.rotation.y = steer;
@@ -208,31 +371,40 @@ function Wheel({ radius, width }: { radius: number; width: number }) {
 }
 
 /** Chase camera: behind and above the car, easing toward its heading. */
-function ChaseCamera({ run }: { run: Run }) {
+function ChaseCamera({ run, toWorld }: { run: Run; toWorld: RoadToWorld }) {
   const desired = useMemo(() => new THREE.Vector3(), []);
   const look = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ camera }) => {
     const { state } = run;
     const behind = 9;
     const height = 4.4;
-    desired.set(state.carX - behind * Math.cos(state.heading), height, -(state.carY - behind * Math.sin(state.heading)));
+    desired.set(
+      toWorld(state.carX) - behind * Math.cos(state.heading),
+      state.elevationM + height,
+      -(state.carY - behind * Math.sin(state.heading)),
+    );
     camera.position.lerp(desired, 0.12);
-    look.set(state.carX + 3 * Math.cos(state.heading), 0.8, -(state.carY + 3 * Math.sin(state.heading)));
+    look.set(
+      toWorld(state.carX) + 3 * Math.cos(state.heading),
+      state.elevationM + 0.8 + 3 * state.grade,
+      -(state.carY + 3 * Math.sin(state.heading)),
+    );
     camera.lookAt(look);
   });
   return null;
 }
 
-export default function Scene({ run, ruleset }: { run: Run; ruleset: Ruleset }) {
+export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: Ruleset; exercise: Exercise }) {
+  const toWorld = useMemo(() => roadToWorldFor(exercise, ruleset), [exercise, ruleset]);
   return (
     <>
       <color attach="background" args={['#9ec4d8']} />
       <fog attach="fog" args={['#9ec4d8', 30, 70]} />
       <ambientLight intensity={0.85} />
       <directionalLight position={[8, 14, 6]} intensity={1.6} />
-      <ChaseCamera run={run} />
-      <Course ruleset={ruleset} />
-      <Car run={run} ruleset={ruleset} />
+      <ChaseCamera run={run} toWorld={toWorld} />
+      {exercise.lesson === 3 ? <HillCourse ruleset={ruleset} /> : <Course ruleset={ruleset} />}
+      <Car run={run} ruleset={ruleset} toWorld={toWorld} />
     </>
   );
 }

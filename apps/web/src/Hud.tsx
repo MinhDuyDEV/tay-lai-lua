@@ -4,15 +4,18 @@
 // and the result overlay — because they change a handful of times per run.
 
 import { useEffect, useRef, type RefObject } from 'react';
-import { KEY_LEGEND } from '../input/driver.ts';
+import { legendFor } from '../input/driver.ts';
+import type { Exercise } from './exercise.ts';
 import type { Ruleset } from './ruleset.ts';
-import { sourceLabel } from './ruleset.ts';
+import { hillOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
-import { STEPS, type StepId } from './steps.ts';
+import type { SimState } from './sim/session.ts';
+import { secondsLeft, type StepId } from './steps.ts';
 
 export interface HudProps {
   run: Run;
+  exercise: Exercise;
   ruleset: Ruleset;
   penalties: readonly Penalty[];
   /** The rpm the ruleset calls a penalty above (SH.X.RPM params.rpm). */
@@ -31,7 +34,7 @@ function bar(value: number, max = 1) {
   return `${Math.max(0, Math.min(1, value / max)) * 100}%`;
 }
 
-export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: HudProps) {
+export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio, glOk }: HudProps) {
   const speed = useRef<HTMLSpanElement>(null);
   const rpm = useRef<HTMLSpanElement>(null);
   const rpmBar = useRef<HTMLDivElement>(null);
@@ -47,8 +50,12 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
   const hint = useRef<HTMLParagraphElement>(null);
   const stepEls = useRef(new Map<string, HTMLLIElement>());
   const audioEl = useRef<HTMLParagraphElement>(null);
+  const hillEl = useRef<HTMLElement>(null);
+  const advice = useRef<HTMLParagraphElement>(null);
+  const bai3 = exercise.lesson === 3;
 
   useEffect(() => {
+    const hill = hillEl.current ? hillParts(hillEl.current) : null;
     const stop = run.onFrame(() => {
       const s = run.state;
       if (speed.current) speed.current.textContent = (s.speedMps * 3.6).toFixed(1);
@@ -59,8 +66,9 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
       }
       if (gear.current) gear.current.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
       if (bumper.current) bumper.current.textContent = s.frontBumperM.toFixed(2);
+      if (hill) paintHill(hill, s, ruleset);
       if (score.current) score.current.textContent = s.disqualified ? 'ĐÌNH CHỈ' : String(s.score);
-      if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified);
+      if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified, exercise.lesson);
       if (throttle.current) throttle.current.style.height = bar(s.throttle);
       if (brake.current) brake.current.style.height = bar(s.brake);
       if (clutch.current) clutch.current.style.height = bar(s.clutch);
@@ -74,6 +82,10 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
         const text = run.driver.hint ?? '';
         if (hint.current.textContent !== text) hint.current.textContent = text;
       }
+      if (advice.current) {
+        const text = exercise.advice(s, ruleset) ?? '';
+        if (advice.current.textContent !== text) advice.current.textContent = text;
+      }
       if (audioEl.current) {
         const now = audio();
         if (audioEl.current.dataset.audio !== now) {
@@ -86,14 +98,14 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
       }
     });
     return stop;
-  }, [run, ruleset, rpmLimit, audio]);
+  }, [run, exercise, ruleset, rpmLimit, audio]);
 
   return (
     <div className="hud">
       <section className="hud-steps" aria-label="Trình tự">
         <h2>Trình tự</h2>
         <ol>
-          {STEPS.map((step) => (
+          {exercise.steps.map((step) => (
             <li
               key={step.id}
               data-step={step.id}
@@ -110,6 +122,35 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
         </ol>
         <p className="hint" ref={hint} />
       </section>
+
+      {bai3 ? (
+        <section className="hud-hill" aria-label="Dốc" ref={hillEl}>
+          <div className="cell" data-cell="a">
+            <span className="name" data-part="label">
+              Còn tới vạch
+            </span>
+            <strong>
+              <span data-part="value">0</span> mm
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="rollback">
+            <span className="name">Tụt dốc</span>
+            <strong>
+              <span data-part="value">0</span> mm
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="clock">
+            <span className="name">Thời gian</span>
+            <strong>
+              <span data-part="value">—</span>
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <p className="advice" ref={advice} />
+        </section>
+      ) : null}
 
       <section className="hud-drive" aria-label="Xe">
         <div className="pedals">
@@ -162,12 +203,14 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
               <span ref={steerLabel}>0.00</span>
             </dd>
           </div>
-          <div>
-            <dt>Qua vạch</dt>
-            <dd>
-              <span ref={bumper}>-1.00</span> m
-            </dd>
-          </div>
+          {bai3 ? null : (
+            <div>
+              <dt>Qua vạch</dt>
+              <dd>
+                <span ref={bumper}>-1.00</span> m
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Điểm</dt>
             <dd>
@@ -209,7 +252,7 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
       <section className="hud-keys" aria-label="Phím">
         <h2>Phím</h2>
         <ul>
-          {KEY_LEGEND.map((entry) => (
+          {legendFor(exercise.lesson).map((entry) => (
             <li key={entry.keys}>
               <span className="key">{entry.keys}</span>
               {entry.does}
@@ -226,13 +269,61 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
   );
 }
 
-function phaseLabel(phase: string, disqualified: boolean): string {
+const mm = (m: number) => String(Math.round(m * 1000));
+
+interface HillCell {
+  cell: HTMLElement;
+  label: HTMLElement | null;
+  value: HTMLElement;
+  limit: HTMLElement;
+}
+
+/** The three cells of the slope card, looked up once so the 60 Hz paint touches no selector. */
+function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell> {
+  const cell = (name: string): HillCell => {
+    const c = el.querySelector<HTMLElement>(`[data-cell="${name}"]`)!;
+    return {
+      cell: c,
+      label: c.querySelector<HTMLElement>('[data-part="label"]'),
+      value: c.querySelector<HTMLElement>('[data-part="value"]')!,
+      limit: c.querySelector<HTMLElement>('[data-part="limit"]')!,
+    };
+  };
+  return { a: cell('a'), rollback: cell('rollback'), clock: cell('clock') };
+}
+
+/** The slope card: A (live, then the recorded one), the rollback and the 30 s clock, in mm and s. */
+function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ruleset) {
+  const hill = hillOf(ruleset);
+  const stopped = s.sinceStopTicks >= 0;
+  const a = parts.a;
+  const gap = stopped ? s.stopGapAM : s.lineGapM;
+  if (a.label) a.label.textContent = stopped ? 'A lúc dừng' : s.lineGapM < 0 ? 'Quá vạch' : 'Còn tới vạch';
+  a.value.textContent = mm(gap);
+  a.limit.textContent = `không quá ${mm(hill.max_a_m)}`;
+  a.cell.dataset.state = gap >= 0 && gap <= hill.max_a_m ? 'ok' : stopped ? 'bad' : 'neutral';
+
+  const r = parts.rollback;
+  r.value.textContent = mm(s.rollbackM);
+  r.limit.textContent = `không quá ${mm(hill.max_rollback_m)}`;
+  r.cell.dataset.state = s.rollbackM > hill.max_rollback_m ? 'bad' : s.rollbackM > 0 ? 'warn' : 'neutral';
+
+  const left = secondsLeft(s, ruleset);
+  const t = parts.clock;
+  t.value.textContent = left === null ? '—' : `${Math.ceil(left)} s`;
+  t.limit.textContent = left === null ? 'tính từ lúc dừng xe' : 'để qua vạch';
+  t.cell.dataset.state = left === null ? 'neutral' : left < 10 ? 'warn' : 'ok';
+}
+
+function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3): string {
   if (disqualified) return 'đình chỉ';
   switch (phase) {
     case 'waiting':
       return 'chờ lệnh';
     case 'launched':
-      return 'đã có lệnh';
+      return lesson === 3 ? 'lên dốc' : 'đã có lệnh';
+    case 'stopped':
+      return 'đã dừng';
     case 'past-line':
       return 'qua vạch';
     case 'done':

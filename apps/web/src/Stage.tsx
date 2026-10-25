@@ -7,18 +7,20 @@
 import { Canvas } from '@react-three/fiber';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HANDLED_CODES, KEY_LEGEND } from '../input/driver.ts';
+import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
+import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
 import { openSession, type Session } from './sim/session.ts';
-import { STEPS } from './steps.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
 
 export interface StageProps {
+  /** Which exercise this page runs; a number because it crosses from a server component. */
+  lesson: Lesson;
   ruleset: Ruleset;
   wasmUrl: string;
 }
@@ -36,7 +38,8 @@ declare global {
 
 const NO_PENALTIES: readonly Penalty[] = [];
 
-export default function Stage({ ruleset, wasmUrl }: StageProps) {
+export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
+  const exercise = exerciseFor(lesson);
   const root = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -56,13 +59,14 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
     const boot = async () => {
       let open: () => Session;
       try {
-        open = await loadCore(wasmUrl);
+        open = await loadCore(wasmUrl, exercise.seed);
       } catch (error) {
         if (!cancelled) setBootProblem((error as Error).message);
         return;
       }
       if (cancelled) return;
       created = createRun({
+        exercise,
         ruleset,
         openSession: open,
         target: window,
@@ -80,18 +84,18 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
       created?.dispose();
       runRef.current = null;
     };
-  }, [ruleset, wasmUrl]);
+  }, [exercise, ruleset, wasmUrl]);
 
   // Publish the numbers the test polls, every frame, on the one root element.
   useEffect(() => {
     if (!run) return;
     const write = () => {
       audio.post(run.state);
-      if (root.current) paint(root.current, run, glOk, audio.state(), audio.level(), entered);
+      if (root.current) paint(root.current, run, exercise, glOk, audio.state(), audio.level(), entered);
     };
     write();
     return run.onFrame(write);
-  }, [run, glOk, audio, entered]);
+  }, [run, exercise, glOk, audio, entered]);
 
   useEffect(() => {
     if (!run) return;
@@ -134,6 +138,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
     <div
       id="stage"
       ref={root}
+      data-exercise={lesson}
       data-phase="waiting"
       data-ordered="no"
       data-engine-on="yes"
@@ -144,6 +149,11 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
       data-handbrake="yes"
       data-speed="0"
       data-bumper="-1.000"
+      data-line-gap="0.000"
+      data-stop-a="0.000"
+      data-rollback="0.000"
+      data-since-stop="-1"
+      data-elevation="0.000"
       data-rpm="850"
       data-score={ruleset.scoring.base}
       data-disqualified="no"
@@ -166,13 +176,14 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
           }}
           fallback={<p className="gl-warning">WebGL không khả dụng: HUD và bài thi vẫn chạy.</p>}
         >
-          {run ? <Scene run={run} ruleset={ruleset} /> : null}
+          {run ? <Scene run={run} ruleset={ruleset} exercise={exercise} /> : null}
         </Canvas>
       </div>
 
       {run ? (
         <Hud
           run={run}
+          exercise={exercise}
           ruleset={ruleset}
           penalties={penalties}
           rpmLimit={rpmLine}
@@ -183,10 +194,10 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
 
       {!entered ? (
         <div className="overlay" role="dialog" aria-label="Vào xe">
-          <h1>Bài 1 — Xuất phát</h1>
+          <h1>{exercise.title}</h1>
           <p>Bấm phím bất kỳ để vào xe. Bàn phím là đủ.</p>
           <ul>
-            {KEY_LEGEND.slice(0, 5).map((entry) => (
+            {legendFor(lesson).slice(0, exercise.introKeys).map((entry) => (
               <li key={entry.keys}>
                 <span className="key">{entry.keys}</span>
                 {entry.does}
@@ -197,7 +208,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
       ) : null}
 
       {done && entered ? (
-        <div className="overlay result" role="dialog" aria-label="Kết quả">
+        <div className="overlay result" role="dialog" aria-label="Kết quả" data-bad={run?.state.disqualified ? 'yes' : 'no'}>
           <h1>{run?.state.disqualified ? 'Đình chỉ' : `Kết quả: ${run?.state.score} điểm`}</h1>
           <p>{penalties.length === 0 ? 'Không có lỗi.' : `${penalties.length} lỗi.`}</p>
           <p>
@@ -216,7 +227,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
 }
 
 /** Everything the test polls, written on the root element each frame. */
-function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
+function paint(el: HTMLElement, run: Run, exercise: Exercise, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
   const s = run.state;
   const d = el.dataset;
   d.phase = s.phase;
@@ -229,6 +240,11 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, leve
   d.handbrake = s.handbrake ? 'yes' : 'no';
   d.speed = s.speedMps.toFixed(3);
   d.bumper = s.frontBumperM.toFixed(3);
+  d.lineGap = s.lineGapM.toFixed(3);
+  d.stopA = s.stopGapAM.toFixed(3);
+  d.rollback = s.rollbackM.toFixed(3);
+  d.sinceStop = String(s.sinceStopTicks);
+  d.elevation = s.elevationM.toFixed(3);
   d.rpm = Math.round(s.rpm).toString();
   d.score = String(s.score);
   d.disqualified = s.disqualified ? 'yes' : 'no';
@@ -238,14 +254,14 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, leve
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   d.entered = entered ? 'yes' : 'no';
-  for (const step of STEPS) d[`step_${step.id}`] = run.stepsDone.has(step.id) ? 'yes' : 'no';
+  for (const step of exercise.steps) d[`step_${step.id}`] = run.stepsDone.has(step.id) ? 'yes' : 'no';
 }
 
 /** Fetch sim.wasm once. A module that will not instantiate fails here, not on the first key. */
-async function loadCore(wasmUrl: string): Promise<() => Session> {
+async function loadCore(wasmUrl: string, seed: bigint): Promise<() => Session> {
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`Không nạp được ${wasmUrl}: HTTP ${response.status}`);
   const bytes = await response.arrayBuffer();
-  openSession(bytes).dispose();
-  return () => openSession(bytes);
+  openSession(bytes, seed).dispose();
+  return () => openSession(bytes, seed);
 }

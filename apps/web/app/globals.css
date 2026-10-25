@@ -100,6 +100,10 @@ body {
   margin-left: auto;
 }
 
+.hud-steps .key {
+  white-space: nowrap;
+}
+
 .hint {
   min-height: 1.45em;
   margin: 8px 0 0;
@@ -322,6 +326,55 @@ body {
   color: var(--text);
 }
 
+/* Bài 3: A, rollback, the 30 s clock and the next thing to do, centred at the top. */
+
+.hud-hill {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, auto));
+  gap: 6px 22px;
+  max-width: 560px;
+}
+
+.hud-hill .cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hud-hill .name,
+.hud-hill small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hud-hill strong {
+  font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-hill .cell[data-state='ok'] strong {
+  color: var(--good);
+}
+
+.hud-hill .cell[data-state='warn'] strong {
+  color: var(--accent);
+}
+
+.hud-hill .cell[data-state='bad'] strong {
+  color: var(--bad);
+}
+
+.hud-hill .advice {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  color: var(--accent);
+  font-size: 13px;
+}
+
 /* Overlays ------------------------------------------------------------- */
 
 .overlay {
@@ -375,8 +428,23 @@ body {
   cursor: pointer;
 }
 
+.overlay.result {
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 340px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
 .overlay.result h1 {
   color: var(--good);
+}
+
+.overlay.result[data-bad='yes'] h1 {
+  color: var(--bad);
 }
 
 .notice {
@@ -399,6 +467,7 @@ body {
     grid-template-rows: auto auto 1fr auto;
   }
   .hud-steps,
+  .hud-hill,
   .hud-drive,
   .hud-penalties,
   .hud-keys {

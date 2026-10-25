@@ -13,7 +13,6 @@ export interface Rule {
   id: string;
   code: number;
   exercise: string;
-  detector: string;
   params?: { seconds?: number; rpm?: number };
   penalty: { kind: 'POINTS'; points: number } | { kind: 'DISQUALIFY' };
   repeat: 'ONCE' | 'EACH';
@@ -31,6 +30,25 @@ export interface Course {
   start_front_bumper_m: number;
   start_line: RuleSource;
   lane: RuleSource;
+}
+
+/** Bài 3's slope and stop line (the ruleset's `hill` block). Every length is metres, in the sim's x. */
+export interface Hill {
+  /** Where the slope starts. */
+  foot_x_m: number;
+  /** Run of the slope, foot to top, along x. */
+  slope_length_m: number;
+  /** Rise over run (0.10 = 10 %). */
+  grade: number;
+  stop_line_from_foot_m: number;
+  /** The level stretch after the top. */
+  flat_top_m: number;
+  /** Negative: the car starts on the flat before the foot. */
+  start_front_bumper_from_foot_m: number;
+  /** Largest A the law allows. */
+  max_a_m: number;
+  max_rollback_m: number;
+  no_stop_beyond_m: number;
 }
 
 export interface Drivetrain {
@@ -53,7 +71,15 @@ export interface Ruleset {
   course: Course;
   vehicle: Vehicle;
   drivetrain: Drivetrain;
+  /** Present once the ruleset carries bài 3. */
+  hill?: Hill;
   rules: Rule[];
+}
+
+/** Bài 3's numbers, or a clear error: the page was built against a ruleset that has no slope. */
+export function hillOf(ruleset: Ruleset): Hill {
+  if (!ruleset.hill) throw new Error(`${ruleset.id} has no "hill" block: bài 3 needs it`);
+  return ruleset.hill;
 }
 
 /** A fired event, described from the ruleset rather than from a table copied into the app. */

@@ -41,22 +41,25 @@ interface Exports {
   sim_state(handle: number, outPtr: number, cap: number): number;
 }
 
-export const SEED = 1n;
+/** What `sim_create` takes: the exercise id in bits 56..63, the seed below it. */
+export const seedWord = (exerciseId: number, seed = 1n): bigint => (BigInt(exerciseId) << 56n) | seed;
 const EVENTS_PER_DRAIN = 32;
 
 /** Open a session from the shipped `sim.wasm` bytes. Throws if the module is not the core we expect. */
-export function openSession(wasmBytes: ArrayBuffer): Session {
+export function openSession(wasmBytes: ArrayBuffer, seed: bigint): Session {
   const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {});
   const exports = instance.exports as unknown as Exports;
   if (typeof exports.sim_state !== 'function') throw new Error('sim.wasm has no sim_state: wrong build');
-  return wasmSession(exports);
+  return wasmSession(exports, seed);
 }
 
-function wasmSession(exports: Exports): Session {
+function wasmSession(exports: Exports, seed: bigint): Session {
   const inPtr = exports.sim_alloc(8);
   const evPtr = exports.sim_alloc(EVENTS_PER_DRAIN * 8);
   const statePtr = exports.sim_alloc(STATE_LEN * 8);
-  const handle = exports.sim_create(SEED);
+  const handle = exports.sim_create(seed);
+  // Handle 0 is the core refusing the word: an exercise id it does not know.
+  if (handle === 0) throw new Error(`sim.wasm refused seed word ${seed.toString(16)}: unknown exercise id`);
   // Fresh views after every call: any allocation can grow memory and detach older buffers.
   const heap = () => new Uint8Array(exports.memory.buffer);
   const records: Uint8Array[] = [];
@@ -96,7 +99,7 @@ function wasmSession(exports: Exports): Session {
     },
     trace() {
       const out = new Uint8Array(8 + records.length * 8);
-      new DataView(out.buffer).setBigUint64(0, SEED, true);
+      new DataView(out.buffer).setBigUint64(0, seed, true);
       records.forEach((r, i) => out.set(r.subarray(0, 8), 8 + i * 8));
       return out;
     },

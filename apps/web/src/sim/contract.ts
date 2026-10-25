@@ -28,13 +28,27 @@ export const F = {
   belt: 18,
   signal: 19,
   engineLoad: 20,
+  /** Bài 3 only (0 in bài 1): stop line minus front bumper, metres, positive while short of it. */
+  lineGap: 21,
+  /** A, recorded at the stop; 0 before it. */
+  stopGapA: 22,
+  /** Metres rolled back since the stop, >= 0. */
+  rollback: 23,
+  /** Ticks since the stop; -1 before it, 0 on the stop tick. */
+  sinceStopTicks: 24,
+  /** Road height under the car centre, metres. */
+  elevation: 25,
+  grade: 26,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 21;
+export const STATE_LEN = 27;
 
-/** Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done. */
-export type PhaseName = 'waiting' | 'launched' | 'past-line' | 'done';
+/**
+ * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses
+ * 1 (underway toward the line), 4 and 3; 0 and 2 are bài 1's.
+ */
+export type PhaseName = 'waiting' | 'launched' | 'past-line' | 'done' | 'stopped';
 
 /** Signal codes: 0 off, 1 left, 2 right. */
 export type SignalName = 'off' | 'left' | 'right';
@@ -63,9 +77,15 @@ export interface SimState {
   belt: boolean;
   signal: SignalName;
   engineLoad: number;
+  lineGapM: number;
+  stopGapAM: number;
+  rollbackM: number;
+  sinceStopTicks: number;
+  elevationM: number;
+  grade: number;
 }
 
-const PHASE_NAMES: readonly PhaseName[] = ['waiting', 'launched', 'past-line', 'done'];
+const PHASE_NAMES: readonly PhaseName[] = ['waiting', 'launched', 'past-line', 'done', 'stopped'];
 const SIGNAL_NAMES: readonly SignalName[] = ['off', 'left', 'right'];
 
 /**
@@ -102,5 +122,11 @@ export function readState(block: Float64Array, count: number): SimState {
     belt: block[F.belt] !== 0,
     signal,
     engineLoad: block[F.engineLoad],
+    lineGapM: block[F.lineGap],
+    stopGapAM: block[F.stopGapA],
+    rollbackM: block[F.rollback],
+    sinceStopTicks: block[F.sinceStopTicks],
+    elevationM: block[F.elevation],
+    grade: block[F.grade],
   };
 }
