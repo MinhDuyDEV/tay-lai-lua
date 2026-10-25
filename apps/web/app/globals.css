@@ -407,3 +407,13 @@ body {
     max-height: 30vh;
   }
 }
+
+.sim-fake {
+  display: none;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+#stage[data-sim='fake'] .sim-fake {
+  display: block;
+}

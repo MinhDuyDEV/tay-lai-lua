@@ -122,10 +122,8 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
     runRef.current?.keyboard.clear();
   }, [audio]);
 
-  const restart = useCallback(() => {
-    setPenalties(NO_PENALTIES);
-    runRef.current?.restart();
-  }, []);
+  // The run owns restart (Esc/Backspace and this button alike); `onRestart` clears the feed.
+  const restart = useCallback(() => runRef.current?.restart(), []);
 
   useEffect(() => {
     if (entered) return;
@@ -186,7 +184,6 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
           rpmLimit={rpmLine}
           audio={audio.state()}
           glOk={glOk}
-          onRestart={restart}
         />
       ) : null}
 
@@ -218,6 +215,7 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
         </div>
       ) : null}
 
+      <p className="notice sim-fake">Mô hình tạm, chưa phải sim.wasm: điểm không có giá trị.</p>
       {bootProblem ? <p className="notice boot">{bootProblem}</p> : null}
       
     </div>

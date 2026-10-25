@@ -33,21 +33,14 @@ export const F = {
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
 export const STATE_LEN = 21;
 
-/**
- * Phase as the core numbers it today (`phase_code` in crates/sim-core/src/lib.rs): 0 launched,
- * 1 past line, 2 done. `waiting` is the app's own name for "the order has not been given yet" and
- * is never produced by the core, which starts counting the moment a session exists.
- */
-export const PHASE_CODE = { launched: 0, pastLine: 1, done: 2 } as const;
+/** Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done. */
 export type PhaseName = 'waiting' | 'launched' | 'past-line' | 'done';
 
-/** Signal as the core numbers it (`signal_code`): 0 off, 1 left, 2 right. */
-export const SIGNAL_CODE = { off: 0, left: 1, right: 2 } as const;
+/** Signal codes: 0 off, 1 left, 2 right. */
 export type SignalName = 'off' | 'left' | 'right';
 
 export interface SimState {
   tick: number;
-  /** `waiting` until the order, then the core's own phases. */
   phase: PhaseName;
   score: number;
   disqualified: boolean;
@@ -72,14 +65,14 @@ export interface SimState {
   engineLoad: number;
 }
 
-const PHASE_NAMES: readonly PhaseName[] = ['launched', 'past-line', 'done'];
+const PHASE_NAMES: readonly PhaseName[] = ['waiting', 'launched', 'past-line', 'done'];
 const SIGNAL_NAMES: readonly SignalName[] = ['off', 'left', 'right'];
 
 /**
  * Read one state block. `count` is what `sim_state` returned; anything but STATE_LEN is a contract
  * drift, not a value to guess at.
  */
-export function readState(block: Float64Array, count: number, ordered: boolean): SimState {
+export function readState(block: Float64Array, count: number): SimState {
   if (count !== STATE_LEN) {
     throw new Error(`sim_state returned ${count} values, contract is ${STATE_LEN}`);
   }
@@ -89,7 +82,7 @@ export function readState(block: Float64Array, count: number, ordered: boolean):
   if (signal === undefined) throw new Error(`sim_state signal ${block[F.signal]} is not in the contract`);
   return {
     tick: block[F.tick],
-    phase: ordered ? phase : 'waiting',
+    phase,
     score: block[F.score],
     disqualified: block[F.disqualified] !== 0,
     carX: block[F.carX],

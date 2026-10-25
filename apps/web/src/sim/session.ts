@@ -27,9 +27,6 @@ export interface Session {
   hash(): string;
   /** The recorded run: 8-byte seed then one 8-byte record per tick fed, exactly what was fed. */
   trace(): Uint8Array;
-  /** True while the core is still cranking the starter. */
-  readonly ordered: boolean;
-  markOrdered(): void;
   dispose(): void;
 }
 
@@ -68,8 +65,6 @@ function wasmSession(exports: Exports): Session {
   // Fresh views after every call: any allocation can grow memory and detach older buffers.
   const heap = () => new Uint8Array(exports.memory.buffer);
   const records: Uint8Array[] = [];
-  let ordered = false;
-
   const drain = (): SimEvent[] => {
     const n = exports.sim_drain_events(handle, evPtr, EVENTS_PER_DRAIN);
     const view = new DataView(exports.memory.buffer);
@@ -83,12 +78,6 @@ function wasmSession(exports: Exports): Session {
 
   return {
     kind: 'wasm',
-    get ordered() {
-      return ordered;
-    },
-    markOrdered() {
-      ordered = true;
-    },
     step(input) {
       const copy = input.slice();
       records.push(copy);
@@ -98,7 +87,7 @@ function wasmSession(exports: Exports): Session {
       const events = drain();
       const count = simState(handle, statePtr, STATE_LEN);
       const block = new Float64Array(exports.memory.buffer, statePtr, STATE_LEN);
-      return { state: readState(block, count, ordered), events };
+      return { state: readState(block, count), events };
     },
     hash() {
       return BigInt.asUintN(64, exports.sim_hash(handle)).toString(16).padStart(16, '0');
@@ -119,10 +108,9 @@ function wasmSession(exports: Exports): Session {
 }
 
 /**
- * The stand-in used until `sim_state` exists. It moves the car with the same clutch/gear shape the
- * real core has, so the scene, the camera, the HUD and the step checklist can all be built and
- * looked at. It scores NOTHING: an event set here would be an invented legal reading, and the
- * end-to-end test treats `kind: 'fake'` as a failure.
+ * TEMPORARY: removed when peer-sim's `sim_state` lands. Stands in so the scene and HUD can be
+ * looked at before then. It always reports `kind: 'fake'` (the page shows a banner, `data-sim` says
+ * so, the end-to-end test fails on it) and it fires no rules, so no score from it means anything.
  */
 export function createFakeSession(reason: string): Session {
   return fakeSession(reason);
@@ -132,7 +120,6 @@ function fakeSession(reason: string): Session {
   void reason;
   const records: Uint8Array[] = [];
   let tick = 0;
-  let ordered = false;
   let x = -1 - 2.1;
   let speed = 0;
   let rpm = 850;
@@ -147,12 +134,6 @@ function fakeSession(reason: string): Session {
 
   return {
     kind: 'fake',
-    get ordered() {
-      return ordered;
-    },
-    markOrdered() {
-      ordered = true;
-    },
     step(input) {
       records.push(input.slice());
       tick += 1;
@@ -183,13 +164,8 @@ function fakeSession(reason: string): Session {
       if (!engineOn) rpm = 0;
 
       const frontBumperM = x + 2.1;
-      const phase: SimState['phase'] = !ordered
-        ? 'waiting'
-        : frontBumperM >= 10
-          ? 'done'
-          : frontBumperM >= 0
-            ? 'past-line'
-            : 'launched';
+      const phase: SimState['phase'] =
+        frontBumperM >= 10 ? 'done' : frontBumperM >= 0 ? 'past-line' : 'launched';
 
       return {
         events: [],

@@ -19,7 +19,6 @@ export interface HudProps {
   rpmLimit: number;
   audio: 'idle' | 'starting' | 'running' | 'failed';
   glOk: boolean;
-  onRestart(): void;
 }
 
 /** Pedal and steer bars show what the core consumed, not what a key is doing. */
@@ -27,7 +26,7 @@ function bar(value: number, max = 1) {
   return `${Math.max(0, Math.min(1, value / max)) * 100}%`;
 }
 
-export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk, onRestart }: HudProps) {
+export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: HudProps) {
   const speed = useRef<HTMLSpanElement>(null);
   const rpm = useRef<HTMLSpanElement>(null);
   const rpmBar = useRef<HTMLDivElement>(null);
@@ -78,16 +77,6 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk, on
       run.onFrame = undefined;
     };
   }, [run, ruleset, rpmLimit]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.code !== 'Escape' && event.code !== 'Backspace') return;
-      onRestart();
-    };
-    // `run` already handles restarts; this keeps the overlay's button and the key in one state.
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onRestart]);
 
   return (
     <div className="hud">
