@@ -10,6 +10,7 @@
 //! * every random draw comes from the seeded PRNG in this file.
 
 mod abi;
+mod course;
 mod exercise;
 pub mod golden;
 mod hash;
@@ -18,6 +19,8 @@ mod vehicle;
 
 #[cfg(test)]
 mod scenarios;
+#[cfg(test)]
+mod scenarios_sa_hinh;
 #[cfg(test)]
 mod scenarios_hill;
 
@@ -127,7 +130,7 @@ impl Prng {
 const EXERCISE_SHIFT: u32 = 56;
 
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 27;
+pub const SNAPSHOT_LEN: usize = 46;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -167,6 +170,22 @@ pub const SNAPSHOT_LEN: usize = 27;
 /// 24 since_stop_ticks      bài 3: steps since the stop, 0 on the stop step; -1 before it (and in bài 1)
 /// 25 elevation_m           road height under the car centre, metres above the flat; 0 in bài 1
 /// 26 grade                 road grade under the car centre (0.10 on bài 3's slope); 0 in bài 1
+/// 27 contact FL            what the front-left wheel's contact patch is on: 0 clear | 1 on a
+///                          limit line | 2 on a curb
+/// 28 contact FR            as 27, front right
+/// 29 contact RL            as 27, rear left
+/// 30 contact RR            as 27, rear right
+/// 31 progress_m            bài 4/6: metres along the figure's centreline from its start; 0 else
+/// 32 course_length_m       bài 4/6: the centreline's length; 0 else
+/// 33 lateral_m             bài 4/6: signed offset from the centreline, + left of it; 0 else
+/// 34 heading_err_rad       bài 4/6: car heading minus the centreline's heading; 0 else
+/// 35 segment               bài 4: 0 approach | 1 vệt | 2 straight | 3 first bend | 4 transverse
+///                          leg | 5 second bend | 6 exit; bài 6: 0 entry | 1 first half |
+///                          2 second half | 3 exit; 0 else
+/// 36 clock_s               bài 4/6: seconds on the exercise clock, 0 until the entry gate; 0 else
+/// 37 longest_episode_s     bài 4/6: the longest contact episode running right now, seconds; 0 else
+/// 38..45 wheel_x, wheel_y  bài 4/6: the four wheel centres in the car's frame, FL FR RL RR, as
+///                          (x, y) pairs: 38/39 FL, 40/41 FR, 42/43 RL, 44/45 RR; 0 else
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
@@ -194,6 +213,8 @@ impl Session {
         let exercise = match seed >> EXERCISE_SHIFT {
             0 | 1 => Exercise::Start,
             3 => Exercise::Hill,
+            4 => Exercise::Vet,
+            6 => Exercise::Curve,
             _ => return None,
         };
         let thresholds = rules.thresholds();
@@ -223,14 +244,65 @@ impl Session {
         let _ = self.prng.next();
     }
 
+    /// The smallest clearance from any wheel patch to any limit line, with the car placed at `pose`
+    /// on the ideal line. The figure's own feasibility measure.
+    #[doc(hidden)]
+    pub fn ideal_pose_clearance(&self, centre: (f64, f64), heading: f64) -> f64 {
+        let Some(course) = &self.state.course else { return f64::INFINITY };
+        let wheels = course.wheel_centres(&self.rules, centre.0, centre.1, heading);
+        let mut worst = f64::INFINITY;
+        for w in wheels {
+            for (kind, half, dist) in course.debug_contacts(&self.rules, w, heading) {
+                if kind != 2 {
+                    let clear = dist - half;
+                    if clear < worst { worst = clear; }
+                }
+            }
+        }
+        worst
+    }
+
+    /// Every line's distance from the car's four patches, for the geometry diagnostics.
+    #[doc(hidden)]
+    pub fn debug_course_contacts(&self) -> Vec<Vec<(u8, f64, f64)>> {
+        let Some(course) = &self.state.course else { return Vec::new() };
+        course
+            .wheel_centres(&self.rules, self.state.car.x_m, self.state.car.y_m, self.state.car.heading_rad)
+            .iter()
+            .map(|w| course.debug_contacts(&self.rules, *w, self.state.car.heading_rad))
+            .collect()
+    }
+
+    /// The figure this session runs on, as `sim_course` writes it. Empty when the exercise has no
+    /// figure, so a caller reads 0 and draws nothing.
+    pub fn course_block(&self) -> Vec<f64> {
+        let mut out = Vec::new();
+        if let Some(course) = &self.state.course {
+            course.write(&mut out);
+        }
+        out
+    }
+
+    /// Place the car at an exact pose, for the scenario tests.
+    #[doc(hidden)]
+    pub fn place_car(&mut self, x: f64, y: f64, heading: f64) {
+        self.state.place_car(x, y, heading);
+    }
+
     pub fn drain_events(&mut self) -> Vec<Event> {
         core::mem::take(&mut self.pending)
     }
 
     /// Read-only view of the run, for the scenario tests and the golden-trace generator.
     pub fn view(&self) -> View<'_> {
+        let progress = self.state.progress_m();
         View {
             tick: self.state.tick,
+            progress_m: progress.0,
+            lateral_m: progress.1,
+            heading_err_rad: progress.2,
+            longest_episode_s: self.state.longest_episode_s(),
+            clock_s: self.state.clock_seconds(),
             phase: self.state.phase,
             score: self.state.score,
             disqualified: self.state.disqualified,
@@ -271,6 +343,9 @@ impl Session {
         out[19] = f64::from(signal_code(s.signal));
         out[20] = s.car.engine_load(&self.rules.vehicle, &self.rules.drivetrain, c);
         out[24] = -1.0;
+        if s.exercise.is_sa_hinh() {
+            s.sa_hinh_snapshot(&self.rules, &mut out);
+        }
         if s.exercise == Exercise::Hill {
             let h = &self.rules.hill;
             out[21] = h.stop_line_x_m() - out[9];
@@ -332,6 +407,21 @@ impl Session {
             h.u32(s.stop.map_or(0, |p| p.tick));
         }
 
+        // Bài 4 and bài 6 write their own block, and nothing else: the exercise-specific hash
+        // blocks are why the four earlier goldens are untouched by these exercises existing.
+        if s.exercise.is_sa_hinh() {
+            h.f64(s.furthest_progress_m());
+            h.f64(s.clock_seconds());
+            h.bool(s.clock_running());
+            h.u32(s.clock_charges());
+            h.bool(s.vet_reached());
+            for ep in s.episode_table() {
+                h.bool(ep.touching);
+                h.f64(ep.elapsed_s);
+                h.f64(ep.next_keo_dai_s);
+            }
+        }
+
         // Events so far.
         h.u32(self.events.len() as u32);
         for e in &self.events {
@@ -343,9 +433,36 @@ impl Session {
     }
 }
 
+/// The figure numbers the ruleset and the car produce, for the geometry tests and the diagnostics.
+#[doc(hidden)]
+pub fn rules_probe() -> Vec<(&'static str, f64)> {
+    let rs = Ruleset::load();
+    let sh = &rs.sa_hinh;
+    vec![
+        ("rqv", sh.rqv_m(&rs.vehicle)),
+        ("rn", sh.outer_radius_m(&rs.vehicle)),
+        ("rtr", sh.inner_radius_m(&rs.vehicle)),
+        ("Bqc", sh.lane_width_m(&rs.vehicle)),
+        ("r", 0.5 * (sh.outer_radius_m(&rs.vehicle) + sh.inner_radius_m(&rs.vehicle))),
+        ("sqc", sh.o_distance_m(&rs.vehicle)),
+        ("angle", sh.o_line_angle_rad()),
+        ("corner_radius", sh.corner_radius_m(&rs.vehicle, 1.5 * rs.vehicle.length_m + sh.lane_width_m(&rs.vehicle))),
+        ("min_centre_radius", sh.min_centre_radius_m(&rs.vehicle)),
+        ("Bvb", sh.vet_width_m(&rs.vehicle)),
+        ("track", sh.track_m),
+    ]
+}
+
 /// What a scenario asserts on, without handing out mutable state.
 pub struct View<'a> {
     pub tick: u32,
+    /// The figure fields a trace recorder needs: metres along the centreline, the signed offset from
+    /// it, the heading error, the longest contact episode running, and the exercise clock.
+    pub progress_m: f64,
+    pub lateral_m: f64,
+    pub heading_err_rad: f64,
+    pub longest_episode_s: f64,
+    pub clock_s: f64,
     pub phase: Phase,
     pub score: i32,
     pub disqualified: bool,

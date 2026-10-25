@@ -4,7 +4,7 @@
 //! sits in `docs/legal/*.md` (`source.loc`). Anything the law does not say lives in `assumptions`
 //! instead of being silently baked into code.
 
-use libm::sqrt;
+use libm::{atan, floor, sqrt, tan};
 use serde::Deserialize;
 
 pub const EMBEDDED: &str = include_str!("../../../content/rulesets/tt108-2026.json");
@@ -17,7 +17,37 @@ pub struct Ruleset {
     pub vehicle: Vehicle,
     pub drivetrain: Drivetrain,
     pub hill: Hill,
+    /// Bài 4 and bài 6: the figures, generated from the formulas and the car's own dimensions.
+    pub sa_hinh: SaHinh,
     pub rules: Vec<Rule>,
+}
+
+/// The figures of bài 4 and bài 6 (QCVN 15 mục 2.1.15.4 and 2.1.15.6). Only the inputs live here;
+/// the geometry itself is generated in `course.rs`, so a figure and what is scored on it cannot
+/// drift apart.
+#[derive(Deserialize)]
+pub struct SaHinh {
+    /// Width of a limit line's painted band, and the thickness everything is drawn with.
+    pub line_width_m: f64,
+    /// Setback of the limit line from the curb face.
+    pub line_curb_setback_m: f64,
+    pub tyre_width_m: f64,
+    /// Half the distance between the two wheel centres on one axle.
+    pub track_m: f64,
+    /// Depth of the wheel contact patch, fore and aft.
+    pub patch_length_m: f64,
+    /// The straight lead-in and lead-out the figures are given; where the gates sit.
+    pub lead_m: f64,
+    /// Centreline samples a figure is broken into.
+    pub max_segment_m: f64,
+    /// The time the law gives each of the two exercises, before SH.04/06.QUA_THOI_GIAN starts.
+    pub time_limit_s: f64,
+    /// Bài 4: distance A into the figure by which both right wheels must have reached the vệt.
+    pub vet_entry_tolerance_m: f64,
+    /// SAI_HINH: how far the car centre may sit outside the driving corridor.
+    pub outside_margin_m: f64,
+    /// SAI_HINH: how far the car may reverse behind the furthest progress reached.
+    pub reverse_limit_m: f64,
 }
 
 #[derive(Deserialize)]
@@ -198,6 +228,76 @@ pub struct Thresholds {
     pub timeout_30_ticks: u32,
     /// Bài 3: ticks allowed from the stop to the stop line.
     pub hill_timeout_ticks: u32,
+    /// Bài 4 and bài 6: seconds on the clock before each QUA_THOI_GIAN charge.
+    pub sa_hinh_clock_ticks: u32,
+    /// Bài 4 and bài 6: seconds one contact episode must last before DE_VACH_KEO_DAI charges.
+    pub de_vach_keo_dai_ticks: u32,
+}
+
+impl SaHinh {
+    /// The car's own minimum turning radius on the front outer wheel's contact point — QCVN 15's
+    /// `Rqv`.
+    ///
+    /// The kinematic bicycle turns about a point on the rear axle line, `wheelbase / tan(δ)` to the
+    /// side. The front outer wheel's contact point is `wheelbase` ahead of that line and half a
+    /// track outboard of the wheel centre, so its radius is `sqrt(wheelbase² + (pivot + track/2)²)`;
+    /// the outermost thing the car sweeps is that point plus half the tyre's width.
+    ///
+    /// This is not `wheelbase / sin(δ)` — 4,74 m here — because that is the radius of a point lying
+    /// *on* the front axle line, and the contact patch's outer edge lies outboard of it, so it
+    /// swings slightly wider.
+    pub fn rqv_m(&self, v: &Vehicle) -> f64 {
+        let pivot = v.wheelbase_m / libm::tan(v.max_steer_rad);
+        let out = pivot + 0.5 * self.track_m;
+        sqrt(v.wheelbase_m * v.wheelbase_m + out * out) + 0.5 * self.tyre_width_m
+    }
+
+    /// Bài 4's figure: Bvb = B1 + 0.2, Lvb = a, Sv = 1.5a, Lv = 2.0a, Bv = 2.2b.
+    pub fn vet_width_m(&self, _v: &Vehicle) -> f64 {
+        self.tyre_width_m + 0.2
+    }
+
+    /// The radius the car's own centre traces at full lock: the tightest turn it can hold.
+    pub fn min_centre_radius_m(&self, v: &Vehicle) -> f64 {
+        let pivot = v.wheelbase_m / libm::tan(v.max_steer_rad);
+        let half_base = 0.5 * v.wheelbase_m;
+        sqrt(pivot * pivot + half_base * half_base)
+    }
+
+    /// The radius a bend is drawn at: comfortably above the car's tightest (`1,5×`), so the learner
+    /// is not asked for full lock on the ideal line, but never so wide that the bend stops fitting
+    /// the figure's own depth — two opposite quarter turns need `2·radius` of the drop between the
+    /// lanes. Rounded down to the centimetre, so the figure is never tighter than intended.
+    pub fn corner_radius_m(&self, v: &Vehicle, drop_m: f64) -> f64 {
+        let want = 1.5 * self.min_centre_radius_m(v);
+        let fits = 0.5 * drop_m;
+        let r = if want < fits { want } else { fits };
+        libm::floor(r * 100.0) / 100.0
+    }
+
+    /// Bài 6's figure: Bqc = 2.2b.
+    pub fn lane_width_m(&self, v: &Vehicle) -> f64 {
+        2.2 * v.width_m
+    }
+
+    /// Bài 6's figure: Rn = Rqv + 1.2, Rtr = Rn − Bqc.
+    pub fn outer_radius_m(&self, v: &Vehicle) -> f64 {
+        self.rqv_m(v) + 1.2
+    }
+
+    pub fn inner_radius_m(&self, v: &Vehicle) -> f64 {
+        self.outer_radius_m(v) - self.lane_width_m(v)
+    }
+
+    /// The heading of the 45° line O1–O2 of Hình 12. Only the figure has it.
+    pub fn o_line_angle_rad(&self) -> f64 {
+        atan(1.0)
+    }
+
+    /// Distance between the two turn centres, Sqc = Rn + Rtr.
+    pub fn o_distance_m(&self, v: &Vehicle) -> f64 {
+        self.outer_radius_m(v) + self.inner_radius_m(v)
+    }
 }
 
 impl Ruleset {
@@ -226,6 +326,8 @@ impl Ruleset {
             timeout_20_ticks: seconds_to_ticks(self.rule("SH.01.QUA_20S").params.seconds),
             timeout_30_ticks: seconds_to_ticks(self.rule("SH.01.QUA_30S").params.seconds),
             hill_timeout_ticks: seconds_to_ticks(self.rule("SH.03.QUA_30S").params.seconds),
+            sa_hinh_clock_ticks: seconds_to_ticks(self.sa_hinh.time_limit_s),
+            de_vach_keo_dai_ticks: seconds_to_ticks(self.rule("SH.04.DE_VACH_KEO_DAI").params.seconds),
         }
     }
 }
