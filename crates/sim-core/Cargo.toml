@@ -7,3 +7,12 @@ publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Float math is limited to + - * / sqrt plus sin/cos/tan from libm, so every browser and
+# wazero compute the same bits. `default-features = false` drops libm's per-arch kernel
+# dispatch: one pure-Rust implementation everywhere.
+libm = { version = "0.2", default-features = false }
+# Rule data is parsed once per `create`; neither crate is on the hash path.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
