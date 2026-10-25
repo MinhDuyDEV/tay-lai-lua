@@ -1,6 +1,6 @@
 # Kiến trúc taylailua — mô phỏng thi sát hạch lái xe Việt Nam
 
-> Trạng thái: **bản thiết kế, chưa có code**. Cập nhật lần cuối: 2026-10-25.
+> Trạng thái: **bản thiết kế**. Đã có code: `sim-core` chạy bài 1 xuất phát (hạng B số sàn) và test vết chuẩn trên 5 môi trường. Phần còn lại chưa có code. Cập nhật lần cuối: 2026-10-25.
 > Phiên bản phần mềm ghi trong tài liệu này lấy từ nghiên cứu ngày 2026-10-25. Khi khởi tạo dự án phải kiểm tra lại.
 > Đặc tả nghiệp vụ (luật thi) nằm trong `docs/legal/`. Tài liệu này chỉ tham chiếu tới đó, không chép lại.
 

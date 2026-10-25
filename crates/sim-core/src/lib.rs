@@ -206,6 +206,7 @@ impl Session {
         h.f64(s.car.speed_mps);
         h.f64(s.car.rpm);
         h.bool(s.car.engine_on);
+        h.u32(s.car.crank_left());
 
         // Controls of the last tick.
         let c = &s.controls;

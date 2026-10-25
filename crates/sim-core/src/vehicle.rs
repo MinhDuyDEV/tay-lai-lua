@@ -77,6 +77,11 @@ pub struct StepOutcome {
 }
 
 impl Car {
+    /// Ticks left of a cranking attempt. State, so the hash covers it.
+    pub fn crank_left(&self) -> u32 {
+        self.crank_left
+    }
+
     pub fn new(d: &Drivetrain) -> Self {
         Self {
             x_m: 0.0,

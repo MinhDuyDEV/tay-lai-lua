@@ -231,6 +231,28 @@ mod tests {
         );
     }
 
+    /// A cranking attempt in progress is state: two runs that differ only in when the key went
+    /// down must not share a hash, or a mid-run hash comparison could miss a real difference.
+    #[test]
+    fn hash_covers_the_starter_progress() {
+        let idle = TickInput { clutch: 255, flags: TickInput::FLAG_BELT, ..TickInput::default() };
+        let key = TickInput { flags: idle.flags | TickInput::FLAG_IGNITION, ..idle };
+        let hash_after = |first: TickInput| {
+            let mut s = Session::new(messy_run().seed);
+            for &input in &messy_run().inputs {
+                s.step(input);
+                if !s.view().engine_on {
+                    break;
+                }
+            }
+            assert!(!s.view().engine_on, "the messy trace must stall the engine");
+            s.step(first);
+            s.step(key);
+            s.hash()
+        };
+        assert_ne!(hash_after(idle), hash_after(key));
+    }
+
     /// The messy trace must actually move the float paths it exists for: the rpm past 4000, the
     /// engine dead at least once, and the left signal off outside the window.
     #[test]
