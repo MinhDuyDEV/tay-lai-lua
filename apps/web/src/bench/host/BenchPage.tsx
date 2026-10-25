@@ -4,7 +4,7 @@
 // and publishes everything on window.__bench for tools/browser/bench.mjs to read and write to disk.
 //
 //   ?host=main|worker  &k=20  &duration=15 (seconds, warm-up included)  &slow=4 (Worker only, see worker.ts)
-//   &throttle=4 &uncapped=1 &cell=label   (labels only: the page cannot set them, Playwright does)
+//   &throttle=4 &tag=decision &spin1x=21.9 &cell=label   (labels only: the CDP throttle is Playwright's)
 //   ?mode=calibrate&throttle=4&slow=4      the spin-loop calibration instead of a cell
 //
 // One rAF callback per frame does: the sim (main) or the reply hand-over (Worker) -> R3F advance(ts)
@@ -25,6 +25,11 @@ const PROBE_TICKS = 600;
 const VIEW = { width: 1280, height: 720, dpr: 1.5 };
 // The calibration's load per call: big enough that the Chromium clock's 100 us clamp cannot hide it.
 const SPIN_ITERS = 8_000_000;
+// The in-cell check (A3.2a): a fixed ~1 ms of work per call, so frame-scale work is what gets timed.
+// 30 000 iterations of the spin is about 1.1 ms on this Mac at 1x (measured; the loop body is a
+// multiply, a modulo and an add).
+const CHECK_ITERS = 30_000;
+const CHECK_REPS = 200;
 
 interface Config {
   host: 'main' | 'worker';
@@ -34,10 +39,11 @@ interface Config {
   graceS: number;
   slow: number;
   throttle: number;
-  uncapped: boolean;
   cell: string;
   /** Why the cell runs (k1 / decision / sweep / ...): carried through to the raw JSON and the table. */
   tag: string;
+  /** Milliseconds for CHECK_REPS calls of the fixed spin at 1x, measured once per run before the cells. */
+  spin1xMs: number;
 }
 
 declare global {
@@ -83,9 +89,9 @@ function parse(search: string): Config & { mode: string } {
     graceS: num('grace', 8),
     slow: num('slow', 1),
     throttle: num('throttle', 1),
-    uncapped: q.get('uncapped') === '1',
     cell: q.get('cell') ?? '',
     tag: q.get('tag') ?? '',
+    spin1xMs: num('spin1x', 0),
   };
 }
 
@@ -127,13 +133,28 @@ async function calibrate(c: Config) {
     for (let i = 0; i < 5; i += 1) out.push(await f());
     return median(out);
   };
+  // The frame-scale load the in-cell check uses (A3.2a): ~1 ms of work per call, 200 calls.
+  const timeCheck = () => {
+    const t = performance.now();
+    for (let i = 0; i < CHECK_REPS; i += 1) spin(CHECK_ITERS);
+    return performance.now() - t;
+  };
+  await timeCheck();
+  const frameScaleMs = (() => {
+    const out: number[] = [];
+    for (let i = 0; i < 5; i += 1) out.push(timeCheck());
+    return median(out);
+  })();
   const result = {
     throttle: c.throttle,
     slow: c.slow,
     iters: SPIN_ITERS,
+    checkIters: CHECK_ITERS,
+    checkReps: CHECK_REPS,
     mainMs: await reps(timeMain),
     workerRawMs: await reps(() => timeWorker(false)),
     workerPaddedMs: await reps(() => timeWorker(true)),
+    frameScaleMs,
   };
   worker.terminate();
   return result;
@@ -171,7 +192,7 @@ export default function BenchPage() {
 
       // Everything below is the measured run.
       const S = { ts: [] as number[], st: [] as number[], en: [] as number[], ticks: [] as number[], simUs: [] as number[], reopen: [] as number[], seq: [] as number[], busy: [] as number[] };
-      const markers: { id: number; keyT: number; tick: number | null }[] = [];
+      const markers: { id: number; keyT: number; handlerNow: number; tick: number | null }[] = [];
       const longtasks: { start: number; dur: number }[] = [];
       let hiddenSeen = document.visibilityState !== 'visible';
       let start = 0;
@@ -187,7 +208,8 @@ export default function BenchPage() {
       const onKey = (e: KeyboardEvent) => {
         if (e.code !== 'KeyM' || e.repeat) return;
         const id = markers.length;
-        markers.push({ id, keyT: e.timeStamp, tick: null });
+        // handlerNow - keyT is the dispatch lag: near zero means e.timeStamp is on the page clock.
+        markers.push({ id, keyT: e.timeStamp, handlerNow: performance.now(), tick: null });
         h.mark(id);
       };
       // A hidden tab stops rAF, and the cell is void (the brief's rule). End it at once, still
@@ -229,9 +251,27 @@ export default function BenchPage() {
         // The last trace pass is finished here; it never enters the samples.
         window.__bench!.stage = 'finish';
         const gates: Gate[] = await h.finish();
+        // A3.2a, last thing in the cell so nothing runs after it: is the throttle still on, at frame
+        // scale? ~1 ms of work x 200 calls on the main thread, divided by the same figure at 1x.
+        window.__bench!.stage = 'throttle';
+        const check = () => {
+          const t = performance.now();
+          for (let i = 0; i < CHECK_REPS; i += 1) spin(CHECK_ITERS);
+          return performance.now() - t;
+        };
+        check();
+        const spikes = Array.from({ length: 5 }, check).sort((a, b) => a - b);
+        const throttleSeenMs = spikes[2];
+        const throttleSeen = config.spin1xMs > 0 ? throttleSeenMs / config.spin1xMs : null;
         window.__bench!.stage = 'clock';
         const clockStep = clockStepUs();
-        const deltas = S.ts.map((t, i) => (i ? t - S.ts[i - 1] : 0)).slice(1);
+        const warmCut = start + WARMUP_MS;
+        const keptDeltas = [];
+        for (let i = 1; i < S.ts.length; i += 1) {
+          if (S.ts[i] < warmCut || S.reopen[i] || S.reopen[i - 1]) continue;
+          keptDeltas.push(S.ts[i] - S.ts[i - 1]);
+        }
+        const periodMs = median(keptDeltas);
         const info = rootState.gl.info.render;
         const kept = markers.filter((m) => m.tick !== null);
         stop();
@@ -246,7 +286,12 @@ export default function BenchPage() {
             warmupMs: WARMUP_MS,
             startTs: start,
             durationMs: S.ts.at(-1)! - start,
-            refreshHz: 1000 / median(deltas),
+            refreshHz: 1000 / periodMs,
+            vsyncMs: periodMs,
+            maxDeltaMs: keptDeltas.length ? Math.max(...keptDeltas) : null,
+            deltasOver50Ms: keptDeltas.filter((d) => d > 50).length,
+            // Late frames: deltas well past this cell's own vsync period (A3.3's reported column).
+            lateFrames: keptDeltas.filter((d) => d > 1.5 * periodMs).length,
             busyFrames: S.busy.reduce((a, b) => a + b, 0),
             hiddenSeen,
             crossOriginIsolated,
@@ -255,6 +300,10 @@ export default function BenchPage() {
             catchup: CATCHUP,
             clockStepUs: clockStep,
             simProbe: probe,
+            throttleSeen,
+            throttleSeenMs,
+            spin1xMs: config.spin1xMs > 0 ? config.spin1xMs : null,
+            clips: h.clips,
             // Live wasm instances holding the K sessions: 1 (sim.ts), not K; see its header.
             wasmInstances: h.instances,
             gates,

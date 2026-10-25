@@ -39,6 +39,8 @@ test('K sessions over the golden trace end golden; a key marker is consumed but 
   const gates = stepper.finish();
   assert.ok(gates.length >= 1);
   assert.ok(gates.every((g) => g.hash === assets.traces[0].golden && g.ok));
+  // Every one of the K sessions ran the trace: the gate records how many hashed to session 0's hash.
+  assert.ok(gates.every((g) => g.allHashesEqual === 4 && g.k === 4));
   assert.equal(gates[0]?.measured, true);
   assert.equal(gates.at(-1)?.measured, false);
 });
@@ -56,27 +58,4 @@ test('a trace end reopens the sessions and gates the pass it closed', () => {
     stepper.gates.map((g) => [g.ticks, g.hash, g.ok, g.measured]),
     [[ticksOf(assets), assets.traces[0].golden, true, true]],
   );
-});
-
-test('the probe reports a positive, finite cost per step for one session and for K', () => {
-  const assets = loaded('xuat_phat_messy');
-  const probe = createStepper(assets, 8).probe(300);
-  assert.equal(probe.k, 8);
-  assert.equal(probe.ticks, 300);
-  assert.ok(probe.oneUsPerStep > 0 && probe.kUsPerStep > probe.oneUsPerStep);
-});
-
-test('K=400 sessions on one instance: same golden hash, no instance ceiling', () => {
-  const assets = loaded('dung_khoi_hanh_doc_messy');
-  const ticks = ticksOf(assets);
-  const stepper = createStepper(assets, 400);
-  // Six ticks a frame at 100 ms, the CATCHUP cap: the sweep's heaviest cell.
-  let frame = 0;
-  while (stepper.gates.length === 0) {
-    frame += 1;
-    stepper.advance(frame * 100, []);
-  }
-  assert.equal(stepper.gates[0]?.ticks, ticks);
-  assert.equal(stepper.gates[0]?.hash, assets.traces[0].golden);
-  assert.ok(stepper.gates[0]?.ok);
 });

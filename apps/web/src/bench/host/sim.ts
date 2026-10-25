@@ -24,6 +24,7 @@ interface Exports {
 }
 
 const EVENTS_PER_DRAIN = 32;
+const hex = (h: bigint) => BigInt.asUintN(64, h).toString(16).padStart(16, '0');
 
 export interface KSim {
   readonly k: number;
@@ -33,6 +34,8 @@ export interface KSim {
   step(input: Uint8Array): SimState;
   /** Session 0's hash: 16 lowercase hex digits, the same format as `Session.hash`. */
   hash(): string;
+  /** Every session's hash, in order. Cheap, and it proves the K sessions really ran the trace. */
+  hashes(): string[];
   dispose(): void;
 }
 
@@ -67,7 +70,10 @@ export function openKSim(wasmBytes: ArrayBuffer, seed: bigint, k: number): KSim 
       return state;
     },
     hash() {
-      return BigInt.asUintN(64, x.sim_hash(handles[0])).toString(16).padStart(16, '0');
+      return hex(x.sim_hash(handles[0]));
+    },
+    hashes() {
+      return handles.map((h) => hex(x.sim_hash(h)));
     },
     dispose() {
       for (const h of handles) x.sim_destroy(h);

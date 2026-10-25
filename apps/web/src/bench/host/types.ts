@@ -36,7 +36,11 @@ export interface Assets {
 export interface Gate {
   trace: string;
   ticks: number;
+  /** Session 0's hash. */
   hash: string;
+  /** How many of the K sessions hashed to `hash` (all of them, when the trace really ran on all K). */
+  allHashesEqual: number;
+  k: number;
   golden: string;
   ok: boolean;
   /** True when the pass ended inside the measured run, false for the one finished after the last frame. */
@@ -52,6 +56,8 @@ export interface Consumed {
 /** What one frame of a host did on the sim side. */
 export interface FrameInfo {
   ticks: number;
+  /** The frame hit CATCHUP: time was dropped, so the sim starved (a starved cell cannot decide). */
+  clip: boolean;
   /** Time spent in the sim batch (all K sessions), microseconds, measured where the sim runs. */
   simUs: number;
   /** A trace ended and the sessions were reopened during this batch. */
@@ -75,11 +81,14 @@ export interface Probe {
   /** Microseconds per tick for the first session alone, and for all K sessions together. */
   oneUsPerStep: number;
   kUsPerStep: number;
+  /** All K, with the Worker's dilation applied: what a throttled Worker spends per tick. */
+  kDilatedUsPerStep: number;
 }
 
 export interface FrameReply {
   type: 'frame';
   state: SimState;
+  clip: boolean;
   previous: SimState;
   alpha: number;
   seq: number;

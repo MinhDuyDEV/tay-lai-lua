@@ -17,6 +17,8 @@ export interface Host {
   readonly passes: number;
   /** Live wasm instances holding the sim sessions (the bench keeps K sessions on one, see sim.ts). */
   readonly instances: number;
+  /** Frames that hit CATCHUP and dropped time: a starved sim cannot win. */
+  readonly clips: number;
   /** A key was seen: the next tick that runs consumes it. Never reaches the sim input. */
   mark(id: number): void;
   /** Called once per rAF with the rAF timestamp. */
@@ -56,12 +58,16 @@ export function createMainHost(assets: Assets, k: number): Host {
     get instances() {
       return stepper.instances;
     },
+    get clips() {
+      return stepper.clips;
+    },
     ready: Promise.resolve(),
     mark: (id) => markers.push(id),
     frame(ts) {
       const taken = markers;
       markers = [];
       return { ...stepper.advance(ts, taken), busy: false };
+      // FrameInfo carries `clip` from advance, so a main-thread catch-up clip is visible too.
     },
     probe: async (ticks) => stepper.probe(ticks),
     finish: async () => stepper.finish(),
@@ -76,8 +82,10 @@ export function createWorkerHost(assets: Assets, k: number, slow: number): Host 
   const s = { state: undefined as unknown as SimState, previous: undefined as unknown as SimState, alpha: 1, tick: 0, reopens: 0 };
   let pending = false;
   let passes = 0;
+  let clips = 0;
   let markers: number[] = [];
-  let total = { ticks: 0, simUs: 0, reopened: false, consumed: [] as Consumed[] };
+  // Frames since the last rAF: normally one reply, but a slow Worker can deliver two.
+  let total = { ticks: 0, simUs: 0, reopened: false, clip: false, consumed: [] as Consumed[] };
   let onReady: () => void;
   let onFinished: (gates: Gate[]) => void;
   let onProbed: (probe: Probe) => void;
@@ -96,9 +104,11 @@ export function createWorkerHost(assets: Assets, k: number, slow: number): Host 
       s.tick = m.seq;
       s.reopens = m.reopens;
       total.ticks += m.ticks;
+      total.clip ||= m.clip;
       total.simUs += m.simUs;
       total.reopened ||= m.reopened;
       if (m.reopened) passes += 1;
+      if (m.clip) clips += 1;
       total.consumed.push(...m.consumed);
     } else if (m.type === 'finished') {
       onFinished(m.gates);
@@ -119,11 +129,14 @@ export function createWorkerHost(assets: Assets, k: number, slow: number): Host 
       return passes;
     },
     instances: 1,
+    get clips() {
+      return clips;
+    },
     ready,
     mark: (id) => markers.push(id),
     frame(ts) {
       const out: FrameInfo = { ...total, busy: pending };
-      total = { ticks: 0, simUs: 0, reopened: false, consumed: [] };
+      total = { ticks: 0, simUs: 0, reopened: false, clip: false, consumed: [] };
       if (!pending) {
         pending = true;
         send({ type: 'frame', ts, markers });

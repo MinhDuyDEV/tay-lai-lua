@@ -10,14 +10,16 @@
 //     slow-down is modelled by dilating its sim batch (`slow=` query, see host/worker.ts). The
 //     calibration reports the measured ratio for main (CDP), Worker (dilated) and Worker (raw).
 //  2. The matrix: {main,worker} x {1x,4x,6x} x 3 at K=1; the decision cell K=20 at {1x,4x} x 3
-//     plus the Worker unpadded at 4x x 3 (reported, not deciding); K=10/100/400 x {1x,4x} x 1;
-//     one uncapped pass at 1x (a browser launched with vsync off). Repeats are interleaved round by
-//     round, and the cells run in a random order fixed by --seed.
+//     plus the Worker unpadded at 4x x 3 (reported, not deciding); K=100/1000/10000 x {1x,4x} x 1.
+//     Repeats are interleaved round by round, and the cells run in a random order fixed by --seed.
 //  3. Writes the raw per-frame JSON of every cell under <out>/<run-id>/ and prints the table
 //     (bench-report.mjs prints the same table from the directory later).
 //
 // The page never sees a key as input: a marker is a counter the sim ignores. Every trace pass the
-// first session completes is checked against golden/<trace>.hash, and only a valid cell is used.
+// first session completes is checked against golden/<trace>.hash (and all K sessions against each
+// other), and only a valid cell is used. A cell also proves the throttle reached it: 200 calls of a
+// fixed ~1 ms spin are timed inside the cell and divided by the same figure at 1x, and a ratio
+// outside [3,5] (4x) or [4.5,7.5] (6x) is reported but not used (A3.2a).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { arch, cpus, homedir, platform, release, totalmem } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -35,6 +37,11 @@ const site = args.get('site') ?? here('../../apps/web/out');
 const quick = args.has('quick') || process.env.BENCH_QUICK === '1' || args.get('quick') === '1';
 /** Development aid: run only the first N cells of the plan, to see the plumbing without the wait. */
 const limit = args.has('limit') ? Number(args.get('limit')) : Infinity;
+/** Re-run part of a plan later: --only sweep runs every cell whose id contains "sweep". */
+const only = args.get('only') ?? '';
+/** --ks 1,20,1000 runs only cells with those K (an ad-hoc ladder; the decision cells are unaffected). */
+const ksArg = args.get('ks');
+const ks = ksArg ? ksArg.split(',').map(Number) : null;
 const seed = Number(args.get('seed') ?? 20261025);
 const root = args.get('out') ?? join(homedir(), '.litter', 'bench');
 const CELL_MS = quick ? 5000 : 15000;
@@ -43,8 +50,15 @@ const SHORT_MS = quick ? 5000 : 8000;
 const GRACE_S = 8;
 /** Sweep Ks (reported only, not deciding). 10 000 fits one wasm instance; see run.json if one fails. */
 const SWEEP_KS = [100, 1000, 10000];
+/**
+ * The uncapped pass is gone (A3.4: non-deciding, and without vsync the sim share is diluted; callback
+ * CPU covers the headroom question). For the record, the attach experiment this harness used to run
+ * on every run was answered once and needs no code: Target.attachToTarget on the worker target
+ * succeeds, then Emulation.setCPUThrottlingRate answers {"code":-32000,"message":"Operation is only
+ * supported for pages, not workers"}, and an 8M-iteration spin in the Worker stays ~311 ms at rate 4.
+ * So CDP cannot throttle a Worker; the padded Worker models it (A2).
+ */
 /** Calibration spin loop per call; the measured ratios are what matter, not the absolute size. */
-const SPIN_ITERS = Number(args.get('spin-iters') ?? 1_000_000);
 
 /** Deterministic PRNG so a run's cell order can be replayed (mulberry32). */
 function rng(a) {
@@ -70,15 +84,14 @@ const shuffled = (list) => {
  * One cell config. `slow` is the Worker's sim dilation: the page throttle reaches the main thread
  * only, so a throttled Worker is modelled by dilating its sim batch by the same factor.
  */
-const cell = (tag, host, k, throttle, ms, { uncapped = false, slow = host === 'worker' ? throttle : 1 } = {}) => ({
-  id: `${tag}-${host}-k${k}-${throttle}x${slow > 1 ? `-slow${slow}` : ''}${uncapped ? '-uncapped' : ''}`,
+const cell = (tag, host, k, throttle, ms, { slow = host === 'worker' ? throttle : 1 } = {}) => ({
+  id: `${tag}-${host}-k${k}-${throttle}x${slow > 1 ? `-slow${slow}` : ''}`,
   tag,
   host,
   k,
   throttle,
   slow,
   ms,
-  uncapped,
 });
 
 const quickMatrix = () => [
@@ -96,7 +109,6 @@ const matrix = () => {
     for (const throttle of [1, 4]) once.push(cell('decision', host, 20, throttle, CELL_MS));
     // The sweep exists to find where a host starts to pay: 100, 1 000 and 10 000 sessions per tick.
     for (const throttle of [1, 4]) for (const k of SWEEP_KS) once.push(cell('sweep', host, k, throttle, SHORT_MS));
-    once.push(cell('uncapped', host, 20, 1, SHORT_MS, { uncapped: true }));
   }
   once.push(cell('unpadded', 'worker', 20, 4, CELL_MS, { slow: 1 }));
   // One entry per config: the rounds in `ordered` (below) add the repeats, interleaved.
@@ -106,24 +118,16 @@ const repetitions = (c) => ['k1', 'decision', 'unpadded'].includes(c.tag);
 
 const configs = quick ? quickMatrix() : matrix();
 // Round 1: every config once, in a random order fixed by --seed. Rounds 2..3: the repeated configs
-// only, shuffled again, so drift and background load land on all cells alike. The uncapped pass
-// runs last, in a browser of its own (vsync off), so it cannot disturb the vsync cells.
-const escape = configs.filter((c) => c.uncapped);
+// only, shuffled again, so drift and background load land on all cells alike.
 const ordered = (() => {
-  const rounds = [configs.filter((c) => !c.uncapped)];
-  const repeated = configs.filter((c) => !c.uncapped && repetitions(c));
-  rounds.push(repeated, repeated);
-  return [...rounds.flatMap((r) => shuffled(r)), ...escape];
+  const repeated = configs.filter(repetitions);
+  return [configs, repeated, repeated].flatMap((r) => shuffled(r));
 })();
 
-const chromiumArgs = (uncapped) => [
-  '--ignore-gpu-blocklist',
-  '--enable-gpu-rasterization',
-  ...(uncapped ? ['--disable-frame-rate-limit', '--disable-gpu-vsync'] : []),
-];
+const CHROMIUM_ARGS = ['--ignore-gpu-blocklist', '--enable-gpu-rasterization'];
 const url = (c) =>
   `${origin}/bench/?host=${c.host}&k=${c.k}&duration=${c.ms / 1000}&grace=${GRACE_S}&slow=${c.slow}&throttle=${c.throttle}` +
-  `&uncapped=${c.uncapped ? 1 : 0}&tag=${c.tag}&cell=${encodeURIComponent(c.id)}`;
+  `&tag=${c.tag}&spin1x=${SPIN_1X_MS ?? 0}&cell=${encodeURIComponent(c.id)}`;
 
 const server = await serve(site, 0);
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -134,6 +138,8 @@ const write = (name, value) => writeFileSync(join(dir, name), JSON.stringify(val
 
 const problems = [];
 const calibration = [];
+/** Frame-scale spin time at 1x, from the calibration: the denominator of each cell's throttleSeen. */
+let SPIN_1X_MS = null;
 let browserVersion = '';
 
 /** Run one calibration point: main spin (CDP-throttled), Worker spin raw and dilated. */
@@ -150,69 +156,6 @@ async function calibrate(browser, throttle) {
   if (result.error) throw new Error(`calibration at ${throttle}x: ${result.error}`);
   calibration.push(result);
   return { ...result, visibility: vis };
-}
-
-/**
- * The question the calibration cannot answer by itself: can CDP's CPU throttle be put on the Worker
- * target directly? Attach to the worker and ask; then time the same spin loop in the Worker again.
- * Reported in run.json so the claim in the summary is a measurement, not a recollection.
- */
-async function probeWorkerTarget(browser) {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  const cdp = await context.newCDPSession(page);
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-  await page.goto('about:blank');
-  // A Worker that can time the spin loop, kept alive until the context closes.
-  await page.setContent(`<script>
-    const spin = (iters) => { let x = 1; for (let i = 0; i < iters; i += 1) x = (x * 1.0000001 + i) % 7; return x; };
-    const src = 'const spin = ' + spin.toString() + '; onmessage = (e) => postMessage(spin(e.data));';
-    window.__w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-    window.__spinInWorker = (iters) => new Promise((resolve) => {
-      const t = performance.now();
-      window.__w.onmessage = () => resolve(performance.now() - t);
-      window.__w.postMessage(iters);
-    });
-  </script>`);
-  const time = async () => {
-    await page.evaluate(() => window.__spinInWorker(8_000_000));
-    const reps = [];
-    for (let i = 0; i < 5; i += 1) reps.push(await page.evaluate(() => window.__spinInWorker(8_000_000)));
-    return reps.sort((a, b) => a - b)[2];
-  };
-  const before = await time();
-  const browserCdp = await browser.newBrowserCDPSession();
-  const { targetInfos } = await browserCdp.send('Target.getTargets');
-  const workers = targetInfos.filter((t) => t.type === 'worker');
-  let attach = 'no worker target found';
-  let throttleReply = 'not attempted';
-  if (workers.length) {
-    try {
-      const attached = await browserCdp.send('Target.attachToTarget', { targetId: workers[0].targetId, flatten: false });
-      attach = `attached (session ${attached.sessionId.slice(0, 8)})`;
-      const replies = [];
-      browserCdp.on('Target.receivedMessageFromTarget', (e) => replies.push(e.message));
-      await browserCdp.send('Target.sendMessageToTarget', {
-        sessionId: attached.sessionId,
-        message: JSON.stringify({ id: 1, method: 'Emulation.setCPUThrottlingRate', params: { rate: 4 } }),
-      });
-      await new Promise((r) => setTimeout(r, 500));
-      throttleReply = replies.join(' ') || 'no reply';
-      await browserCdp.send('Target.detachFromTarget', { sessionId: attached.sessionId });
-    } catch (err) {
-      attach = `failed: ${err.message.split('\n')[0]}`;
-    }
-  }
-  const after = await time();
-  await context.close();
-  return {
-    workerTargets: workers.length,
-    attach,
-    throttleReply,
-    spinMsBefore: before,
-    spinMsAfter: after,
-    ratioAfterAttach: after / before,
-  };
 }
 
 /** Run one cell: fresh context, throttle set before the page loads, keys at phases the page picks. */
@@ -262,9 +205,8 @@ async function runCell(browser, c) {
 }
 
 let browser;
-let fastBrowser;
 try {
-  browser = await chromium.launch({ headless: false, args: chromiumArgs(false) });
+  browser = await chromium.launch({ headless: false, args: CHROMIUM_ARGS });
   browserVersion = browser.version();
   console.log(`bench ${runId}: ${quick ? `quick (${CELL_MS / 1000} s cells)` : `full (${CELL_MS / 1000} s cells)`}, seed ${seed}`);
   console.log(`site ${site} at ${origin}, Chromium ${browserVersion}`);
@@ -282,6 +224,8 @@ try {
   }
   write('calibration.json', calibration);
   const at1 = calibration[0];
+  // The in-cell check is scaled by the 1x figure from this run, so throttling is measured, not assumed.
+  SPIN_1X_MS = at1.frameScaleMs;
   const at4 = calibration.find((c) => c.throttle === 4);
   const reach = {
     main: { ratio: at4.mainMs / at1.mainMs, want: '>= 3' },
@@ -296,29 +240,17 @@ try {
     if (!v.ok) problems.push(`calibration MISS: ${name} at 4x measured x${v.ratio.toFixed(2)}, want ${v.want}`);
   }
   write('reach.json', reach);
-  // The direct route: put the throttle on the worker target itself. Reported either way.
-  const workerCdp = await probeWorkerTarget(browser);
-  console.log(
-    `worker target under CDP: ${workerCdp.attach}; Emulation.setCPUThrottlingRate -> ${workerCdp.throttleReply}; ` +
-      `spin ${workerCdp.spinMsBefore.toFixed(0)} -> ${workerCdp.spinMsAfter.toFixed(0)} ms (x${workerCdp.ratioAfterAttach.toFixed(2)})`,
-  );
-  if (workerCdp.ratioAfterAttach >= 3) {
-    problems.push('the worker target DID accept the throttle; the dilation model must be reconsidered before any number is used');
-  }
-  write('worker-cdp.json', workerCdp);
 
-  // 2. The matrix. The uncapped pass gets its own browser (vsync off) after the vsync one is closed.
-  console.log(`${ordered.length} cells`);
+
+  // 2. The matrix.
+  console.log(`${ordered.filter((c) => c.id.includes(only) && (ks === null || ks.includes(c.k))).length} cells${only ? ` (only "${only}")` : ''}`);
   const results = [];
-  for (const [i, c] of ordered.slice(0, limit).entries()) {
-    if (c.uncapped && !fastBrowser) {
-      await browser.close();
-      fastBrowser = await chromium.launch({ headless: false, args: chromiumArgs(true) });
-    }
+  const chosen = ordered.filter((c) => c.id.includes(only) && (ks === null || ks.includes(c.k)));
+  for (const [i, c] of chosen.slice(0, limit).entries()) {
     const started = Date.now();
     let result;
     try {
-      result = await runCell(c.uncapped ? fastBrowser : browser, c);
+      result = await runCell(browser, c);
     } catch (err) {
       problems.push(`${c.id}: ${String(err.message).split('\n')[0]}`);
       console.log(`[${i + 1}/${ordered.length}] ${c.id}: FAILED ${((Date.now() - started) / 1000).toFixed(1)} s — ${String(err.message).split('\n')[0]}`);
@@ -333,9 +265,10 @@ try {
     if (h.wasmInstances !== 1) problems.push(`${c.id}: ${h.wasmInstances} wasm instances, expected 1 (K sessions share one)`);
     const done = h.gates.filter((g) => g.measured);
     const verdict = h.hashOk ? `${done.length} measured pass(es), final ${h.gates.at(-1).hash} golden` : 'HASH MISMATCH';
+    const seen = h.throttleSeen === null ? 'n/a' : `x${h.throttleSeen.toFixed(2)}`;
     console.log(
       `[${i + 1}/${ordered.length}] ${c.id}: ${verdict}${h.hiddenSeen ? ' HIDDEN' : ''} ` +
-        `keys ${result.keysPressed}, ${((Date.now() - started) / 1000).toFixed(1)} s`,
+        `throttle ${seen} clips ${h.clips} ${((Date.now() - started) / 1000).toFixed(1)} s`,
     );
     if (!h.hashOk) {
       const bad = h.gates.find((g) => !g.ok) ?? h.gates[0];
@@ -361,7 +294,6 @@ try {
     },
     calibration,
     reach,
-    workerCdp,
     cells: ordered.map((c) => c.id),
     problems,
   });
@@ -376,6 +308,5 @@ try {
   process.exitCode = problems.length ? 1 : 0;
 } finally {
   await browser?.close();
-  await fastBrowser?.close();
   server.close();
 }

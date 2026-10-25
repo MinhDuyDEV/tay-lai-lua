@@ -26,7 +26,7 @@ self.addEventListener('message', (event: MessageEvent<ToWorker>) => {
   const m = event.data;
   if (m.type === 'init') {
     slow = m.slow;
-    stepper = createStepper(m.assets, m.k);
+    stepper = createStepper(m.assets, m.k, m.slow);
     post({ type: 'ready', state: stepper.state });
   } else if (m.type === 'frame') {
     const start = performance.now();
@@ -36,6 +36,7 @@ self.addEventListener('message', (event: MessageEvent<ToWorker>) => {
     const reply: FrameReply = {
       type: 'frame',
       state: stepper.state,
+      clip: a.clip,
       previous: stepper.previous,
       alpha: stepper.alpha,
       seq: stepper.seq,

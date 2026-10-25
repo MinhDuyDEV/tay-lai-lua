@@ -12,6 +12,8 @@ import type { Assets, Consumed, Gate, Probe } from './types.ts';
 
 export interface Advance {
   ticks: number;
+  /** The accumulator hit CATCHUP: this frame dropped real time, so the sim is starved. */
+  clip: boolean;
   /** Elapsed time of the batch in microseconds, as performance.now() sees it where this runs. */
   simUs: number;
   reopened: boolean;
@@ -28,6 +30,8 @@ export interface Stepper {
   readonly passes: number;
   /** Live wasm instances holding the K sessions: always 1 here (sim.ts), never K. */
   readonly instances: number;
+  /** Frames that hit CATCHUP and dropped time. */
+  readonly clips: number;
   /** Run the ticks due at rAF time `ts` (ms); `markers` are key ids seen since the last call. */
   advance(ts: number, markers: readonly number[]): Advance;
   /** Step the first session alone to the end of the current trace, gate it, and return every gate. */
@@ -40,7 +44,8 @@ export interface Stepper {
   readonly gates: readonly Gate[];
 }
 
-export function createStepper(assets: Assets, k: number): Stepper {
+/** `slow` is the Worker's sim dilation (1 on the main thread): the probe reports the dilated cost too. */
+export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
   const { wasm, traces } = assets;
   const gates: Gate[] = [];
   let traceIdx = 0;
@@ -52,6 +57,7 @@ export function createStepper(assets: Assets, k: number): Stepper {
   let seq = 0;
   let reopens = 0;
   let accumulator = 0;
+  let clips = 0;
   /** null until the first frame: the first rAF has no delta to accumulate (run.ts starts at 0). */
   let lastMs: number | null = null;
   let waiting: number[] = [];
@@ -70,8 +76,11 @@ export function createStepper(assets: Assets, k: number): Stepper {
   const input = () => traces[traceIdx].bytes.subarray(8 + cursor * 8, 16 + cursor * 8);
   const gate = (measured: boolean) => {
     const t = traces[traceIdx];
-    const hash = sim.hash();
-    gates.push({ trace: t.name, ticks: cursor, hash, golden: t.golden, ok: hash === t.golden, measured });
+    const hashes = sim.hashes();
+    const hash = hashes[0];
+    // Every session hashed: all K really ran the trace, not just the one that is reported.
+    const allHashesEqual = hashes.filter((h) => h === hash).length;
+    gates.push({ trace: t.name, ticks: cursor, hash, allHashesEqual, k, golden: t.golden, ok: hash === t.golden, measured });
   };
 
   /** One tick on every session; returns true when it ended the trace and the sessions were reopened. */
@@ -114,6 +123,9 @@ export function createStepper(assets: Assets, k: number): Stepper {
     get instances() {
       return 1;
     },
+    get clips() {
+      return clips;
+    },
     advance(ts, markers) {
       const real = lastMs === null ? 0 : (ts - lastMs) / 1000;
       lastMs = ts;
@@ -133,9 +145,13 @@ export function createStepper(assets: Assets, k: number): Stepper {
         ticks += 1;
       }
       const simUs = (performance.now() - t0) * 1000;
-      if (ticks === CATCHUP) accumulator = 0;
+      const clip = ticks === CATCHUP;
+      if (clip) {
+        accumulator = 0;
+        clips += 1;
+      }
       alpha = Math.min(1, accumulator / DT);
-      return { ticks, simUs, reopened, consumed };
+      return { ticks, simUs, reopened, consumed, clip };
     },
     probe(n) {
       const t = traces[traceIdx];
@@ -150,7 +166,7 @@ export function createStepper(assets: Assets, k: number): Stepper {
       for (let i = 0; i < n; i += 1) all.step(t.bytes.subarray(8 + ((cursor + i) % ticksIn()) * 8, 16 + ((cursor + i) % ticksIn()) * 8));
       const kUsPerStep = ((performance.now() - start) * 1000) / n;
       all.dispose();
-      return { ticks: n, k, oneUsPerStep, kUsPerStep };
+      return { ticks: n, k, oneUsPerStep, kUsPerStep, kDilatedUsPerStep: kUsPerStep * slow };
     },
     finish() {
       // A cell can end mid-trace: finish that pass with the same golden input and gate it, unmeasured.
