@@ -138,6 +138,34 @@ fn nothing_is_scored_before_the_start_order() {
     assert_eq!(v.score, 95);
 }
 
+#[test]
+fn an_order_given_past_the_start_line_is_ignored() {
+    // Drive the whole course before the order, no belt, no signal, then stop beyond the end mark.
+    // Such a run is unscored; the order must not turn it into a finished run with a clean score.
+    let mut s = Session::new(2026);
+    crank(&mut s);
+    for t in 0..900 {
+        let input = if t < 20 {
+            TickInput { gear: 0, clutch: 255, ..Default::default() }
+        } else if s.view().front_bumper_m < 11.0 {
+            TickInput { gear: 1, clutch: 168, throttle: 70, ..Default::default() }
+        } else {
+            TickInput { gear: 0, clutch: 255, brake: 255, flags: TickInput::FLAG_HANDBRAKE, ..Default::default() }
+        };
+        s.step(input);
+    }
+    let v = s.view();
+    assert!(v.front_bumper_m > 11.0 && v.speed_mps == 0.0, "parked past the end, got {}", v.front_bumper_m);
+    assert_eq!(v.tick, 0, "still unscored");
+
+    s.step(TickInput { flags: BELT | LEFT | ORDER, ..Default::default() });
+    let v = s.view();
+    assert_eq!(v.phase, Phase::Waiting, "the order past the line starts nothing");
+    assert_eq!(v.tick, 0);
+    assert_eq!(v.fired_ids(), Vec::<&str>::new());
+    assert_eq!(v.score, 100, "and it is not a scored run either");
+}
+
 // ---------------------------------------------------------------------------------------------
 // SH.01.DAY_AN_TOAN — "Không thắt dây an toàn, trừ 05 điểm."
 // ---------------------------------------------------------------------------------------------
