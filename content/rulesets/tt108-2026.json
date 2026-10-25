@@ -29,7 +29,7 @@
     "signal_off_m": 5.0,
     "signal_off_early_m": 4.0,
     "signal_off_late_m": 6.0,
-    "signal_off_window_assumption": "‘kịp thời’ (SH.01.XI_NHAN_KHONG_KIP) has no published threshold. Window [4,0 m; 6,0 m] measured at the front bumper: turning the signal off earlier is as untimely as later. Without an early edge the rule could only ever duplicate SH.01.KHONG_TAT_XI_NHAN.",
+    "signal_off_window_assumption": "‘kịp thời’ (SH.01.XI_NHAN_KHONG_KIP) has no published threshold. Window [4,0 m; 6,0 m] measured at the front bumper: turning the signal off earlier is as untimely as later. Without an early edge the rule could only ever duplicate SH.01.KHONG_TAT_XI_NHAN. Chủ dự án chọn tạm ngày 2026-10-25, chờ trung tâm sát hạch xác nhận.",
     "exercise_end_m": 10.0,
     "exercise_end_assumption": "Văn bản không cho biết bài 1 dài bao xa; 10 m sau vạch là mốc kết thúc bài, trước vạch dừng của bài 2.",
     "start_front_bumper_m": -1.0,
@@ -37,7 +37,7 @@
   },
   "measure_point": {
     "what": "front_bumper_centre",
-    "assumption": "‘05 mét sau vạch xuất phát’ không nói đo từ điểm nào. Chọn hình chiếu thanh cản trước (tim xe) — cùng quy ước với bài 2, nơi văn bản nói rõ ‘hình chiếu thanh cản phía trước’.",
+    "assumption": "‘05 mét sau vạch xuất phát’ không nói đo từ điểm nào. Chọn hình chiếu thanh cản trước (tim xe) — cùng quy ước với bài 2, nơi văn bản nói rõ ‘hình chiếu thanh cản phía trước’. Chủ dự án chọn tạm ngày 2026-10-25, chờ trung tâm sát hạch xác nhận.",
     "source": {
       "doc": "TT 108/2026/TT-BCA",
       "loc": "Phụ lục III, Bài 2",
@@ -233,8 +233,18 @@
   "assumptions": [
     {
       "field": "start_order_tick",
-      "value": 0,
-      "why": "Văn bản nói thí sinh ‘chờ hiệu lệnh’ nhưng không nói chờ bao lâu. Lệnh xuất phát (đèn xanh) phát ở bước 0, nên mọi mốc thời gian tính từ bước 0."
+      "value": 1,
+      "why": "Văn bản nói thí sinh ‘chờ hiệu lệnh’ nhưng không nói chờ bao lâu. Lệnh xuất phát (đèn xanh) là bước đầu tiên được tính điểm, đánh số 1; mọi mốc thời gian (20 s, 30 s) và việc kiểm tra dây an toàn tính từ bước đó. Trước đó đồng hồ không chạy."
+    },
+    {
+      "field": "start_order_source",
+      "value": "the learner triggers the order (TickInput flag bit 5)",
+      "why": "Trong kỳ thi thật, hệ thống của trung tâm phát lệnh và thí sinh không chọn thời điểm. Ở bản tự học, người học bấm lệnh để bài thi bắt đầu được; nếu không, đồng hồ 20 s/30 s sẽ chạy trong lúc họ còn thắt dây và đề máy. Đây là giả định của bản mô phỏng, không phải quy định của văn bản."
+    },
+    {
+      "field": "before_order",
+      "value": "nothing is scored and no clock runs; the car physics run",
+      "why": "Văn bản xếp ‘thắt dây an toàn, dừng xe trước vạch xuất phát, chờ hiệu lệnh’ trước khi có lệnh, nên chưa có gì để chấm. Xe vẫn chạy để người học đề máy và thử côn; một lượt chạy đi trước lệnh thì không được tính điểm, không bị trừ điểm."
     },
     {
       "field": "belt_checked_at_order",
@@ -253,8 +263,8 @@
     },
     {
       "field": "initial_state",
-      "value": "engine running at idle, neutral, belt off, handbrake on",
-      "why": "Theo brief của lane; văn bản chỉ nói thí sinh thắt dây và chờ lệnh."
+      "value": "engine off (cold), neutral, belt off, handbrake on",
+      "why": "Văn bản chỉ nói thí sinh thắt dây, dừng trước vạch và chờ lệnh; cách đề máy không được quy định. Máy tắt nguội để người học làm đủ trình tự như khi vào xe thật: đề máy, thắt dây, chờ lệnh. Đề máy theo giả định `engine_restart`."
     },
     {
       "field": "vehicle_dynamics",

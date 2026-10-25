@@ -1,7 +1,13 @@
 //! Bài 1 — Xuất phát, as a small state machine over one car.
 //!
 //! Phase order, from TT 108/2026/TT-BCA Phụ lục III bài 1:
-//!   order (đèn xanh) -> depart with the left signal on -> signal off 5 m past the line -> end.
+//!   wait — parked before the line, engine cold — plus the learner's own starter, until the
+//!   order (đèn xanh); order -> depart with the left signal on -> signal off 5 m past the line
+//!   -> end.
+//!
+//! The order is a `TickInput` flag the learner presses, so the car is live before it: the engine
+//! can be cranked and the clutch dropped. That stretch is unscored and no clock runs, because the
+//! law puts every timer and the belt check after "chờ hiệu lệnh"; `tick` starts at 0 there.
 //!
 //! No threshold is a literal here: every one is read from `Ruleset`, which carries the sentence it
 //! came from. The readings the law does not fix are named where they are applied and listed under
@@ -25,6 +31,8 @@ pub const DT: f64 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Phase {
+    /// Before the start order: the car is live, but nothing is scored and no clock runs.
+    Waiting,
     /// The order has been given; the car has not crossed the start line yet.
     Launched,
     /// The car crossed the start line and must shed the left signal within the window.
@@ -49,7 +57,8 @@ pub struct FiredRule {
 }
 
 pub struct State {
-    /// Steps since the start order, which is given at tick 1.
+    /// Steps since the start order. 0 while the run waits for it — the clocks count from the
+    /// order, not from `create`.
     pub tick: u32,
     pub phase: Phase,
     pub score: i32,
@@ -70,14 +79,14 @@ pub struct State {
 impl State {
     pub fn new(rs: &Ruleset) -> Self {
         let c = &rs.course;
-        let mut car = Car::new(&rs.drivetrain);
+        let mut car = Car::new();
         // `start_front_bumper_m` is the bumper's signed position relative to the line (-1.0 is
         // one metre short of it); the car's reference point is its centre.
         car.x_m = c.start_line_x_m + c.start_front_bumper_m - 0.5 * rs.vehicle.length_m;
 
         Self {
             tick: 0,
-            phase: Phase::Launched,
+            phase: Phase::Waiting,
             score: rs.scoring.base,
             disqualified: false,
             car,
@@ -111,10 +120,26 @@ impl State {
         t: &Thresholds,
         controls: Controls,
         signal: Signal,
+        order: bool,
         fired: &mut Vec<FiredRule>,
     ) {
         if self.phase == Phase::Done {
             return;
+        }
+
+        if self.phase == Phase::Waiting {
+            if !order {
+                // The car is live before the đèn xanh — the learner cranks it and can drop the
+                // clutch — but nothing is scored and no clock runs. A run that moves here is
+                // unscored, not a penalty; see `start_order` in the ruleset assumptions.
+                self.controls = controls;
+                self.signal = signal;
+                self.car.step(&rs.vehicle, &rs.drivetrain, &controls, DT);
+                return;
+            }
+            // The tick carrying the order is the first tick of the run, counted as 1, so both
+            // clocks start on it.
+            self.phase = Phase::Launched;
         }
 
         let previous_signal = self.signal;

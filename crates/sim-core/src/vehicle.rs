@@ -44,7 +44,7 @@ pub struct Controls {
 }
 
 impl Default for Controls {
-    /// The initial state the lane agreed on: engine running at idle, neutral, belt off, handbrake on.
+    /// The initial state the lane agreed on: engine off (cold), neutral, belt off, handbrake on.
     fn default() -> Self {
         Self {
             steer_rad: 0.0,
@@ -82,16 +82,24 @@ impl Car {
         self.crank_left
     }
 
-    pub fn new(d: &Drivetrain) -> Self {
+    pub fn new() -> Self {
         Self {
             x_m: 0.0,
             y_m: 0.0,
             heading_rad: 0.0,
             speed_mps: 0.0,
-            rpm: d.idle_target_rpm,
-            engine_on: true,
+            // Cold: the learner has to put the key in and crank it (see `service_starter`).
+            rpm: 0.0,
+            engine_on: false,
             crank_left: 0,
         }
+    }
+
+    /// How hard the clutch drags the engine on the controls last stepped, in Nm: positive when
+    /// the driveline pulls the engine down (lugging), negative when the wheels drive it. Read
+    /// only; the audio uses it to tell lugging from a free rev.
+    pub fn engine_load(&self, v: &Vehicle, d: &Drivetrain, c: &Controls) -> f64 {
+        self.clutch_torque(v, d, c)
     }
 
     /// Centre of the front bumper, in metres past the start line. The rules measure to this
