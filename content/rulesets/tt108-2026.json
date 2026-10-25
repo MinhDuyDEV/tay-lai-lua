@@ -244,7 +244,7 @@
     {
       "field": "before_order",
       "value": "nothing is scored and no clock runs; the car physics run",
-      "why": "Văn bản xếp ‘thắt dây an toàn, dừng xe trước vạch xuất phát, chờ hiệu lệnh’ trước khi có lệnh, nên chưa có gì để chấm. Xe vẫn chạy để người học đề máy và thử côn; một lượt chạy đi trước lệnh thì không được tính điểm, không bị trừ điểm."
+      "why": "Văn bản xếp ‘thắt dây an toàn, dừng xe trước vạch xuất phát, chờ hiệu lệnh’ trước khi có lệnh, nên chưa có gì để chấm. Xe vẫn chạy để người học đề máy và thử côn; một lượt chạy đi trước lệnh thì không được tính điểm, không bị trừ điểm. Lệnh chỉ có hiệu lực khi thanh cản trước còn ở phía trước vạch xuất phát (‘dừng xe trước vạch xuất phát, chờ hiệu lệnh’); nếu xe đã qua vạch thì lệnh bị bỏ qua, lượt chạy vẫn chưa được tính điểm và người học phải quay lại vị trí xuất phát (bản web khởi động lại phiên)."
     },
     {
       "field": "belt_checked_at_order",

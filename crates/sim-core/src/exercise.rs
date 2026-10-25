@@ -7,7 +7,8 @@
 //!
 //! The order is a `TickInput` flag the learner presses, so the car is live before it: the engine
 //! can be cranked and the clutch dropped. That stretch is unscored and no clock runs, because the
-//! law puts every timer and the belt check after "chờ hiệu lệnh"; `tick` starts at 0 there.
+//! law puts every timer and the belt check after "chờ hiệu lệnh"; `tick` starts at 0 there. An
+//! order given once the front bumper is past the line is ignored and the run stays unscored.
 //!
 //! No threshold is a literal here: every one is read from `Ruleset`, which carries the sentence it
 //! came from. The readings the law does not fix are named where they are applied and listed under
@@ -128,10 +129,12 @@ impl State {
         }
 
         if self.phase == Phase::Waiting {
-            if !order {
+            // The order only counts while the car is still short of the line: "dừng xe trước vạch
+            // xuất phát, chờ hiệu lệnh". Past it, the run is unscored and stays here.
+            if !order || self.front_bumper_x(rs) >= rs.course.start_line_x_m {
                 // The car is live before the đèn xanh — the learner cranks it and can drop the
                 // clutch — but nothing is scored and no clock runs. A run that moves here is
-                // unscored, not a penalty; see `start_order` in the ruleset assumptions.
+                // unscored, not a penalty; see `before_order` in the ruleset assumptions.
                 self.controls = controls;
                 self.signal = signal;
                 self.car.step(&rs.vehicle, &rs.drivetrain, &controls, DT);
