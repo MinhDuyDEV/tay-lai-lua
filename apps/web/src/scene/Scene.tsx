@@ -91,8 +91,8 @@ function Course({ ruleset }: { ruleset: Ruleset }) {
       <Strip
         x={course.start_line_x_m}
         z={0}
-        width={course.start_line_width_m}
-        length={course.lane_width_m}
+        width={course.lane_width_m}
+        length={course.start_line_width_m}
         colour="#ffffff"
       />
       {/* "XUẤT PHÁT" written in front of the line, as the drawn figure has it. */}
@@ -109,8 +109,8 @@ function Course({ ruleset }: { ruleset: Ruleset }) {
       <Strip
         x={course.exercise_end_m}
         z={0}
-        width={0.12}
-        length={course.lane_width_m}
+        width={course.lane_width_m}
+        length={0.12}
         colour="#5fd18a"
       />
     </group>

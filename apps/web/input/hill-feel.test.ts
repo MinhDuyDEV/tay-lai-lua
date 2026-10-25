@@ -1,21 +1,23 @@
 // Does a keyboard stop-and-start on bài 3's slope work? Runs the real sim.wasm with the real driver.
 // Run `task build` first (it writes build/sim.wasm).
 //
-// A person's timing is not exact. The learner here reads the state the page publishes (the line
-// gap, the clutch bar, the handbrake light) and presses a key about 200 ms later, give or take
-// 150 ms, and each of the three key groups (clutch, brake, the rest) is late by its own amount. All
-// 27 combinations of early / on time / late must stop inside A, pull away without a stall or a
-// penalty and roll back no more than the law allows. Then the same sweep with the technique that
-// holds the car on the slope removed must fail, or the sweep proves nothing about the start.
+// A person acts late, not on the dot. The learner here does what the page tells them (the cue on
+// the advice line, `cueBai3`, and the handbrake light) a lag after it appears, and each of the
+// three key groups (clutch, brake, the rest) has its own lag of 100, 250 or 400 ms. All 27
+// combinations must stop inside A, pull away without a stall or a penalty and roll back no more
+// than the law allows. Then the same sweep with the technique that holds the car on the slope
+// removed must fail, or the sweep proves nothing about the start.
 //
-// Technique: clutch first, then brake. Idle creep takes the car up at about 1.3 m/s; ±150 ms at that
-// speed is ±0.2 m against a 0.5 m window, so the clutch goes down early and the slope's own
-// deceleration slows the car before the brake goes on. Brake before clutch stalls the engine.
+// Technique: clutch first, then brake. Idle creep takes the car up at about 1.3 m/s, so the lags
+// span 0.39 m of road against a 0.5 m window: the clutch cue comes early and the slope's own
+// deceleration slows the car; the brake cue comes when it is nearly still. Brake before clutch
+// stalls the engine.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { STATE_LEN, readState, type SimState } from '../src/sim/contract.ts';
 import { seedWord } from '../src/sim/session.ts';
+import { cueBai3 } from '../src/steps.ts';
 import { createDriver } from './driver.ts';
 
 const WASM = new URL('../../../build/sim.wasm', import.meta.url);
@@ -25,13 +27,7 @@ const CODE = { TUT_DOC: 13 } as const;
 
 const x = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(WASM)), {}).exports as any;
 
-const REACTION = 12; // ticks: 200 ms
-const JITTER = 9; // ticks: 150 ms
-const LATENCY = [REACTION - JITTER, REACTION, REACTION + JITTER] as const;
-
-// Where the learner acts, in metres short of the line, found by sweeping this test.
-const COAST_GAP_M = 1.4; // clutch down: the car slows by itself
-const BRAKE_GAP_M = 0.5; // brake on: the stop
+const LATENCY = [6, 15, 24] as const; // ticks: 100, 250, 400 ms from the cue to the key
 const BITE = 0.65; // let the handbrake go when the clutch bar has come up this far
 const PAUSE_TICKS = 30; // a breath between the stop and the start
 const FUMBLE_TICKS = 60; // the same, for a learner with nothing holding the car
@@ -67,7 +63,7 @@ function drive(latency: Latency, holdWith: 'handbrake' | 'nothing'): Result {
   const wanted: Set<string>[] = [];
   let held = new Set<string>();
   let s: SimState = read();
-  let stage: 'setup' | 'approach' | 'stopping' | 'hold' | 'launch' = 'setup';
+  let stage: 'setup' | 'approach' | 'hold' | 'launch' = 'setup';
   let lastP = -Infinity;
   let stoppedAt = 0;
   let released = false;
@@ -92,11 +88,8 @@ function drive(latency: Latency, holdWith: 'handbrake' | 'nothing'): Result {
         if (s.gear === 1 && !s.handbrake) stage = 'approach';
         break;
       case 'approach':
-        if (s.lineGapM < COAST_GAP_M) k.add('Space');
-        if (s.lineGapM < BRAKE_GAP_M) stage = 'stopping';
-        break;
-      case 'stopping':
-        k.add('Space').add('ArrowDown');
+        if (cueBai3(s)) k.add('Space');
+        if (cueBai3(s) === 'brake') k.add('ArrowDown');
         if (s.sinceStopTicks >= 0) {
           stoppedAt = t;
           stage = 'hold';
@@ -157,10 +150,14 @@ function drive(latency: Latency, holdWith: 'handbrake' | 'nothing'): Result {
 /** Every early / on time / late combination of the three key groups; returns what went wrong. */
 function sweep(holdWith: 'handbrake' | 'nothing'): string[] {
   const failures: string[] = [];
+  let low = Infinity;
+  let high = -Infinity;
   for (const clutch of LATENCY) {
     for (const brake of LATENCY) {
       for (const rest of LATENCY) {
         const r = drive({ clutch, brake, rest }, holdWith);
+        low = Math.min(low, r.stopGapA);
+        high = Math.max(high, r.stopGapA);
         const inside = r.stopGapA >= 0 && r.stopGapA <= hill.max_a_m;
         if (r.stalled || r.codes.length > 0 || !r.finished || !inside || r.rollbackMax > hill.max_rollback_m) {
           failures.push(
@@ -170,10 +167,11 @@ function sweep(holdWith: 'handbrake' | 'nothing'): string[] {
       }
     }
   }
+  if (holdWith === 'handbrake') console.log(`     A over the 27 combinations: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${hill.max_a_m}`);
   return failures;
 }
 
-test('a stop and a start on the slope, off by up to 150 ms either way, stays inside A and rolls back less than 500 mm', () => {
+test('a stop and a start on the slope, acted on the page cue 100 to 400 ms late, stays inside A and rolls back less than 500 mm', () => {
   assert.deepEqual(sweep('handbrake'), []);
 });
 

@@ -140,11 +140,10 @@ async function drive(page, { belt, allowed }) {
   await cruiseUntil(page, 'end of the exercise', `d.phase === 'done'`, allowed);
 }
 
-// Where bài 3's learner acts, as the page shows it: the clutch goes down 1.2 m short of the line and
-// the car slows on the slope by itself; the brake goes on once it is creeping, so the stop does not
-// hang on how fast this script's key reaches the page.
-const COAST_GAP_M = 1.2;
-const BRAKE_BELOW_MPS = 0.6;
+// Bài 3's learner acts on what the page tells them, a human lag later: the advice line carries the
+// cue ('clutch', then 'brake') in data-cue. The lag is the middle of the 100-400 ms the feel test sweeps.
+const REACTION_MS = 250;
+const cue = (name) => `document.querySelector('.advice')?.dataset.cue === '${name}'`;
 
 /**
  * Bài 3 from the keyboard: gear 1, handbrake off, creep up, clutch then brake to stop inside A, hold
@@ -168,9 +167,11 @@ async function driveHill(page, { finish, allowed }) {
   await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
   await key.up('Space');
 
-  await until(page, `${COAST_GAP_M} m short of the line`, `Number(d.lineGap) < ${COAST_GAP_M}`, allowed);
+  await until(page, 'the clutch cue', cue('clutch'), allowed);
+  await page.waitForTimeout(REACTION_MS);
   await key.down('Space');
-  await until(page, 'slowed to a creep', `Number(d.speed) < ${BRAKE_BELOW_MPS}`, allowed);
+  await until(page, 'the brake cue', cue('brake'), allowed);
+  await page.waitForTimeout(REACTION_MS);
   await key.down('ArrowDown');
   await until(page, 'stopped', `d.phase === 'stopped'`, allowed);
   await key.press('KeyP');

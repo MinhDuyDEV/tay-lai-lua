@@ -83,6 +83,27 @@ export function secondsLeft(state: SimState, ruleset: Ruleset): number | null {
   return Math.max(0, limit - state.sinceStopTicks * DT);
 }
 
+/**
+ * Where a learner is told to act. The car creeps up at about 1.3 m/s, so a reaction of 100 to
+ * 400 ms is 0.13 to 0.52 m of road against a 0.5 m window: the clutch cue comes 1.6 m short of the
+ * line and the slope's own deceleration does the slowing; the brake cue comes when the car is
+ * nearly still, so a late brake costs no distance (gravity stops it, the brake catches it). Tuned
+ * so that every lag from 100 to 400 ms stops inside A (apps/web/input/hill-feel.test.ts).
+ */
+const CLUTCH_CUE_M = 1.6;
+const BRAKE_CUE_MPS = 0.3;
+
+/**
+ * 'clutch': press and hold the clutch. 'brake': the car is nearly still with the clutch down, press
+ * the brake too. null: nothing to do about the stop (yet, or any more). The HUD publishes it on the
+ * advice line (`data-cue`), so the page and the tests that drive it act on the same thing.
+ */
+export function cueBai3(s: SimState): 'clutch' | 'brake' | null {
+  if (s.disqualified || s.phase === 'done' || !s.engineOn || stopped(s)) return null;
+  if (s.gear !== 1 || s.handbrake || s.lineGapM < 0 || s.lineGapM >= CLUTCH_CUE_M) return null;
+  return s.clutch > 0.9 && s.speedMps < BRAKE_CUE_MPS ? 'brake' : 'clutch';
+}
+
 const mm = (m: number) => `${Math.round(m * 1000)} mm`;
 
 /**
@@ -99,11 +120,17 @@ export function adviceBai3(s: SimState, ruleset: Ruleset): string {
   if (!stopped(s)) {
     if (s.gear !== 1) return 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
     if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi nhấc côn từ từ.';
+    const cue = cueBai3(s);
+    if (cue === 'brake') return 'Xe sắp dừng: phanh ↓ ngay, vẫn giữ Space.';
+    if (cue === 'clutch') {
+      return s.clutch > 0.9
+        ? 'Giữ Space, xe đang chậm dần. Khi xe sắp dừng sẽ có lệnh phanh ↓.'
+        : `Còn ${mm(s.lineGapM)} tới vạch. Đạp côn ngay (giữ Space), thả ga; chưa phanh.`;
+    }
     if (s.clutch > 0.9) return 'Côn đang đạp xuống nên xe không đi. Nhả Space từ từ, giữ ga ↑ nhẹ.';
-    if (s.lineGapM > hill.max_a_m) {
+    if (s.lineGapM >= 0) {
       return `Còn ${mm(s.lineGapM)} tới vạch. Lăn chậm lên dốc; dừng khi còn không quá ${mm(hill.max_a_m)}.`;
     }
-    if (s.lineGapM >= 0) return `Trong vùng A (${mm(s.lineGapM)}). Thả ga, phanh ↓ để dừng ngay.`;
     return 'Đã quá vạch mà chưa dừng.';
   }
 

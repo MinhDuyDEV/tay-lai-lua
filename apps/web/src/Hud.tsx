@@ -85,6 +85,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (advice.current) {
         const text = exercise.advice(s, ruleset) ?? '';
         if (advice.current.textContent !== text) advice.current.textContent = text;
+        advice.current.dataset.cue = exercise.cue(s) ?? '';
       }
       if (audioEl.current) {
         const now = audio();
