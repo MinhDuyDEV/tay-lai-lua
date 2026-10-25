@@ -210,18 +210,24 @@ mod tests {
         }
     }
 
-    /// One bit in one input must move the hash. Without this, the runners could "pass" with a
-    /// hash that ignores its input.
+    /// One bit in one input must move the hash *and* the simulation behind it. The second half is
+    /// what stops this passing vacuously: a hash that happened to vary (through the PRNG, say)
+    /// while the car computed the same thing would satisfy the first half alone.
     #[test]
-    fn flipping_one_input_bit_changes_the_hash() {
+    fn flipping_one_input_bit_changes_the_hash_and_the_state() {
         let mut g = clean_pass();
-        let baseline = run(&g).hash();
-        // Flip the lowest bit of the throttle of one frame in the middle of the launch.
+        let before = run(&g);
+        let baseline = (before.hash(), before.view().front_bumper_m, before.view().rpm);
+
+        // Flip the lowest bit of the throttle on one frame in the middle of the launch.
         g.inputs[70].throttle ^= 1;
-        assert_ne!(
-            run(&g).hash(),
-            baseline,
-            "a one-bit input change left the hash alone"
+        let after = run(&g);
+        let moved = (after.hash(), after.view().front_bumper_m, after.view().rpm);
+
+        assert_ne!(moved.0, baseline.0, "a one-bit input change left the hash alone");
+        assert!(
+            moved.1 != baseline.1 || moved.2 != baseline.2,
+            "the hash moved but the car did not: {baseline:?} vs {moved:?}"
         );
     }
 
