@@ -63,7 +63,7 @@ Ba ngôn ngữ dùng chung một schema Protobuf (`proto/`). Mỗi ngôn ngữ g
 ```
 create(config: SessionConfig) -> Session      // hạng, bộ luật, xe, sân hoặc tuyến, seed
 step(session, input: TickInput) -> ()         // tiến đúng 1 bước 1/60 s
-state(session) -> &StateView                  // đọc trực tiếp từ bộ nhớ wasm (typed array)
+state(session) -> [f64]                       // chép ảnh chụp trạng thái vào bộ nhớ đệm của phía gọi
 drain_events(session) -> [Event]              // lỗi, điểm, hiệu lệnh, kết thúc bài
 hash(session) -> u64                          // mã băm trạng thái để kiểm tra tất định
 ```
@@ -89,8 +89,7 @@ hash(session) -> u64                          // mã băm trạng thái để ki
 |---|---|---|
 | Họ xe | Mô-đun xe: nhận thao tác, trả về trạng thái và hình bao (thân xe, từng bánh). Chưa có `trait`; chỉ tách thành `trait VehicleModel` khi có họ xe thứ hai | Ô tô thân liền: mô hình xe đạp động học (kinematic bicycle) cùng hệ truyền động: côn, số sàn/tự động, vòng tua, chết máy |
 | Hình học | Va chạm 2D: bánh xe với vạch hoặc polyline, thân xe với vùng hoặc ô đỗ, khoảng cách đầu xe tới vạch dừng | Có |
-| Máy dò (detector) | Các hàm nhỏ, mỗi hàm phát hiện một loại sự kiện: `wheel_on_line`, `stop_distance`, `rollback`, `timer`, `speed_over`, `rpm_over`, `stall`, `signal_state`, `red_light`, `yield_pedestrian`, `collision`… | Đủ cho hạng B |
-| Bộ luật | Đọc dữ liệu luật (mục 6) và nối máy dò với điểm trừ | `tt108-2026` (và `tt12-2025` nếu cần) |
+| Bộ luật | Đọc dữ liệu luật (mục 6); mã trong lõi phát hiện từng sự kiện rồi tra dòng luật theo `id` để lấy điểm trừ | `tt108-2026` (và `tt12-2025` nếu cần) |
 | Giám khảo ảo | Ra hiệu lệnh và quản lý trình tự bài: sa hình thi liên hoàn; đường trường thì bài 1 và 12 cố định, bài 2–11 lặp lại được và không theo thứ tự | Có |
 | Đạo diễn tình huống | Đường trường: khi giám khảo gọi bài nào thì đặt xe chậm, xe ngược chiều, người đi bộ, đèn cần cho bài đó; thêm một ít xe nền | Có |
 | Phát lại | Header gồm mã băm `.wasm`, mã bộ luật, phiên bản nội dung, seed; tiếp theo là log thao tác từng bước | Có |
@@ -203,14 +202,14 @@ Mỗi lỗi trong `docs/legal` trở thành một dòng dữ liệu. Ví dụ (T
 ```json
 {
   "id": "SH.03.TUT_DOC",
-  "exercise": "sa_hinh.doc",
-  "detector": "rollback",
-  "params": { "max_m": 0.5, "from": "stopped_at_line" },
+  "exercise": "sa_hinh.dung_khoi_hanh_doc",
+  "code": 13,
+  "params": {},
   "penalty": { "kind": "DISQUALIFY" },
   "repeat": "ONCE",
   "source": {
     "doc": "TT 108/2026/TT-BCA",
-    "loc": "Phụ lục III, B.I.2.2.4, Bài 3",
+    "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
     "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe, bị đình chỉ sát hạch."
   }
 }
@@ -369,7 +368,6 @@ docs/
 | Sa hình / sát hạch trong hình | `sa_hinh` | Phần thi trong sân kín |
 | Đường trường / sát hạch trên đường | `duong_truong` | Phần thi trên đường giao thông |
 | Bộ luật | `ruleset` | Bộ luật chấm điểm theo một thông tư, có ngày hiệu lực |
-| Máy dò | `detector` | Hàm phát hiện một loại sự kiện từ trạng thái mô phỏng |
 | Đình chỉ | `DISQUALIFY` | Bị dừng thi ngay (trước đây gọi là "truất quyền") |
 | Họ xe | `VehicleModel` (khi có họ xe thứ hai) | Mô hình chuyển động của một loại xe |
 | Giám khảo ảo | `examiner` | Ra hiệu lệnh và quản lý trình tự bài |
