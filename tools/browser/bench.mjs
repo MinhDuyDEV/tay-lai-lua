@@ -135,6 +135,8 @@ const runId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + (qui
 const dir = join(root, runId);
 mkdirSync(dir, { recursive: true });
 const write = (name, value) => writeFileSync(join(dir, name), JSON.stringify(value, null, 1));
+/** Plain text, for the summary a reader opens directly. */
+const writeText = (name, text) => writeFileSync(join(dir, name), text);
 
 const problems = [];
 const calibration = [];
@@ -303,7 +305,7 @@ try {
     console.log(`\n${problems.length} problem(s):`);
     for (const p of problems) console.log(`  ${p}`);
   }
-  write('summary.txt', summary);
+  writeText('summary.txt', summary);
   console.log(`raw JSON: ${dir}`);
   process.exitCode = problems.length ? 1 : 0;
 } finally {
