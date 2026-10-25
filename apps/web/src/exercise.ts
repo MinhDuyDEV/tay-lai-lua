@@ -19,7 +19,7 @@ export interface Exercise {
   /** The line to do next, or null when the exercise has none. */
   advice(state: SimState, ruleset: Ruleset): string | null;
   /** The key the learner is being asked to press now, if any; published next to the advice line. */
-  cue(state: SimState): string | null;
+  cue(state: SimState, ruleset: Ruleset): string | null;
   /** How many key-legend entries the "enter the car" screen lists. */
   introKeys: number;
 }

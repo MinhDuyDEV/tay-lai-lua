@@ -54,6 +54,9 @@ export interface Hill {
 export interface Drivetrain {
   idle_target_rpm: number;
   crank_ticks: number;
+  /** Newtons of rolling resistance; with `mass_kg` it sets the coast deceleration. */
+  rolling_n: number;
+  brake_max_n: number;
 }
 
 export interface Vehicle {
@@ -62,6 +65,7 @@ export interface Vehicle {
   wheelbase_m: number;
   max_steer_rad: number;
   wheel_radius_m: number;
+  mass_kg: number;
 }
 
 export interface Ruleset {
@@ -74,6 +78,20 @@ export interface Ruleset {
   /** Present once the ruleset carries bài 3. */
   hill?: Hill;
   rules: Rule[];
+}
+
+/** Standard gravity, m/s². A physical constant, not a ruleset choice. */
+export const GRAVITY_MPS2 = 9.81;
+
+/**
+ * How fast a car with the clutch down and the throttle off sheds speed on a slope of `grade`, in
+ * m/s². The core's own motion: gravity along the road plus rolling resistance
+ * (vehicle.rs `step_motion`). Every stop distance the advice line reasons about comes from here, so
+ * the picture and the cue cannot disagree about how far the car needs.
+ */
+export function coastDecel(ruleset: Ruleset, grade: number): number {
+  const sinSlope = grade / Math.sqrt(1 + grade * grade);
+  return GRAVITY_MPS2 * sinSlope + ruleset.drivetrain.rolling_n / ruleset.vehicle.mass_kg;
 }
 
 /** Bài 3's numbers, or a clear error: the page was built against a ruleset that has no slope. */

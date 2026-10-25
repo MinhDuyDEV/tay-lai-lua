@@ -141,16 +141,26 @@ async function drive(page, { belt, allowed }) {
 }
 
 // Bài 3's learner acts on what the page tells them, a human lag later: the advice line carries the
-// cue ('clutch', then 'brake') in data-cue. The lag is the middle of the 100-400 ms the feel test sweeps.
+// cue in data-cue — 'slow' when the car is too fast for the stop cue to be honest, then 'clutch' and
+// 'brake'. The lag is the middle of the 100-400 ms the feel test sweeps.
 const REACTION_MS = 250;
 const cue = (name) => `document.querySelector('.advice')?.dataset.cue === '${name}'`;
+
+/**
+ * Wait for any cue and return its name. A cue that never appears fails with the state on screen,
+ * not with a guessed key press: the whole point is that the test acts on what the page shows.
+ */
+async function anyCue(page, what, allowed) {
+  await until(page, what, `document.querySelector('.advice')?.dataset.cue` , allowed);
+  return page.$eval('.advice', (el) => el.dataset.cue);
+}
 
 /**
  * Bài 3 from the keyboard: gear 1, handbrake off, creep up, clutch then brake to stop inside A, hold
  * with the handbrake. Then `finish` either pulls away (handbrake method) or lets the handbrake go with
  * the clutch up and no throttle. Every key waits on the published state.
  */
-async function driveHill(page, { finish, allowed }) {
+async function driveHill(page, { finish, allowed, throttle = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -167,6 +177,18 @@ async function driveHill(page, { finish, allowed }) {
   await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
   await key.up('Space');
 
+  // `throttle` is the learner who comes up too fast: the page must tell them so, and the test only
+  // lifts off once the page says it. No other key is pressed before that cue appears.
+  if (throttle) await key.down('ArrowUp');
+  const first = await anyCue(page, 'the first cue on the advice line', allowed);
+  if (first === 'slow') {
+    await page.waitForTimeout(REACTION_MS);
+    await key.up('ArrowUp');
+    console.log(`     the page said "slow" at ${(await readStage(page)).speed} m/s`);
+    await until(page, 'the speed advice to clear', `(document.querySelector('.advice')?.dataset.cue ?? '') !== 'slow'`, allowed);
+  } else if (throttle) {
+    await key.up('ArrowUp');
+  }
   await until(page, 'the clutch cue', cue('clutch'), allowed);
   await page.waitForTimeout(REACTION_MS);
   await key.down('Space');
@@ -328,6 +350,18 @@ try {
     if (problems.length) throw new Error(problems.join('\n'));
     await page.close();
   });
+  await check('bài 3 coming up too fast: the page says "slow", the learner lifts off, and the stop still lands inside A', async () => {
+    const { page, problems } = await fresh('/thi/3');
+    await driveHill(page, { finish: 'pull-away', allowed: [], throttle: true });
+    const d = await readStage(page);
+    if (d.phase !== 'done' || d.score !== '100' || d.penalties !== '') {
+      throw new Error(`not a clean finish: ${JSON.stringify(d)}`);
+    }
+    if (Number(d.stopA) < 0 || Number(d.stopA) > ruleset.hill.max_a_m) throw new Error(`A ${d.stopA} m is outside the window`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+
 } finally {
   await browser.close();
   server.close();

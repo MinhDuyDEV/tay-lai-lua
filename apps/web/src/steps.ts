@@ -4,7 +4,7 @@
 // One list per exercise; `exercise.ts` picks which one a page uses.
 
 import { DT } from '../input/driver.ts';
-import { hillOf, type Ruleset } from './ruleset.ts';
+import { coastDecel, hillOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
 export type StepId =
@@ -85,27 +85,77 @@ export function secondsLeft(state: SimState, ruleset: Ruleset): number | null {
 }
 
 /**
- * Where a learner is told to act. The car creeps up at about 1.3 m/s, so a reaction of 100 to
- * 400 ms is 0.13 to 0.52 m of road against a 0.5 m window: the clutch cue comes 1.6 m short of the
- * line and the slope's own deceleration does the slowing; the brake cue comes when the car is
- * nearly still, so a late brake costs no distance (gravity stops it, the brake catches it). Tuned
- * so that every lag from 100 to 400 ms stops inside A (apps/web/input/hill-feel.test.ts).
+ * Where a learner is told to act, from the state and the road's own physics.
+ *
+ * A cue is a key press, and a person is 100 to 400 ms late. At speed v that spread alone is 0.3·v
+ * metres of road against a 0.50 m window for A, so past about 1.5 m/s the reaction spread fills the
+ * whole window whatever distance the cue is given at (measured by `input/hill-feel.test.ts`). The
+ * line therefore has two stages. Above the band it says `slow`: lift off, and the engine brake
+ * brings the car back to its creep. Inside the band it cues the stop itself: `clutch` at the
+ * distance the slope needs to coast the car still, then `brake` once it is nearly still.
+ *
+ * Both distances come from the measured coast deceleration (gravity along the grade plus rolling
+ * resistance, `coastDecel`), read from the ruleset, so a different grade or car moves the cue with
+ * it instead of leaving behind a constant that only fits one slope.
  */
-const CLUTCH_CUE_M = 1.6;
-const BRAKE_CUE_MPS = 0.3;
+export type Bai3Cue = 'slow' | 'clutch' | 'brake';
 
 /**
- * 'clutch': press and hold the clutch. 'brake': the car is nearly still with the clutch down, press
- * the brake too. null: nothing to do about the stop (yet, or any more). The HUD publishes it on the
- * advice line (`data-cue`), so the page and the tests that drive it act on the same thing.
+ * Fastest approach speed the stop cue can hold inside A across a 100–400 ms reaction. The car's own
+ * idle creep in gear is ~1.75 m/s, so this sits just above it: a learner who never touches the
+ * throttle is never told to slow down.
  */
-export function cueBai3(s: SimState): 'clutch' | 'brake' | null {
+const V_BAND_MPS = 1.85;
+/** The cue is placed for the middle of that sweep, so both ends land inside A. */
+const LAG_MID_S = 0.25;
+/** Where a mid-lag stop lands, measured back from the line. */
+const A_TARGET_M = 0.30;
+/** Below this the car is nearly still: the brake catches it and costs no road. */
+const V_BRAKE_MPS = 0.3;
+/** The slowest reaction the sweep covers. */
+const LAG_MAX_S = 0.4;
+/** How hard the engine alone sheds speed in gear with the throttle shut, m/s²; measured. */
+const ENGINE_BRAKE_MPS2 = 0.9;
+/** Road kept spare so a learner who is still slowing is not told to stop too early. */
+const SLOW_LEAD_M = 0.35;
+
+/** The coast from `v` to a stop, plus the mid-lag reaction, measured back from the line. */
+function stopGap(v: number, coast: number): number {
+  return LAG_MID_S * v + (v * v) / (2 * coast) + A_TARGET_M;
+}
+
+/**
+ * Where `slow` starts. Above the band the car is still on the gas, so the learner has to lift off,
+ * let the engine brake bring the car back to its creep, and then stop from there. All of that road,
+ * plus the slowest reaction, has to fit before the stop cue.
+ */
+function slowGap(v: number, coast: number): number {
+  const engineDecel = coast - ENGINE_BRAKE_MPS2;
+  const shed = Math.max(0, v * v - V_BAND_MPS * V_BAND_MPS) / (2 * Math.max(0.1, engineDecel));
+  return LAG_MAX_S * v + shed + stopGap(V_BAND_MPS, coast) + SLOW_LEAD_M;
+}
+
+/**
+ * `slow` is a speed instruction, not a stop: the learner lifts off the throttle and the engine brake
+ * brings the car down to its creep, where the stop cue can be honest. `clutch` then holds the car's
+ * drive open so the slope does the slowing; `brake` catches it when it is nearly still.
+ *
+ * The HUD publishes it on the advice line (`data-cue`), so the page and the tests that drive it act
+ * on the same thing.
+ */
+export function cueBai3(s: SimState, ruleset: Ruleset): Bai3Cue | null {
   if (s.disqualified || s.phase === 'done' || !s.engineOn || stopped(s)) return null;
-  if (s.gear !== 1 || s.handbrake || s.lineGapM < 0 || s.lineGapM >= CLUTCH_CUE_M) return null;
-  return s.clutch > 0.9 && s.speedMps < BRAKE_CUE_MPS ? 'brake' : 'clutch';
+  if (s.gear !== 1 || s.handbrake || s.lineGapM < 0) return null;
+  // The stop line is on the slope, so the road the car will slow on is the slope's grade — not the
+  // grade under the car now, which is 0 on the flat and would make the cue absurdly early.
+  const coast = coastDecel(ruleset, hillOf(ruleset).grade);
+  if (s.speedMps > V_BAND_MPS) return s.lineGapM <= slowGap(s.speedMps, coast) ? 'slow' : null;
+  if (s.lineGapM > stopGap(s.speedMps, coast)) return null;
+  return s.clutch > 0.9 && s.speedMps < V_BRAKE_MPS ? 'brake' : 'clutch';
 }
 
 const mm = (m: number) => `${Math.round(m * 1000)} mm`;
+const kmh = (mps: number) => (mps * 3.6).toFixed(1);
 
 /**
  * Bài 3: the one thing to do next, and why, read from the state. It also says why a key does
@@ -121,7 +171,10 @@ export function adviceBai3(s: SimState, ruleset: Ruleset): string {
   if (!stopped(s)) {
     if (s.gear !== 1) return 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
     if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi nhấc côn từ từ.';
-    const cue = cueBai3(s);
+    const cue = cueBai3(s, ruleset);
+    if (cue === 'slow') {
+      return `Quá nhanh (${kmh(s.speedMps)} km/h): nhả ga cho xe chậm lại, chỉ lăn tới vạch rồi hẵng dừng.`;
+    }
     if (cue === 'brake') return 'Xe sắp dừng: phanh ↓ ngay, vẫn giữ Space.';
     if (cue === 'clutch') {
       return s.clutch > 0.9
