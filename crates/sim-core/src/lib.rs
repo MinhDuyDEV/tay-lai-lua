@@ -18,8 +18,10 @@ mod vehicle;
 
 #[cfg(test)]
 mod scenarios;
+#[cfg(test)]
+mod scenarios_hill;
 
-use exercise::{DT, Signal, State};
+use exercise::{DT, Exercise, Signal, State};
 use hash::Hash;
 use rules::{Ruleset, Thresholds};
 use vehicle::Controls;
@@ -121,8 +123,11 @@ impl Prng {
     }
 }
 
+/// The exercise id is the top byte of the seed; the layout is documented at `sim_create`.
+const EXERCISE_SHIFT: u32 = 56;
+
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 21;
+pub const SNAPSHOT_LEN: usize = 27;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -130,8 +135,9 @@ pub const SNAPSHOT_LEN: usize = 21;
 /// `phase_code` and `signal_code`. Adding a field means bumping `SNAPSHOT_LEN` here and in TS.
 ///
 /// ```text
-///  0 tick                  steps since the start order (0 while it waits for the order)
-///  1 phase                 0 waiting | 1 launched | 2 past line | 3 done
+///  0 tick                  steps since the start order (0 while it waits for the order); bài 3
+///                          has no order, it counts from the first step
+///  1 phase                 0 waiting | 1 launched | 2 past line | 3 done | 4 stopped
 ///  2 score                 100 down to 0
 ///  3 disqualified          0 | 1
 ///  4 car x_m               metres, car centre, on the course axis
@@ -139,7 +145,8 @@ pub const SNAPSHOT_LEN: usize = 21;
 ///  6 heading_rad           radians, 0 = down the course
 ///  7 speed_mps             m/s along the car's own +x axis
 ///  8 rpm                   engine speed, 0 when the engine is off
-///  9 front_bumper_m        front-bumper centre, metres past the start line (negative = short)
+///  9 front_bumper_m        front-bumper centre, metres past the start line (negative = short);
+///                          in bài 3 the course axis, with the foot of the slope at `hill.foot_x_m`
 /// 10 engine_on             0 | 1
 /// 11 cranking              0 | 1, the starter is turning
 /// 12 steer_rad             -max_steer..max_steer, as consumed
@@ -152,6 +159,14 @@ pub const SNAPSHOT_LEN: usize = 21;
 /// 19 signal                0 off | 1 left | 2 right
 /// 20 engine_load_nm        Nm the clutch drags the engine down with; negative when the wheels
 ///                          drive the engine. The audio tells lugging from a free rev by it.
+/// 21 line_gap_m            bài 3: stop line minus front bumper, positive while short; 0 in bài 1
+/// 22 stop_gap_a_m          bài 3: distance A recorded at the stop (negative = past the line); 0
+///                          before the stop
+/// 23 rollback_m            bài 3: metres the front bumper is behind where the car stopped, >= 0;
+///                          0 before the stop
+/// 24 since_stop_ticks      bài 3: steps since the stop, 0 on the stop step; -1 before it (and in bài 1)
+/// 25 elevation_m           road height under the car centre, metres above the flat; 0 in bài 1
+/// 26 grade                 road grade under the car centre (0.10 on bài 3's slope); 0 in bài 1
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
@@ -170,16 +185,22 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(seed: u64) -> Self {
+    /// `None` when the seed names an exercise this core does not have (see `sim_create`).
+    pub fn new(seed: u64) -> Option<Self> {
         Self::with_ruleset(seed, Ruleset::load())
     }
 
-    pub fn with_ruleset(seed: u64, rules: Ruleset) -> Self {
+    pub fn with_ruleset(seed: u64, rules: Ruleset) -> Option<Self> {
+        let exercise = match seed >> EXERCISE_SHIFT {
+            0 | 1 => Exercise::Start,
+            3 => Exercise::Hill,
+            _ => return None,
+        };
         let thresholds = rules.thresholds();
-        let state = State::new(&rules);
+        let state = State::new(&rules, exercise);
         // A zero seed would freeze xorshift; start from a non-zero constant like the skeleton did.
         let prng = Prng(seed ^ 0x9e37_79b9_7f4a_7c15);
-        Self { rules, thresholds, state, seed, prng, events: Vec::new(), pending: Vec::new() }
+        Some(Self { rules, thresholds, state, seed, prng, events: Vec::new(), pending: Vec::new() })
     }
 
     pub fn step(&mut self, input: TickInput) {
@@ -249,6 +270,20 @@ impl Session {
         out[18] = f64::from(u8::from(c.has_belt));
         out[19] = f64::from(signal_code(s.signal));
         out[20] = s.car.engine_load(&self.rules.vehicle, &self.rules.drivetrain, c);
+        out[24] = -1.0;
+        if s.exercise == Exercise::Hill {
+            let h = &self.rules.hill;
+            out[21] = h.stop_line_x_m() - out[9];
+            out[23] = 0.0;
+            if let Some(stop) = s.stop {
+                out[22] = h.stop_line_x_m() - stop.front_bumper_m;
+                let back = stop.front_bumper_m - out[9];
+                out[23] = if back > 0.0 { back } else { 0.0 };
+                out[24] = f64::from(s.tick - stop.tick);
+            }
+            out[25] = h.elevation_at(s.car.x_m);
+            out[26] = h.grade_at(s.car.x_m);
+        }
         out
     }
 
@@ -290,6 +325,12 @@ impl Session {
         // Course progress.
         h.opt_f64(s.crossed_at.map(f64::from));
         h.opt_f64(s.signal_off_at_m);
+
+        // Bài 3's stop record. Bài 1 writes nothing, so its hash is what it was before bài 3.
+        if s.exercise == Exercise::Hill {
+            h.opt_f64(s.stop.map(|p| p.front_bumper_m));
+            h.u32(s.stop.map_or(0, |p| p.tick));
+        }
 
         // Events so far.
         h.u32(self.events.len() as u32);
@@ -347,6 +388,7 @@ fn phase_code(p: exercise::Phase) -> u8 {
         exercise::Phase::Launched => 1,
         exercise::Phase::PastLine => 2,
         exercise::Phase::Done => 3,
+        exercise::Phase::Stopped => 4,
     }
 }
 

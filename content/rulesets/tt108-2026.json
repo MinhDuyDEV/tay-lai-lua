@@ -1,6 +1,6 @@
 {
   "id": "tt108-2026",
-  "title": "Bộ luật chấm điểm sa hình hạng B số sàn — bài 1 Xuất phát",
+  "title": "Bộ luật chấm điểm sa hình hạng B số sàn — bài 1 Xuất phát, bài 3 Dừng và khởi hành xe trên dốc",
   "effective_from": "2026-07-01",
   "scoring": {
     "base": 100,
@@ -87,12 +87,42 @@
     "drag_n_per_mps2": 0.45,
     "assumption": "Không có trong văn bản. Xem vehicle.drivetrain_assumption."
   },
+  "hill": {
+    "foot_x_m": 0.0,
+    "foot_x_assumption": "Gốc trục x của bài 3 đặt ở chân dốc; mọi khoảng cách của bài 3 đo dọc theo mặt đường (xem assumptions.hill_distances_along_road).",
+    "slope_length_m": 15.0,
+    "grade": 0.1,
+    "slope": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.3 / tr.11",
+      "quote": "Trên đường dốc lên có chiều dài 15 m, độ dốc 10 %, cách chân dốc tối thiểu 06 m kẻ vạch"
+    },
+    "stop_line_from_foot_m": 6.0,
+    "stop_line_assumption": "Văn bản chỉ cho ‘tối thiểu 06 m’ (xem hill.slope). Lấy đúng mức tối thiểu 6,0 m. Chủ dự án chọn tạm ngày 2026-10-25.",
+    "flat_top_m": 10.0,
+    "flat_top_assumption": "10 m đoạn đỉnh dốc (bằng) chỉ có trên Hình 9 (docs/legal/qcvn-15-2026-hinh-ve.md), không có trong văn bản. Chỉ để vẽ: xe không bao giờ tới đó vì bài kết thúc ở vạch dừng. Dốc xuống chỉ có trên hình, không có chiều dài, không mô phỏng và không chấm điểm.",
+    "start_front_bumper_from_foot_m": -8.0,
+    "start_position_assumption": "Văn bản không nêu vị trí xuất phát của bài 3. Xe chờ trên đoạn bằng, thanh cản trước cách chân dốc 8 m (âm = trước chân dốc). Chủ dự án chọn tạm ngày 2026-10-25.",
+    "max_a_m": 0.5,
+    "max_a": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, yêu cầu",
+      "quote": "khoảng cách A không quá 500mm"
+    },
+    "max_rollback_m": 0.5,
+    "max_rollback": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+      "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe"
+    },
+    "no_stop_beyond_m": 1.0,
+    "no_stop_beyond_assumption": "Xem assumptions.hill_no_stop_window. Lead chọn tạm 1,0 m sau vạch, chờ Chủ sở hữu xác nhận."
+  },
   "rules": [
     {
       "id": "SH.01.DAY_AN_TOAN",
       "code": 1,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "belt_at_order",
       "params": {},
       "penalty": {
         "kind": "POINTS",
@@ -109,7 +139,6 @@
       "id": "SH.01.KHONG_XI_NHAN_TRAI",
       "code": 2,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "signal_left_at_line",
       "params": {},
       "penalty": {
         "kind": "POINTS",
@@ -126,7 +155,6 @@
       "id": "SH.01.KHONG_TAT_XI_NHAN",
       "code": 3,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "signal_left_still_on",
       "params": {},
       "penalty": {
         "kind": "POINTS",
@@ -143,7 +171,6 @@
       "id": "SH.01.XI_NHAN_KHONG_KIP",
       "code": 4,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "signal_left_untimely",
       "params": {},
       "penalty": {
         "kind": "POINTS",
@@ -160,7 +187,6 @@
       "id": "SH.01.QUA_20S",
       "code": 5,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "cross_line_timeout",
       "params": {
         "seconds": 20.0
       },
@@ -179,7 +205,6 @@
       "id": "SH.01.QUA_30S",
       "code": 6,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "cross_line_timeout",
       "params": {
         "seconds": 30.0
       },
@@ -197,7 +222,6 @@
       "id": "SH.X.CHET_MAY",
       "code": 7,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "engine_stall",
       "params": {},
       "penalty": {
         "kind": "POINTS",
@@ -214,7 +238,6 @@
       "id": "SH.X.RPM",
       "code": 8,
       "exercise": "sa_hinh.xuat_phat",
-      "detector": "rpm_over",
       "params": {
         "rpm": 4000.0
       },
@@ -227,6 +250,84 @@
         "doc": "TT 108/2026/TT-BCA",
         "loc": "Phụ lục III, B.2.2.4 — Các lỗi lặp lại ở hầu hết các bài, bảng lỗi",
         "quote": "Để tốc độ động cơ quá 4000 vòng/phút, mỗi lần trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.03.KHONG_DUNG",
+      "code": 9,
+      "exercise": "sa_hinh.dung_khoi_hanh_doc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+        "quote": "Không dừng xe ở vạch dừng quy định, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.03.CHUA_DEN_VACH",
+      "code": 10,
+      "exercise": "sa_hinh.dung_khoi_hanh_doc",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+        "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.03.QUA_VACH",
+      "code": 11,
+      "exercise": "sa_hinh.dung_khoi_hanh_doc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+        "quote": "Dừng xe quá vạch dừng quy định, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.03.QUA_30S",
+      "code": 12,
+      "exercise": "sa_hinh.dung_khoi_hanh_doc",
+      "params": {
+        "seconds": 30.0
+      },
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+        "quote": "Quá thời gian 30 giây kể từ khi dừng xe không khởi hành xe qua vạch dừng, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.03.TUT_DOC",
+      "code": 13,
+      "exercise": "sa_hinh.dung_khoi_hanh_doc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
+        "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe, bị đình chỉ sát hạch."
       }
     }
   ],
@@ -280,6 +381,71 @@
       "field": "smooth_departure_not_scored",
       "value": "‘Khởi hành nhẹ nhàng, không bị rung giật, trong khoảng thời gian 20 giây’ is not implemented",
       "why": "Bài 1 states this as a requirement but its error table gives no row and no points for a jerky start; the only ‘rung giật’ row in the whole of Phụ lục III is DT.X.RUNG_GIAT, which is a road-test (đường trường) error. The lane brief fixes the rule set at the 6 SH.01.* rows plus SH.X.CHET_MAY and SH.X.RPM, so a stalling launch is already charged once, as a stall."
+    },
+    {
+      "field": "hill_distances_along_road",
+      "value": "distances of bài 3 are measured along the road surface, not projected on the plan",
+      "why": "Văn bản cho chiều dài dốc 15 m và khoảng cách 06 m nhưng không nói đo theo mặt đường hay hình chiếu bằng. Xe chạy theo quãng đường trên mặt đường nên tọa độ x của xe là quãng đường dọc mặt đường; một mét đi được lên cao sin(góc dốc) mét, với góc dốc = atan(0,10). Khoảng cách A, độ tụt dốc và 1,0 m của hill_no_stop_window đều đo theo cách này.",
+      "quote": "Trên đường dốc lên có chiều dài 15 m, độ dốc 10 %, cách chân dốc tối thiểu 06 m kẻ vạch"
+    },
+    {
+      "field": "hill_start_state",
+      "value": "engine running at idle, neutral, handbrake on, on the flat 8 m before the foot; no start order, no clock",
+      "why": "Bài 3 không có hiệu lệnh xuất phát và văn bản chỉ tính giờ từ lúc dừng xe. Điểm được chấm ngay từ bước 1 (chết máy, vòng tua, đi quá vạch không dừng). Đồng hồ 30 giây và phép đo tụt dốc chỉ bắt đầu ở lần dừng xe. Máy đã nổ sẵn để bài bắt đầu ngay trước chân dốc; chết máy vẫn đề lại được bằng cờ đề máy như bài 1 (engine_restart).",
+      "quote": "Quá thời gian 30 giây kể từ khi dừng xe"
+    },
+    {
+      "field": "hill_stop_definition",
+      "value": "the first step, after the car has moved forward (> 0.1 m/s), on which forward speed is <= 0; only the first stop counts",
+      "why": "‘Dừng xe’ không được định nghĩa. Tốc độ về 0, hoặc bị đẩy qua 0 sang chiều lùi ngay trong một bước (trọng lực có thể làm vậy), cũng là lần dừng, để xe tuột dốc mà không phanh vẫn bị tính 30 giây và bị xét tụt dốc.",
+      "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe"
+    },
+    {
+      "field": "hill_stop_zone",
+      "value": "a stop counts only with the front bumper at or past the foot of the slope; a stop on the flat approach is not a stop",
+      "why": "Vạch dừng cách chân dốc tối thiểu 06 m, nên vùng của bài là từ chân dốc tới vạch. Chết máy hay do dự trên đoạn bằng phía trước chân dốc không phải lần dừng: không bị xét A, không chạy đồng hồ 30 giây, không đo tụt dốc. Lần dừng đầu tiên trong vùng mới được tính.",
+      "quote": "cách chân dốc tối thiểu 06 m kẻ vạch"
+    },
+    {
+      "field": "hill_stop_distance_a",
+      "value": "A = stop line − front bumper at the stop; A > 0.5 m: SH.03.CHUA_DEN_VACH, run continues; A < 0: SH.03.QUA_VACH; otherwise a good stop",
+      "why": "A đo từ tim thanh cản trước (measure_point). Dừng chưa đến vạch bị trừ 05 điểm và bài vẫn tiếp tục; đồng hồ 30 giây và phép đo tụt dốc tính từ chính lần dừng đó. Thanh cản trước đã qua vạch (A < 0) là dừng quá vạch, bị đình chỉ.",
+      "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
+    },
+    {
+      "field": "hill_no_stop_window",
+      "value": "SH.03.KHONG_DUNG: the bumper has passed the line with no recorded stop and reaches no_stop_beyond_m (1.0 m) past it",
+      "why": "‘Không dừng xe ở vạch dừng’ và ‘dừng xe quá vạch’ cần phân biệt được. Xe dừng hẳn trong 1,0 m sau vạch là lần dừng với A < 0, tức SH.03.QUA_VACH; xe đi qua 1,0 m mà chưa dừng là không dừng, tức SH.03.KHONG_DUNG. Không có khoảng này thì SH.03.QUA_VACH không bao giờ xảy ra. Giá trị 1,0 m do Lead chọn tạm, chờ Chủ sở hữu xác nhận.",
+      "quote": "Không dừng xe ở vạch dừng quy định, bị đình chỉ sát hạch."
+    },
+    {
+      "field": "hill_rollback_measure",
+      "value": "rollback = front bumper at the stop minus front bumper now; SH.03.TUT_DOC when it exceeds 0.5 m",
+      "why": "‘Tụt dốc quá 500mm kể từ khi dừng xe’ không nói đo từ điểm nào. Đo từ tim thanh cản trước tại lần dừng, theo độ dịch chuyển ròng về phía sau (xe tụt rồi tiến lại thì độ tụt giảm theo), cùng quy ước điểm đo với measure_point.",
+      "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe"
+    },
+    {
+      "field": "hill_end_of_run",
+      "value": "after a stop, the front bumper past the stop line ends the run with the score so far; more than 30 s from the stop with the bumper still short is SH.03.QUA_30S",
+      "why": "Văn bản chỉ nói ‘khởi hành xe qua vạch dừng’; bài kết thúc khi thanh cản trước qua vạch sau lần dừng. 30 giây là 1800 bước; quá 1800 bước kể từ bước dừng mà thanh cản còn trước vạch thì bị đình chỉ.",
+      "quote": "Quá thời gian 30 giây kể từ khi dừng xe không khởi hành xe qua vạch dừng, bị đình chỉ sát hạch."
+    },
+    {
+      "field": "hill_gravity",
+      "value": "a gravity force along the road, grade taken at the car centre; a brake or handbrake that can hold the car on the slope holds it with speed exactly 0",
+      "why": "Không có trong văn bản. Trọng lực là lực (không phải lực cản): nó có thể đưa xe qua tốc độ 0 sang chiều lùi, như hệ truyền động. Lực phanh hoặc phanh tay đủ giữ xe trên dốc 10 % thì giữ đúng: tốc độ bằng 0, không bò, không dao động. Độ dốc đổi tức thì khi tim xe qua chân dốc. Trên đường bằng không có số hạng trọng lực nào."
+    },
+    {
+      "field": "hill_smooth_departure_not_scored",
+      "value": "‘Khởi hành xe êm dịu’ is not implemented as a rule",
+      "why": "Bài 3 nêu đây là yêu cầu nhưng bảng lỗi không có dòng nào và không có điểm trừ cho khởi hành giật; phần định lượng duy nhất là tụt dốc quá 500mm (SH.03.TUT_DOC) và 30 giây (SH.03.QUA_30S). Chết máy khi khởi hành đã bị trừ một lần là chết máy.",
+      "quote": "Khởi hành xe êm dịu, không bị tụt dốc quá 500mm."
+    },
+    {
+      "field": "hill_pavement_belt_signal_not_scored",
+      "value": "vỉa hè, belt and signals are not scored in bài 3",
+      "why": "Bảng lỗi bài 3 chỉ có năm dòng SH.03.* cùng các lỗi chung (tai nạn, chết máy, vòng tua, quá tốc độ, tổng thời gian); không có dây an toàn, xi nhan hay vỉa hè. Lõi chỉ chấm SH.X.CHET_MAY và SH.X.RPM trong các lỗi chung, như bài 1. Lưu ý: ghi chú của docs/legal cho rằng lỗi lên vỉa hè vẫn bị đình chỉ theo mục 1.4; Lead đã quyết định không chấm.",
+      "quote": "không ghi lỗi \"lái xe lên vỉa hè\""
     }
   ]
 }

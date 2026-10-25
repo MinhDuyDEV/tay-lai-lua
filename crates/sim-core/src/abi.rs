@@ -1,7 +1,7 @@
 //! The wasm surface. Every function here is a thin wrapper; no logic lives in this file.
 //! Locked contract (runners depend on it):
 //!   sim_alloc(len) -> ptr            sim_free(ptr, len)
-//!   sim_create(seed: u64) -> handle  sim_destroy(handle)
+//!   sim_create(seed: u64) -> handle  sim_destroy(handle)   (handle 0 = refused, see `sim_create`)
 //!   sim_step(handle, input_ptr)      reads TickInput::WIRE_LEN bytes
 //!   sim_hash(handle) -> u64
 //!   sim_drain_events(handle, out_ptr, cap) -> n   writes n <= cap Event records (Event::WIRE_LEN each)
@@ -24,16 +24,27 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
     drop(unsafe { Vec::from_raw_parts(ptr, 0, len.max(1)) });
 }
 
+/// The seed carries two things. Bits 56..63 (the top byte) are the exercise id: 0 and 1 are bài 1
+/// (Xuất phát; 0 so that a plain seed is a bài 1 seed, 1 because it is bài 1's own number and the
+/// messy golden's seed starts with it), 3 is bài 3 (Dừng và khởi hành xe trên dốc). Bits 0..55 are
+/// the seed proper. Any other exercise id is refused: this returns a null handle, and the caller
+/// must not use it, rather than quietly running bài 1.
 #[unsafe(no_mangle)]
 pub extern "C" fn sim_create(seed: u64) -> *mut Session {
-    Box::into_raw(Box::new(Session::new(seed)))
+    match Session::new(seed) {
+        Some(s) => Box::into_raw(Box::new(s)),
+        None => core::ptr::null_mut(),
+    }
 }
 
 /// # Safety
-/// `s` must come from `sim_create` and not be used afterwards.
+/// `s` must come from `sim_create` and not be used afterwards; the null handle of a refused
+/// `sim_create` is accepted and ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sim_destroy(s: *mut Session) {
-    drop(unsafe { Box::from_raw(s) });
+    if !s.is_null() {
+        drop(unsafe { Box::from_raw(s) });
+    }
 }
 
 /// # Safety

@@ -4,6 +4,7 @@
 //! sits in `docs/legal/*.md` (`source.loc`). Anything the law does not say lives in `assumptions`
 //! instead of being silently baked into code.
 
+use libm::sqrt;
 use serde::Deserialize;
 
 pub const EMBEDDED: &str = include_str!("../../../content/rulesets/tt108-2026.json");
@@ -15,6 +16,7 @@ pub struct Ruleset {
     pub course: Course,
     pub vehicle: Vehicle,
     pub drivetrain: Drivetrain,
+    pub hill: Hill,
     pub rules: Vec<Rule>,
 }
 
@@ -34,6 +36,52 @@ pub struct Course {
     pub signal_off_late_m: f64,
     pub exercise_end_m: f64,
     pub start_front_bumper_m: f64,
+}
+
+/// Bài 3's course: the longitudinal road profile and the numbers the stop is judged against.
+/// Every length is metres along the road; x is the course axis, the foot of the slope at `foot_x_m`.
+/// Flat before the foot and, downhill not being modelled, flat after the slope.
+#[derive(Deserialize)]
+pub struct Hill {
+    pub foot_x_m: f64,
+    pub slope_length_m: f64,
+    /// Rise over run, 0.10 for 10 %.
+    pub grade: f64,
+    pub stop_line_from_foot_m: f64,
+    /// The level stretch above the slope. Drawn, not modelled: the run ends at the stop line.
+    pub flat_top_m: f64,
+    pub start_front_bumper_from_foot_m: f64,
+    pub max_a_m: f64,
+    pub max_rollback_m: f64,
+    pub no_stop_beyond_m: f64,
+}
+
+impl Hill {
+    pub fn stop_line_x_m(&self) -> f64 {
+        self.foot_x_m + self.stop_line_from_foot_m
+    }
+
+    fn on_slope(&self, x_m: f64) -> bool {
+        x_m > self.foot_x_m && x_m <= self.foot_x_m + self.slope_length_m
+    }
+
+    /// Road grade under `x_m`: 0 off the slope.
+    pub fn grade_at(&self, x_m: f64) -> f64 {
+        if self.on_slope(x_m) { self.grade } else { 0.0 }
+    }
+
+    /// Sine of the climb angle under `x_m`. Positions are along the road, so a metre of travel
+    /// climbs `sin`, not `grade`.
+    pub fn sin_slope_at(&self, x_m: f64) -> f64 {
+        let g = self.grade_at(x_m);
+        if g == 0.0 { 0.0 } else { g / sqrt(1.0 + g * g) }
+    }
+
+    /// Road height at `x_m`, metres above the flat approach.
+    pub fn elevation_at(&self, x_m: f64) -> f64 {
+        let up = (x_m - self.foot_x_m).clamp(0.0, self.slope_length_m);
+        up * self.grade / sqrt(1.0 + self.grade * self.grade)
+    }
 }
 
 #[derive(Deserialize)]
@@ -103,24 +151,11 @@ impl Gears {
 pub struct Rule {
     pub id: String,
     pub code: u16,
-    pub detector: Detector,
     #[serde(default)]
     pub params: Params,
     pub penalty: Penalty,
     pub repeat: Repeat,
     pub source: Source,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum Detector {
-    BeltAtOrder,
-    SignalLeftAtLine,
-    SignalLeftStillOn,
-    SignalLeftUntimely,
-    CrossLineTimeout,
-    EngineStall,
-    RpmOver,
 }
 
 /// Rule thresholds that the law states as numbers. Absent where the rule needs none.
@@ -161,6 +196,8 @@ pub struct Thresholds {
     pub rpm_limit: f64,
     pub timeout_20_ticks: u32,
     pub timeout_30_ticks: u32,
+    /// Bài 3: ticks allowed from the stop to the stop line.
+    pub hill_timeout_ticks: u32,
 }
 
 impl Ruleset {
@@ -188,6 +225,7 @@ impl Ruleset {
             rpm_limit: self.rule("SH.X.RPM").params.rpm,
             timeout_20_ticks: seconds_to_ticks(self.rule("SH.01.QUA_20S").params.seconds),
             timeout_30_ticks: seconds_to_ticks(self.rule("SH.01.QUA_30S").params.seconds),
+            hill_timeout_ticks: seconds_to_ticks(self.rule("SH.03.QUA_30S").params.seconds),
         }
     }
 }
@@ -243,20 +281,19 @@ mod tests {
         }
     }
 
+    /// The core charges rules by id and a charge for an id the ruleset lacks is silently dropped,
+    /// so every id passed to `charge` in the exercise code must be a row of the ruleset.
     #[test]
-    fn embedded_ruleset_loads_and_covers_every_detector() {
+    fn every_rule_id_the_core_charges_exists_in_the_ruleset() {
         let rs = Ruleset::load();
-        assert_eq!(rs.id, "tt108-2026");
-        for d in [
-            Detector::BeltAtOrder,
-            Detector::SignalLeftAtLine,
-            Detector::SignalLeftStillOn,
-            Detector::SignalLeftUntimely,
-            Detector::CrossLineTimeout,
-            Detector::EngineStall,
-            Detector::RpmOver,
-        ] {
-            assert!(rs.rules.iter().any(|r| r.detector == d), "missing detector {d:?}");
+        let ids: Vec<&str> = include_str!("exercise.rs")
+            .split("self.charge(rs, \"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        assert!(!ids.is_empty(), "found no charge calls to check");
+        for id in ids {
+            assert!(rs.index_of(id).is_some(), "the core charges {id}, which the ruleset lacks");
         }
     }
 }

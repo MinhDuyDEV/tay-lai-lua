@@ -29,7 +29,7 @@ fn crank(s: &mut Session) {
 /// The first of those steps carries the start order, so `t` is the test's own clock and the belt
 /// and signal of its input are what the order tick is judged on.
 fn drive(ticks: u32, mut driver: impl FnMut(&View, u32) -> TickInput) -> Session {
-    let mut s = Session::new(2026);
+    let mut s = Session::new(2026).unwrap();
     crank(&mut s);
     for t in 0..ticks {
         let input = {
@@ -84,7 +84,7 @@ fn clean() -> Launch {
 
 #[test]
 fn the_engine_starts_cold_and_only_the_starter_lights_it() {
-    let mut s = Session::new(2026);
+    let mut s = Session::new(2026).unwrap();
     let v = s.view();
     assert!(!v.engine_on, "cold: the engine must start off");
     assert_eq!(v.rpm, 0.0);
@@ -116,7 +116,7 @@ fn the_engine_starts_cold_and_only_the_starter_lights_it() {
 
 #[test]
 fn nothing_is_scored_before_the_start_order() {
-    let mut s = Session::new(2026);
+    let mut s = Session::new(2026).unwrap();
     crank(&mut s);
     // Belt off, first gear, clutch dropped: a stall and two charges once the run is scored.
     for _ in 0..120 {
@@ -142,7 +142,7 @@ fn nothing_is_scored_before_the_start_order() {
 fn an_order_given_past_the_start_line_is_ignored() {
     // Drive the whole course before the order, no belt, no signal, then stop beyond the end mark.
     // Such a run is unscored; the order must not turn it into a finished run with a clean score.
-    let mut s = Session::new(2026);
+    let mut s = Session::new(2026).unwrap();
     crank(&mut s);
     for t in 0..900 {
         let input = if t < 20 {

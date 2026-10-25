@@ -14,6 +14,8 @@ use libm::{cos, sin};
 /// rpm -> rad/s.
 const RADPS_PER_RPM: f64 = core::f64::consts::PI * 2.0 / 60.0;
 const EPS: f64 = 1e-9;
+/// Standard gravity, m/s². A physical constant, not a ruleset choice; only a sloped road uses it.
+const GRAVITY_MPS2: f64 = 9.81;
 
 pub struct Car {
     /// Reference point is the car's centre, on its own +x axis. `<x>` grows down the exercise.
@@ -108,9 +110,11 @@ impl Car {
         self.x_m + 0.5 * v.length_m * cos(self.heading_rad)
     }
 
-    pub fn step(&mut self, v: &Vehicle, d: &Drivetrain, c: &Controls, dt: f64) -> StepOutcome {
+    /// `sin_slope` is the sine of the road's climb angle under the car (0 on the flat, positive
+    /// uphill in the +x direction).
+    pub fn step(&mut self, v: &Vehicle, d: &Drivetrain, c: &Controls, sin_slope: f64, dt: f64) -> StepOutcome {
         let stalled = self.step_engine(v, d, c, dt);
-        self.step_motion(v, d, c, dt);
+        self.step_motion(v, d, c, sin_slope, dt);
         StepOutcome { stalled }
     }
 
@@ -179,30 +183,42 @@ impl Car {
         carried * c.engagement()
     }
 
-    fn step_motion(&mut self, v: &Vehicle, d: &Drivetrain, c: &Controls, dt: f64) {
+    fn step_motion(&mut self, v: &Vehicle, d: &Drivetrain, c: &Controls, sin_slope: f64, dt: f64) {
         let drive_n = self.drive_force_n(v, d, c);
+        // Gravity along the road: a force, not a resistance. It pulls the car back downhill
+        // whether it moves or not. On the flat there is no such term at all, so the flat road is
+        // exactly the arithmetic it was before slopes existed.
+        let slope_n = -(v.mass_kg * GRAVITY_MPS2 * sin_slope);
+        let push_n = if sin_slope == 0.0 { drive_n } else { drive_n + slope_n };
         let hold_n = d.brake_max_n * c.brake.clamp(0.0, 1.0)
             + if c.handbrake { d.handbrake_max_n } else { 0.0 };
         let drag_n = d.drag_n_per_mps2 * self.speed_mps * self.speed_mps;
+        let static_n = hold_n + d.rolling_n;
 
         let net_n = if self.speed_mps.abs() < EPS {
-            // At rest, static resistance holds unless the driveline overcomes it.
-            let static_n = hold_n + d.rolling_n;
-            if drive_n.abs() <= static_n {
+            // At rest, static resistance holds unless the driveline and gravity overcome it.
+            if push_n.abs() <= static_n {
                 0.0
             } else {
-                drive_n - drive_n.signum() * static_n
+                push_n - push_n.signum() * static_n
             }
         } else {
-            drive_n - self.speed_mps.signum() * (hold_n + d.rolling_n + drag_n)
+            push_n - self.speed_mps.signum() * (hold_n + d.rolling_n + drag_n)
         };
 
         let next = self.speed_mps + net_n / v.mass_kg * dt;
-        // Resistance may stop the car; it may not push it the other way. Only the driveline, when
-        // it pushes in the same direction the car came out moving, may carry it across zero.
+        // Resistance may stop the car; it may not push it the other way. The driveline, when it
+        // pushes in the direction the car came out moving, may carry it across zero. So may
+        // gravity, but only when it beats the standing resistance: a brake that holds the car on
+        // the slope holds it, with speed exactly 0, instead of letting one step overshoot.
         let crossed_zero = next * self.speed_mps < 0.0;
         let driveline_drives_there = drive_n * next > 0.0;
-        self.speed_mps = if crossed_zero && !driveline_drives_there { 0.0 } else { next };
+        let gravity_drives_there = slope_n * next > 0.0 && push_n.abs() > static_n;
+        self.speed_mps = if crossed_zero && !driveline_drives_there && !gravity_drives_there {
+            0.0
+        } else {
+            next
+        };
 
         let yaw_rate = self.speed_mps * sin(c.steer_rad) / (cos(c.steer_rad) * v.wheelbase_m.max(EPS));
         self.heading_rad = wrap_angle(self.heading_rad + yaw_rate * dt);

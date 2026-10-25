@@ -29,7 +29,7 @@ pub struct Golden {
 /// Record a trace: drive a real session with a state-aware driver and freeze the inputs it sent.
 /// The trace is a fixed script afterwards — replay never looks at the state to decide the input.
 fn record(seed: u64, ticks: u32, mut driver: impl FnMut(&crate::View, u32) -> TickInput) -> Vec<TickInput> {
-    let mut s = Session::new(seed);
+    let mut s = Session::new(seed).expect("a known exercise");
     let mut inputs = Vec::with_capacity(ticks as usize);
     for t in 0..ticks {
         let input = {
@@ -179,7 +179,7 @@ pub fn all() -> [Golden; 2] {
 }
 
 pub fn run(g: &Golden) -> Session {
-    let mut s = Session::new(g.seed);
+    let mut s = Session::new(g.seed).expect("a known exercise");
     for &input in &g.inputs {
         s.step(input);
     }
@@ -278,7 +278,7 @@ mod tests {
         let idle = TickInput { clutch: 255, flags: TickInput::FLAG_BELT, ..TickInput::default() };
         let key = TickInput { flags: idle.flags | TickInput::FLAG_IGNITION, ..idle };
         let hash_after = |first: TickInput| {
-            let mut s = Session::new(messy_run().seed);
+            let mut s = Session::new(messy_run().seed).unwrap();
             for &input in &messy_run().inputs {
                 s.step(input);
                 if !s.view().engine_on {
@@ -297,7 +297,7 @@ mod tests {
     /// engine dead at least once, and the left signal off outside the window.
     #[test]
     fn messy_trace_exercises_the_float_paths() {
-        let mut s = Session::new(messy_run().seed);
+        let mut s = Session::new(messy_run().seed).unwrap();
         let mut peak_rpm: f64 = 0.0;
         let mut saw_dead_engine = false;
         for &input in &messy_run().inputs {
@@ -327,7 +327,7 @@ mod tests {
     /// `lib.rs`; this indexes it, so a reorder breaks here instead of in TS.
     #[test]
     fn snapshot_reports_what_the_core_consumed() {
-        let mut s = Session::new(2026);
+        let mut s = Session::new(2026).unwrap();
         for _ in 0..40 {
             s.step(TickInput { clutch: 255, flags: IGN, ..Default::default() });
         }
@@ -343,7 +343,7 @@ mod tests {
 
         let snap = s.snapshot();
         let v = s.view();
-        assert_eq!(snap.len(), 21, "the snapshot is the 21 documented values");
+        assert_eq!(snap.len(), 27, "the snapshot is the 27 documented values");
         assert_eq!(snap[0], f64::from(v.tick));
         assert_eq!(
             snap[1],
@@ -352,6 +352,7 @@ mod tests {
                 crate::Phase::Launched => 1.0,
                 crate::Phase::PastLine => 2.0,
                 crate::Phase::Done => 3.0,
+                crate::Phase::Stopped => 4.0,
             },
             "the order tick puts the run in Launched"
         );
