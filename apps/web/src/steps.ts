@@ -71,7 +71,8 @@ export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset): 
   if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (done.has('gear') && !state.handbrake) done.add('free');
   if (stopped(state) && state.stopGapAM >= 0 && state.stopGapAM <= hill.max_a_m) done.add('stop');
-  if (stopped(state) && state.lineGapM <= state.stopGapAM - AWAY_M) done.add('start');
+  // A stop closer to the line than AWAY_M has less road than that to pull away on: the line ends the run.
+  if (stopped(state) && state.lineGapM <= Math.max(state.stopGapAM - AWAY_M, 0)) done.add('start');
   if (stopped(state) && state.lineGapM < 0 && !state.disqualified) done.add('line');
 }
 
