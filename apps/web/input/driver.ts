@@ -21,7 +21,7 @@ export const FLAG = {
 /**
  * How the pedals feel. These numbers are assumptions about the vehicle model in
  * content/rulesets/tt108-2026.json (the clutch bite zone depends on its drivetrain), tuned by
- * pedals.test.ts: a +-150 ms sweep of a normal launch must pull away without a stall.
+ * feel.test.ts: a +-150 ms sweep of a normal launch must pull away without a stall; the bite zone was widened (0.92..0.30) because the core drags the engine harder than its idle control can hold from about 0.85 travel.
  * Rates are pedal travel (0..1) per second.
  */
 export const FEEL = {
@@ -32,8 +32,8 @@ export const FEEL = {
     press: 6,
     /** Above `biteHigh` and below `biteLow` the pedal lifts at `liftFast`, between them at `liftBite`. */
     liftFast: 2.5,
-    liftBite: 0.35,
-    biteHigh: 0.75,
+    liftBite: 0.3,
+    biteHigh: 0.92,
     biteLow: 0.3,
     /** A gear can only be selected, and the starter used in gear, with the pedal at least this far
      * down: the core's starter wants clutch engagement under 0.05. */
