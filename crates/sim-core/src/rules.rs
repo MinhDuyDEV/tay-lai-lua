@@ -4,7 +4,7 @@
 //! sits in `docs/legal/*.md` (`source.loc`). Anything the law does not say lives in `assumptions`
 //! instead of being silently baked into code.
 
-use libm::{atan, floor, sqrt, tan};
+use libm::{atan, sqrt};
 use serde::Deserialize;
 
 pub const EMBEDDED: &str = include_str!("../../../content/rulesets/tt108-2026.json");
@@ -228,8 +228,6 @@ pub struct Thresholds {
     pub timeout_30_ticks: u32,
     /// Bài 3: ticks allowed from the stop to the stop line.
     pub hill_timeout_ticks: u32,
-    /// Bài 4 and bài 6: seconds on the clock before each QUA_THOI_GIAN charge.
-    pub sa_hinh_clock_ticks: u32,
     /// Bài 4 and bài 6: seconds one contact episode must last before DE_VACH_KEO_DAI charges.
     pub de_vach_keo_dai_ticks: u32,
 }
@@ -330,7 +328,6 @@ impl Ruleset {
             timeout_20_ticks: seconds_to_ticks(self.rule("SH.01.QUA_20S").params.seconds),
             timeout_30_ticks: seconds_to_ticks(self.rule("SH.01.QUA_30S").params.seconds),
             hill_timeout_ticks: seconds_to_ticks(self.rule("SH.03.QUA_30S").params.seconds),
-            sa_hinh_clock_ticks: seconds_to_ticks(self.sa_hinh.time_limit_s),
             de_vach_keo_dai_ticks: seconds_to_ticks(self.rule("SH.04.DE_VACH_KEO_DAI").params.seconds),
         }
     }

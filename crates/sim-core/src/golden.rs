@@ -507,18 +507,31 @@ pub fn hash_line(s: &Session) -> String {
 mod tests {
     use super::*;
 
-    const COMMITTED: [(&str, &str); 4] = [
+    /// Every golden's committed hash, in `all()` order. All eight, so `cargo test` pins every one of
+    /// them: a zip against a shorter list would silently leave the tail unpinned, and a hash file
+    /// full of ffff would still pass.
+    const COMMITTED: [(&str, &str); 8] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
         ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
         ("dung_khoi_hanh_doc_messy", include_str!("../../../golden/dung_khoi_hanh_doc_messy.hash")),
+        ("qua_vet_banh_xe_clean", include_str!("../../../golden/qua_vet_banh_xe_clean.hash")),
+        ("qua_vet_banh_xe_messy", include_str!("../../../golden/qua_vet_banh_xe_messy.hash")),
+        ("qua_duong_vong_quanh_co_clean", include_str!("../../../golden/qua_duong_vong_quanh_co_clean.hash")),
+        ("qua_duong_vong_quanh_co_messy", include_str!("../../../golden/qua_duong_vong_quanh_co_messy.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the
     /// simulation changed: re-record with `cargo run -p sim-core --example gen_golden` on purpose.
     #[test]
     fn committed_golden_hashes_match_the_simulation() {
-        for (g, committed) in all().iter().zip(COMMITTED) {
+        let goldens = all();
+        assert_eq!(
+            goldens.len(),
+            COMMITTED.len(),
+            "every golden must be pinned by a committed hash, or the unpinned ones cannot fail"
+        );
+        for (g, committed) in goldens.iter().zip(COMMITTED) {
             assert_eq!(g.name, committed.0);
             assert_eq!(hash_line(&run(g)), committed.1, "golden {} drifted", g.name);
         }
