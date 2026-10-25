@@ -58,6 +58,21 @@ async function until(page, what, cond, allowed = []) {
 }
 
 /**
+ * Wait for the page to publish `window.__thi`. A page that never does has failed to boot, and the
+ * only witness is the page itself, so on a timeout say what it printed: every console line, page
+ * error and failed request since it opened, plus the stage state if there is one.
+ */
+async function pageReady(page) {
+  try {
+    await page.waitForFunction(() => Boolean(window.__thi), null, { timeout: WAIT_MS });
+  } catch (err) {
+    const stage = await readStage(page).then(JSON.stringify, () => 'no #stage element');
+    const log = (pageLog.get(page) ?? []).join('\n') || '(the page printed nothing)';
+    throw new Error(`window.__thi never appeared in ${WAIT_MS} ms (${err.message.split('\n')[0]})\nstage: ${stage}\npage log:\n${log.replace(/^/gm, '  ')}`);
+  }
+}
+
+/**
  * Keep the car rolling at a gentle speed until `cond` holds: throttle down below 1.2 m/s, up again
  * at 2.2 m/s. Every switch waits on the published speed, so it is the state that decides.
  */
@@ -79,7 +94,7 @@ async function drive(page, { belt, allowed }) {
   const key = page.keyboard;
 
   // The first key only enters the car (and starts the audio); it must not count as an action.
-  await page.waitForFunction(() => Boolean(window.__thi), null, { timeout: WAIT_MS });
+  await pageReady(page);
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
 
@@ -147,11 +162,24 @@ try {
   process.exit(1);
 }
 
+/** Everything a page said about itself, kept for `pageReady` to print when the page never boots. */
+const pageLog = new WeakMap();
+
 async function fresh() {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   const problems = [];
-  page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => m.type() === 'error' && problems.push(`console: ${m.text()}`));
+  const log = [];
+  pageLog.set(page, log);
+  page.on('pageerror', (e) => {
+    problems.push(`pageerror: ${e.message}`);
+    log.push(`pageerror: ${e.message}`);
+  });
+  page.on('console', (m) => {
+    if (m.type() === 'error') problems.push(`console: ${m.text()}`);
+    log.push(`console.${m.type()}: ${m.text()}`);
+  });
+  page.on('requestfailed', (r) => log.push(`requestfailed: ${r.url()} ${r.failure()?.errorText ?? ''}`));
+  page.on('response', (r) => r.status() >= 400 && log.push(`http ${r.status()}: ${r.url()}`));
   await page.goto(url);
   return { page, problems };
 }
