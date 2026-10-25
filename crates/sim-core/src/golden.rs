@@ -188,8 +188,167 @@ pub fn messy_run() -> Golden {
     Golden { name: "xuat_phat_messy", seed, inputs }
 }
 
-/// Bài 3 seeds carry the exercise id in the top byte (see `sim_create`).
+/// Bài 3, bài 4 and bài 6 seeds carry their exercise id in the top byte (see `sim_create`).
 const HILL: u64 = 3 << 56;
+const VET: u64 = 4 << 56;
+const CURVE: u64 = 6 << 56;
+
+/// The centreline of a figure, from the block `sim_course` writes.
+fn centreline(block: &[f64]) -> Vec<(f64, f64)> {
+    let mut i = 0;
+    while i + 2 < block.len() {
+        let kind = block[i];
+        let n = block[i + 2] as usize;
+        let pts = i + 3;
+        if kind == 5.0 {
+            return (0..n).map(|k| (block[pts + 2 * k], block[pts + 2 * k + 1])).collect();
+        }
+        i = pts + 2 * n;
+    }
+    Vec::new()
+}
+
+fn path_length(pts: &[(f64, f64)]) -> f64 {
+    pts.windows(2).map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt()).sum()
+}
+
+fn point_at(pts: &[(f64, f64)], progress: f64) -> Option<(f64, f64)> {
+    let mut travelled = 0.0;
+    for w in pts.windows(2) {
+        let dx = w[1].0 - w[0].0;
+        let dy = w[1].1 - w[0].1;
+        let seg = (dx * dx + dy * dy).sqrt();
+        if travelled + seg >= progress && seg > 0.0 {
+            let t = ((progress - travelled) / seg).clamp(0.0, 1.0);
+            return Some((w[0].0 + t * dx, w[0].1 + t * dy));
+        }
+        travelled += seg;
+    }
+    None
+}
+
+fn curvature(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+    let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+    let ab = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    let bc = ((c.0 - b.0).powi(2) + (c.1 - b.1).powi(2)).sqrt();
+    let ca = ((a.0 - c.0).powi(2) + (a.1 - c.1).powi(2)).sqrt();
+    let denom = ab * bc * ca;
+    if denom == 0.0 { 0.0 } else { 2.0 * cross / denom }
+}
+
+/// Steering, as a fraction of full lock, that puts the car's centre on a circle of curvature `kappa`.
+fn steer_for_raw(kappa: f64) -> f64 {
+    if kappa.abs() < 1e-9 {
+        return 0.0;
+    }
+    let r = 1.0 / kappa.abs();
+    let r_axle = (r * r - 0.25 * 2.4 * 2.4).max(0.01).sqrt();
+    (libm::atan(2.4 / r_axle).copysign(kappa) / 0.55).clamp(-1.0, 1.0)
+}
+
+fn steer_for(kappa: f64) -> i16 {
+    (steer_for_raw(kappa) * 32760.0) as i16
+}
+
+/// A clean pass of either figure: idle, then steer by the centreline's own curvature.
+///
+/// The steering is a script derived from the figure, not a controller, because this trace's job is to
+/// pin the *simulation* — the scoring, the contact model, the clock. A badly tuned controller failing
+/// would say nothing about the figure, and would make the hash move for the wrong reason.
+fn figure_pass(seed: u64, name: &'static str) -> Golden {
+    let probe = Session::new(seed).expect("a known exercise");
+    let pts = centreline(&probe.course_block());
+    let len = path_length(&pts);
+    let inputs = record_to_the_end(seed, |v, t| {
+        if t < 30 {
+            // Engine idling, neutral, handbrake on: the state the exercise opens in.
+            return TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() };
+        }
+        let p = v.progress_m.clamp(0.0, len - 0.2);
+        let (Some(a), Some(b), Some(c)) =
+            (point_at(&pts, (p - 1.0).max(0.0)), point_at(&pts, p), point_at(&pts, (p + 1.0).min(len)))
+        else {
+            return TickInput { brake: 255, clutch: 255, ..Default::default() };
+        };
+        let steer = steer_for(curvature(a, b, c));
+        let speed = v.speed_mps;
+        TickInput {
+            steering: steer,
+            throttle: if speed < 1.4 { 110 } else { 0 },
+            brake: if speed > 1.7 { 100 } else { 0 },
+            clutch: 150,
+            gear: 1,
+            ..Default::default()
+        }
+    });
+    Golden { name, seed, inputs }
+}
+
+/// A messy pass of either figure, recorded so every rule this exercise has lands at least once:
+/// `SH.X.RPM` (rev past 4000), `SH.X.CHET_MAY` (dead stall, then a restart), `DE_VACH` (a wheel onto
+/// a line), `DE_VACH_KEO_DAI` (that same episode held past five seconds), `QUA_THOI_GIAN` (the clock
+/// pushed past two minutes) — and it ends there, on the step the clock charge lands, so the runner's
+/// negative control still flips a bit in a step the simulation reads.
+///
+/// The clock is 120 s, so this trace is longer than the other seven: the law puts the clock where it
+/// puts it, and a trace that dodged it would not prove the rule.
+fn figure_messy(seed: u64, name: &'static str) -> Golden {
+    let mut stage = 0u8;
+    let mut restarting_since: Option<u32> = None;
+    let mut inputs = Vec::new();
+    let mut s = Session::new(seed).expect("a known exercise");
+    for t in 0..12_000u32 {
+        // Advance the script on what the simulation says, never on a guessed tick.
+        match stage {
+            0 if t >= 12 => stage = 1,
+            1 if s.view().rpm > 4300.0 => stage = 2,
+            2 if s.view().rpm < 900.0 => stage = 3,
+            3 if !s.view().engine_on => stage = 4,
+            4 if restarting_since.is_none() => restarting_since = Some(t),
+            4 if s.view().engine_on && restarting_since.is_some_and(|r| t > r + 5) => stage = 5,
+            // Turn in until a wheel touches a line, then stop on it: the episode runs on a stopped
+            // wheel, so the five-second mark is reached without the car having to be steered along a
+            // 0,1 m band.
+            5 if s.view().longest_episode_s > 0.0 => stage = 6,
+            6 if s.view().longest_episode_s >= 5.5 => stage = 7,
+            _ => {}
+        }
+        let input = match stage {
+            // Idle, handbrake on; nothing scored but the rev that follows.
+            0 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            1 => TickInput { clutch: 255, throttle: 255, flags: HANDBRAKE, ..Default::default() },
+            // Back to idle, then the clutch dropped in first with the throttle open: a dead stall.
+            2 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            3 => TickInput { gear: 1, clutch: 0, throttle: 120, ..Default::default() },
+            // Restart: clutch in, neutral, key held.
+            4 => TickInput { clutch: 255, flags: TickInput::FLAG_IGNITION, ..Default::default() },
+            // Drive on towards the left line at a steady walking pace. When a wheel touches it the
+            // script stops the car dead on the spot: the line and the curb behind it are only 0,2 m
+            // apart, so the touch has to be caught on the very tick it happens.
+            5 => TickInput {
+                steering: -11000,
+                throttle: if s.view().speed_mps < 0.9 { 90 } else { 0 },
+                brake: if s.view().speed_mps > 1.0 { 80 } else { 0 },
+                clutch: 150,
+                gear: 1,
+                ..Default::default()
+            },
+            // On the line: clutch in and brake down, and stand there while the episode timer runs,
+            // then while the exercise clock runs to its two minutes. The episode keeps running on a
+            // stopped wheel, so nothing has to be steered along a 0,1 m band.
+            6 | 7 => TickInput { brake: 255, clutch: 255, gear: 1, ..Default::default() },
+            _ => TickInput { brake: 255, clutch: 255, gear: 1, ..Default::default() },
+        };
+        s.step(input);
+        inputs.push(input);
+        let v = s.view();
+        let clock_charged = v.fired("SH.04.QUA_THOI_GIAN") + v.fired("SH.06.QUA_THOI_GIAN") > 0;
+        if clock_charged || v.phase == crate::Phase::Done || v.disqualified {
+            break;
+        }
+    }
+    Golden { name, seed, inputs }
+}
 
 /// Predicted stopping point of a car braking at about 6.9 m/s² on the slope: where the front
 /// bumper will be when it stops, if the brake goes on now.
@@ -282,8 +441,33 @@ pub fn hill_messy() -> Golden {
     Golden { name: "dung_khoi_hanh_doc_messy", seed, inputs }
 }
 
-pub fn all() -> [Golden; 4] {
-    [clean_pass(), messy_run(), hill_clean(), hill_messy()]
+pub fn vet_clean() -> Golden {
+    figure_pass(VET | 1, "qua_vet_banh_xe_clean")
+}
+
+pub fn vet_messy() -> Golden {
+    figure_messy(VET | 0x0123_4567_89ab, "qua_vet_banh_xe_messy")
+}
+
+pub fn curve_clean() -> Golden {
+    figure_pass(CURVE | 1, "qua_duong_vong_quanh_co_clean")
+}
+
+pub fn curve_messy() -> Golden {
+    figure_messy(CURVE | 0x0123_4567_89ab, "qua_duong_vong_quanh_co_messy")
+}
+
+pub fn all() -> [Golden; 8] {
+    [
+        clean_pass(),
+        messy_run(),
+        hill_clean(),
+        hill_messy(),
+        vet_clean(),
+        vet_messy(),
+        curve_clean(),
+        curve_messy(),
+    ]
 }
 
 pub fn run(g: &Golden) -> Session {
@@ -484,7 +668,7 @@ mod tests {
 
         let snap = s.snapshot();
         let v = s.view();
-        assert_eq!(snap.len(), 27, "the snapshot is the 27 documented values");
+        assert_eq!(snap.len(), 46, "the snapshot is the 46 documented values");
         assert_eq!(snap[0], f64::from(v.tick));
         assert_eq!(
             snap[1],
@@ -518,5 +702,12 @@ mod tests {
         // First gear, clutch partway out, engine at idle: the driveline drags it down, which is
         // what the audio uses to tell lugging from a free rev.
         assert!(snap[20] > 0.0, "engine load is positive while the clutch drags, got {}", snap[20]);
+        // Fields 27..45 belong to bài 4 and bài 6 and are 0 in every other exercise, so a reader can
+        // tell "no figure" from "a figure at 0" without knowing which exercise it is.
+        assert!(
+            snap[27..46].iter().all(|v| *v == 0.0),
+            "bài 1 has no figure fields, got {:?}",
+            &snap[27..46]
+        );
     }
 }

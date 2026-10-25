@@ -360,7 +360,7 @@ docs/
 | 2 | Dừng ở ngã tư: ≤ 500 mm hay ≤ 1000 mm? | như trên | 500 mm, có ghi chú |
 | 3 | Còn câu điểm liệt không? (TT 108 bỏ, CV 2262 vẫn ghi) | Cục CSGT | Tắt, có cờ để bật lại |
 | 4 | Mốc thời gian đi tới từng bài trong phần mềm chấm | Trung tâm sát hạch | Tự đặt giả định |
-| 5 | B1 có phải là bề rộng lốp sau bên ghế phụ không? | Trung tâm sát hạch | Bề rộng lốp |
+| 5 | B1 có phải là bề rộng lốp sau bên ghế phụ không? | Trung tâm sát hạch | Bề rộng lốp: B1 = 0,195 m, giả định ở `sa_hinh.tyre_width_m` trong `content/rulesets/tt108-2026.json` |
 | 6 | Có được dùng bộ 600 câu trong sản phẩm thu phí không? | Luật sư | Chưa đưa lý thuyết vào bản thu phí |
 | 7 | Có bắt buộc lưu dữ liệu tại Việt Nam không? Có phải nộp hồ sơ chuyển dữ liệu ra nước ngoài không? | Luật sư | Đặt dữ liệu cá nhân tại Việt Nam |
 | 8 | Thời gian đèn vàng (QCVN 41 không quy định) | — | Giả định 3 s, cho chỉnh được |

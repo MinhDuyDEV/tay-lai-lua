@@ -118,6 +118,49 @@
     "no_stop_beyond_m": 1.0,
     "no_stop_beyond_assumption": "Xem assumptions.hill_no_stop_window. Lead chọn tạm 1,0 m sau vạch, chờ Chủ sở hữu xác nhận."
   },
+  "sa_hinh": {
+    "line_width_m": 0.1,
+    "line_width": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.9 / tr.5",
+      "quote": "Vạch giới hạn hình các bài sát hạch màu trắng, có chiều rộng 0,1 m, cách bó vỉa hình sát hạch tối thiểu 0,1 m."
+    },
+    "line_curb_setback_m": 0.1,
+    "tyre_width_m": 0.195,
+    "track_m": 1.35,
+    "tyre_width_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15 / tr.9",
+      "quote": "B1: Chiều rộng bánh sau bên lái phụ của xe sát hạch, đơn vị tính là mét."
+    },
+    "patch_length_m": 0.2,
+    "lead_m": 3.0,
+    "max_segment_m": 0.5,
+    "time_limit_s": 120.0,
+    "time_limit": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài 4 và Bài 6 — bảng lỗi",
+      "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+    },
+    "vet_entry_tolerance_m": 2.0,
+    "outside_margin_m": 1.0,
+    "reverse_limit_m": 1.0,
+    "vet_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.4 / tr.11",
+      "quote": "Bvb (m) là chiều rộng vệt bánh xe: Bvb = B1 + 0,2 (m)."
+    },
+    "sv_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.4 / tr.11",
+      "quote": "Sv (m) là chiều sâu đường vuông góc: Sv = 1,5a."
+    },
+    "curve_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.6 / tr.12",
+      "quote": "Bqc (m) là chiều rộng đường vòng quanh co: Bqc = 2,2b."
+    }
+  },
   "rules": [
     {
       "id": "SH.01.DAY_AN_TOAN",
@@ -329,6 +372,170 @@
         "loc": "Phụ lục III, Bài 3 — Dừng và khởi hành xe ngang dốc, bảng lỗi",
         "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe, bị đình chỉ sát hạch."
       }
+    },
+    {
+      "id": "SH.04.SAI_HINH",
+      "code": 14,
+      "exercise": "sa_hinh.qua_vet_banh_xe_va_duong_vuong_goc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 4 — Qua vệt bánh xe và đường vòng vuông góc, bảng lỗi",
+        "quote": "Đi không đúng hình của hạng xe sát hạch, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.04.TRUOT_VET",
+      "code": 15,
+      "exercise": "sa_hinh.qua_vet_banh_xe_va_duong_vuong_goc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 4 — Qua vệt bánh xe và đường vòng vuông góc, bảng lỗi",
+        "quote": "Bánh xe trước và bánh xe sau bên lái phụ không qua vùng giới hạn của hình vệt bánh xe, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.04.DE_VACH",
+      "code": 16,
+      "exercise": "sa_hinh.qua_vet_banh_xe_va_duong_vuong_goc",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 4 — Qua vệt bánh xe và đường vòng vuông góc, bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.04.DE_VACH_KEO_DAI",
+      "code": 17,
+      "exercise": "sa_hinh.qua_vet_banh_xe_va_duong_vuong_goc",
+      "params": {
+        "seconds": 5.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 4 — Qua vệt bánh xe và đường vòng vuông góc, bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, cứ quá 05 giây, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.04.QUA_THOI_GIAN",
+      "code": 18,
+      "exercise": "sa_hinh.qua_vet_banh_xe_va_duong_vuong_goc",
+      "params": {
+        "seconds": 120.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 4 — Qua vệt bánh xe và đường vòng vuông góc, bảng lỗi",
+        "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.06.SAI_HINH",
+      "code": 19,
+      "exercise": "sa_hinh.qua_duong_vong_quanh_co",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 6 — Qua đường vòng quanh co, bảng lỗi",
+        "quote": "Đi không đúng hình của hạng xe sát hạch, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.06.DE_VACH",
+      "code": 20,
+      "exercise": "sa_hinh.qua_duong_vong_quanh_co",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 6 — Qua đường vòng quanh co, bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.06.DE_VACH_KEO_DAI",
+      "code": 21,
+      "exercise": "sa_hinh.qua_duong_vong_quanh_co",
+      "params": {
+        "seconds": 5.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 6 — Qua đường vòng quanh co, bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, cứ quá 05 giây trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.06.QUA_THOI_GIAN",
+      "code": 22,
+      "exercise": "sa_hinh.qua_duong_vong_quanh_co",
+      "params": {
+        "seconds": 120.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 6 — Qua đường vòng quanh co, bảng lỗi",
+        "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.X.VIA_HE",
+      "code": 23,
+      "exercise": "sa_hinh.xuat_phat",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, B.2.2.4 — Các lỗi lặp lại ở hầu hết các bài, bảng lỗi",
+        "quote": "Lái xe lên vỉa hè bị đình chỉ sát hạch."
+      }
     }
   ],
   "assumptions": [
@@ -446,6 +653,84 @@
       "value": "vỉa hè, belt and signals are not scored in bài 3",
       "why": "Bảng lỗi bài 3 chỉ có năm dòng SH.03.* cùng các lỗi chung (tai nạn, chết máy, vòng tua, quá tốc độ, tổng thời gian); không có dây an toàn, xi nhan hay vỉa hè. Lõi chỉ chấm SH.X.CHET_MAY và SH.X.RPM trong các lỗi chung, như bài 1. Lưu ý: ghi chú của docs/legal cho rằng lỗi lên vỉa hè vẫn bị đình chỉ theo mục 1.4; Lead đã quyết định không chấm.",
       "quote": "không ghi lỗi \"lái xe lên vỉa hè\""
+    },
+    {
+      "field": "sa_hinh_car_geometry",
+      "value": "the figures are generated from the sim car's own dimensions with the QCVN formulas: a = vehicle.length_m, b = vehicle.width_m",
+      "why": "Hình 10 và Hình 12 dựng theo công thức QCVN 15 mục 2.1.15.4 và 2.1.15.6, với a, b là chiều dài toàn bộ và chiều rộng toàn bộ của xe sát hạch. Dùng đúng số của xe mô phỏng (4,2 × 1,6 m) để hình và xe không lệch nhau.",
+      "quote": "Lvb (m) là chiều dài vệt bánh xe: Lvb = a."
+    },
+    {
+      "field": "b1_tyre_width",
+      "value": "B1 = sa_hinh.tyre_width_m = 0,195 m, so the wetted strip is Bvb = B1 + 0,2 = 0,395 m",
+      "why": "Văn bản chỉ định nghĩa B1 là chiều rộng bánh sau bên lái phụ, đo trên xe thực tế, và không nêu con số. Lấy bề rộng lốp 0,195 m của một xe con hạng B điển hình — đúng câu hỏi mở số 5 trong docs/architecture.md §14, nơi câu trả lời tạm là ‘bề rộng lốp’. Chủ dự án chọn tạm ngày 2026-10-30, chờ trung tâm sát hạch xác nhận.",
+      "quote": "B1: Chiều rộng bánh sau bên lái phụ của xe sát hạch, đơn vị tính là mét."
+    },
+    {
+      "field": "track_width",
+      "value": "vehicle track = sa_hinh.track_m = 1,35 m: the distance between the two wheel centres on one axle",
+      "why": "Không có trong văn bản, chỉ có chiều rộng toàn bộ b ≥ 1,6 m. Hai vệt bánh của một xe con hạng B cách nhau khoảng 1,35 m. Chỉ dùng để biết bánh nào nằm ở đâu, không dùng để chấm điểm; số giả định cùng chỗ với B1.",
+      "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+    },
+    {
+      "field": "wheel_contact_patch",
+      "value": "a tyre_width_m × patch_length_m (0,195 × 0,2 m) rectangle under each wheel centre, oriented with the car",
+      "why": "‘Bánh xe đè vào vạch’ cần một vùng tiếp xúc chứ không phải một điểm, và vùng tiếp xúc thật của lốp dài hơn rộng, xoay theo xe. Bánh ‘đè vạch’ khi hình chữ nhật này giao với dải rộng 0,1 m của vạch; bánh chạm dải bó vỉa (ngoài vạch 0,1 m) là SH.X.VIA_HE.",
+      "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+    },
+    {
+      "field": "line_and_curb",
+      "value": "limit lines are 0,1 m wide white bands; the curb band sits 0,1 m outside the outer edge of the line",
+      "why": "Mục 2.1.9: vạch rộng 0,1 m và cách bó vỉa tối thiểu 0,1 m, nên dải bó vỉa bắt đầu 0,1 m ngoài mép ngoài của vạch. Bề rộng dải bó vỉa lấy 0,15 m (con số 0,15 m trong văn bản là chiều cao, bề rộng chỉ có trên hình vẽ). Bánh chạm dải đó là lên vỉa hè: đình chỉ.",
+      "quote": "Vạch giới hạn hình các bài sát hạch màu trắng, có chiều rộng 0,1 m, cách bó vỉa hình sát hạch tối thiểu 0,1 m."
+    },
+    {
+      "field": "de_vach_episode",
+      "value": "an episode is per line: a maximal interval in which at least one wheel touches that line; a new episode on that line starts only after no wheel touched it. Episodes on different lines count separately",
+      "why": "‘mỗi lần’ không nói một lần là gì. Người học thấy chạm vào một vạch là một lỗi, dù mấy bánh cùng trượt trên vạch đó, và thấy hai vạch là hai lỗi. Tính theo từng bánh sẽ thu hai lần cho một lần trượt dọc vạch; gộp mọi vạch thành một sẽ mất lần thứ hai khi bánh trước còn trên vạch trái mà bánh sau đã sang vạch phải. Mỗi polyline giới hạn là một vạch và giữ episode riêng; trạng thái này chỉ tồn tại ở bài 4 và bài 6 và chỉ vào hash ở hai bài đó.",
+      "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+    },
+    {
+      "field": "de_vach_keo_dai",
+      "value": "while one episode on one line lasts: −5 at 5 s, 10 s, 15 s…; the first charge when it has lasted 5 s, and each episode runs its own timer",
+      "why": "‘cứ quá 05 giây, trừ 05 điểm’ tính trên chính lần đè vạch đang kéo dài, không phải trên tổng thời gian của bài: hai vạch cùng lúc thì hai đồng hồ. Mốc đầu tiên là 5 giây chứ không phải 0 giây, vì ‘quá 05 giây’ mới là lỗi.",
+      "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, cứ quá 05 giây, trừ 05 điểm."
+    },
+    {
+      "field": "qua_thoi_gian_clock",
+      "value": "the clock starts on the step the front bumper crosses the entry gate, runs on every step until the rear bumper crosses the exit gate, which also ends the run; −5 each 120 s on the clock",
+      "why": "Văn bản chỉ nói ‘thời gian thực hiện bài sát hạch, cứ quá 02 phút’ và không nói đồng hồ bắt đầu, kết thúc ở đâu. Hình có đoạn dẫn vào và ra, nên đồng hồ chạy từ cổng vào tới cổng ra, đo bằng thanh cản — đúng phần ‘thực hiện bài’. Xe đứng yên trong hình vẫn bị tính giờ.",
+      "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+    },
+    {
+      "field": "sai_hinh",
+      "value": "SH.04/06.SAI_HINH: the car centre leaves the figure's corridor (half the lane width plus outside_margin_m, 1,0 m), or the car reverses more than reverse_limit_m (1,0 m) behind the furthest progress it reached",
+      "why": "‘Đi không đúng hình’ không có ngưỡng nào trong văn bản. Hai cách đi sai hình mà máy đo được là ra ngoài dải của hình và lùi lại sau chỗ đã tới. Dung sai 1,0 m ngoài nửa bề rộng làn để một bánh vừa chạm vạch (đã có dòng DE_VACH nhẹ hơn) không lập tức thành đình chỉ.",
+      "quote": "Đi không đúng hình của hạng xe sát hạch, bị đình chỉ sát hạch."
+    },
+    {
+      "field": "bai_4_layout",
+      "value": "Bvb = 0,395 m; Lvb = a = 4,2 m; Sv = 1,5a = 6,3 m read as the clear depth of each transverse leg; Lv = 2,0a = 8,4 m; Bv = 2,2b = 3,52 m",
+      "why": "Vệt nằm bên phải theo chiều xe chạy, hai vạch mảnh song song, tim vệt trùng vệt bánh phải khi xe ở giữa làn: làn 3,52 m, xe rộng 1,6 m ở giữa làn thì bánh phải cách tâm làn 0,675 m, nên tim vệt cách tâm làn 0,675 m. Sau vệt là khúc vuông góc thứ nhất rẽ phải rồi khúc thứ hai rẽ trái. Sv đọc là chiều sâu thông thủy của mỗi nhánh ngang — khoảng trống giữa hai làn ngang — thì xe chỉ tiến phải lọt với biên ≈ +0,23 m. Đọc Sv là tổng chiều sâu hay khoảng cách tim–tim 6,3 m thì cần 2R = 7,8 m > 6,3 m và bài không thể qua. Chủ sở hữu chấp nhận cách đọc thứ nhất; con số ở test `sv_read_as_total_depth_would_be_impassable` trong course.rs, biên thật ở `a_clean_pass_of_bai_4_has_margin`.",
+      "quote": "Sv (m) là chiều sâu đường vuông góc: Sv = 1,5a."
+    },
+    {
+      "field": "bai_6_layout",
+      "value": "Bqc = 2,2b = 3,52 m; Rn = Rqv + 1,2; Rtr = Rn − Bqc; Sqc = Rn + Rtr; the O1–O2 line is at 45° (figure only)",
+      "why": "Hai nửa hình vành khuyên ngược chiều nối tiếp nhau. Sau phép quay 45° và phép tịnh tiến theo Sqc, vòng ngoài của nửa này chạm vòng trong của nửa kia đúng tại điểm nối — đó chính là điều kiện Sqc = Rn + Rtr. Xe vào theo hướng tiếp tuyến của nửa thứ nhất tại cổng vào, nên hướng xe lúc tạo phiên không phải 0.",
+      "quote": "Rn (m) là bán kính cong của vòng tròn phía ngoài: Rn = Rqv + 1,2(m)."
+    },
+    {
+      "field": "rqv_from_the_model",
+      "value": "Rqv = the sim car's own minimum turning radius on the front outer wheel's patch edge at max_steer_rad, computed from the model: 4,841 m (the wheel centre alone is 4,744 m). Not the legal 4,9 m.",
+      "why": "Văn bản chỉ cho ngưỡng ‘từ 4,9 m trở lên’ cho một xe thật, nên hình phải dùng bán kính quay vòng của chính xe mô phỏng. Theo đúng mô hình: vehicle.rs cho điểm chuẩn (tâm xe) quay với bán kính L/tan(δ) = 3,914 m, nên trục trước chỉ nằm trước đường đó nửa cơ sở, không phải một cơ sở. Tâm bánh trước ngoài vì vậy chạy vòng bán kính sqrt(1,2² + (3,914+0,675)²) = 4,744 m, thêm nửa bề rộng lốp thành 4,841 m. Công thức ở `SaHinh::rqv_m` trong rules.rs.",
+      "quote": "bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên"
+    },
+    {
+      "field": "rqv_against_the_legal_minimum",
+      "value": "Rqv = 4,841 m for this car, against the legal minimum of 4,9 m for an exam car: 59 mm tighter turning, so the figures are marginally easier than they would be with a real car",
+      "why": "Mô hình có Rqv = 4,841 m (bánh trước ngoài, mép vệt lốp) còn văn bản chỉ cho xe sát hạch ‘từ 4,9 m trở lên’. Chênh 0,059 m, tức xe mô phỏng quay vòng hơi chặt hơn xe thật mức tối thiểu, nên Rn = Rqv + 1,2 nhỏ hơn một chút và hình dễ hơn thật một chút. Đây là hướng sai đã biết và có tên, không phải số bịa: đổi max_steer_rad hoặc track_m là hình đổi theo. Nếu cần hình khó đúng bằng xe thật thì thay Rqv bằng 4,9 m, và khi đó bài 6 phải qua lại được — biên hiện tại còn dư (bài 6: 0,268 m; bài 4: 0,349 m).",
+      "quote": "bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên"
     }
   ]
 }
