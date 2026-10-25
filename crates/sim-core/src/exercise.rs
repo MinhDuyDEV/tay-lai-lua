@@ -679,33 +679,54 @@ impl State {
 
     /// Bài 4's own error: the right wheels must go *through* the vệt strip.
     ///
-    /// Judged per right wheel, because a wheel is what the law names: each of the two right wheels
-    /// must be inside the strip at some point, may not leave it sideways once inside, and must be
-    /// inside it before it has gone `vet_entry_tolerance_m` past the strip's start. A wheel that is
-    /// still outside the strip when it leaves the strip's length never went through it.
+    /// Judged per right wheel, because a wheel is what the law names. For each of the two right
+    /// wheels, three facts decide it, and they are mutually exclusive on any one tick by
+    /// construction (`VetStrip::touches_paint` vs `VetStrip::left_zone`):
+    ///
+    /// * the patch touches the vệt paint — the wheel is *in* the strip, on it, and only DE_VACH can
+    ///   charge. This is the same patch-overlap test the contact model uses, so it agrees with the
+    ///   contact code the snapshot reports;
+    /// * the patch has left the strip entirely, past the outside of the paint — the wheel slipped
+    ///   off the vệt sideways, which is TRUOT_VET;
+    /// * the wheel is where neither holds and has never been inside — it is passing the strip
+    ///   alongside it. Once it is `vet_entry_tolerance_m` past the strip's start, that is TRUOT_VET
+    ///   too; the tolerance is the run-up the driver gets to line the car up.
     fn vet_tick(&mut self, rs: &Ruleset, course: &Course, fired: &mut Vec<FiredRule>) {
         let Some(vet) = course.vet else { return };
         let wheels = course.wheel_centres(rs, self.car.x_m, self.car.y_m, self.car.heading_rad);
+        // The patch's circumscribed radius: half its diagonal. Using one measure for both tests is
+        // what keeps "on the paint" and "left the strip" from ever being true together, and it errs
+        // towards the paint being reached, which is the milder of the two charges.
+        let (tyre, patch_len) = (rs.sa_hinh.tyre_width_m, rs.sa_hinh.patch_length_m);
+        let patch_reach = 0.5 * libm::sqrt(tyre * tyre + patch_len * patch_len);
         let tolerance = rs.sa_hinh.vet_entry_tolerance_m;
-        // The two right wheels: front right and rear right.
+        let in_length = |x: f64| x >= vet.x0 && x <= vet.x1;
         for (bit, index) in [0u8, 1u8].into_iter().zip([1usize, 3]) {
             let w = wheels[index];
-            let inside = w.0 >= vet.x0
-                && w.0 <= vet.x1
-                && (w.1 - vet.y_m).abs() <= vet.half_play_m;
-            let in_strip_length = w.0 >= vet.x0 && w.0 <= vet.x1;
             let been = self.vet_reached & (1 << bit) != 0;
-            if inside {
-                self.vet_reached |= 1 << bit;
-            } else if been && in_strip_length {
-                // It was inside and is now sideways out of it: the wheel slipped off the vệt.
-                self.charge(rs, "SH.04.TRUOT_VET", fired);
-            } else if !been && w.0 > vet.x0 + tolerance && w.0 < vet.x1 {
-                // Entered late and never got in: it is passing the strip outside the zone.
-                self.charge(rs, "SH.04.TRUOT_VET", fired);
-            } else if !been && w.0 >= vet.x1 {
-                // Its length through the strip is over without ever being inside.
-                self.charge(rs, "SH.04.TRUOT_VET", fired);
+            if !in_length(w.0) {
+                // The strip's length is behind or ahead of this wheel: the sideways question does
+                // not apply. What does apply is that its run through the strip is over without the
+                // wheel ever having been inside.
+                if !been && w.0 > vet.x1 {
+                    self.charge(rs, "SH.04.TRUOT_VET", fired);
+                }
+                continue;
+            }
+            if vet.left_zone(w.1, patch_reach) {
+                // The patch is entirely outside the strip's paint. If the wheel was ever inside, it
+                // slipped off the vệt; if it never was, it is passing the strip alongside it, which
+                // the run-up tolerance gives it a chance to fix.
+                if been || w.0 > vet.x0 + tolerance {
+                    self.charge(rs, "SH.04.TRUOT_VET", fired);
+                }
+                continue;
+            }
+            // The unit is inside the vệt zone: it counts as having gone through.
+            self.vet_reached |= 1 << bit;
+            if vet.touches_paint(w.1, patch_reach) {
+                // ...and it is also on the paint, which the contact model charges as DE_VACH. That
+                // is the only charge this wheel earns on this tick.
             }
         }
     }
@@ -799,11 +820,10 @@ impl State {
         self.clock_charges
     }
 
-    pub fn vet_reached(&self) -> bool {
-        self.vet_reached == 0b11
-    }
-
-    /// The two right wheels' `vet` bits, as the hash records them.
+    /// Which right wheels have been inside the vệt strip, as the hash records them: bit 0 front
+    /// right, bit 1 rear right. The hash takes the two bits, not a bool — "the front one got in but
+    /// the rear one did not" is a different state from "both did", and a mid-run hash that folded
+    /// them together could miss a real difference.
     pub fn vet_wheels(&self) -> u8 {
         self.vet_reached
     }

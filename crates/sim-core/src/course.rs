@@ -14,11 +14,7 @@
 //! Contact is exact enough to score: a wheel's contact patch is a rectangle, a line is a polyline,
 //! and a wheel touches a line when the distance between them is under half the painted width. No
 //! trigonometry runs in that loop — only a point-to-segment distance and a point-to-box test.
-//!
-//! Four wheels times six lines times a few dozen segments is affordable, but not every tick: the
-//! contact result is cached against the car's pose, and only recomputed when the car has moved.
-//! A stopped car reports the same four wheels it did on the step before, which is also the honest
-//! answer — a wheel at rest is touching, or not touching, exactly what it was.
+
 //!
 //! Float discipline of the crate: `+ - * /` and libm. The figure is built once per session, so the
 //! `sin`/`cos` there cost nothing at run time.
@@ -66,8 +62,6 @@ pub struct GateLine {
     pub kind: Gate,
     pub a: (f64, f64),
     pub b: (f64, f64),
-    /// Progress along the centreline where the gate sits.
-    pub progress_m: f64,
 }
 
 /// A painted line: one polyline, drawn from `points`.
@@ -80,7 +74,6 @@ pub struct Line {
     pub band_half_m: f64,
     pub points: Vec<(f64, f64)>,
     pub segments: Vec<Segment>,
-    pub length_m: f64,
 }
 
 /// Where a point sits relative to the figure.
@@ -119,7 +112,6 @@ impl Contact {
 
 /// A generated figure. Built once per session, read-only afterwards.
 pub struct Course {
-    pub figure: Figure,
     /// The path the learner follows, from before the entry gate to past the exit gate.
     pub centre: Vec<(f64, f64)>,
     centre_segments: Vec<Segment>,
@@ -141,8 +133,6 @@ pub struct Course {
     pub start_x_m: f64,
     pub start_y_m: f64,
     pub start_heading_rad: f64,
-    /// The pose the cached contacts were computed at, and the contacts themselves.
-    cache: core::cell::Cell<Option<((f64, f64, f64), [(Contact, [(f64, f64); 4]); 4])>>,
 }
 
 /// Bài 4's vệt bánh xe: a straight strip, so it lives in the figure frame rather than in progress.
@@ -152,12 +142,36 @@ pub struct VetStrip {
     pub x1: f64,
     /// Lateral centre of the strip in the figure frame (the right wheels' track).
     pub y_m: f64,
-    /// How far a right wheel's centre may drift from `y_m` and still be *in* the strip: out to the
-    /// centre of either vệt line. Inside this the wheel is on the vệt, so DE_VACH is the only
-    /// charge; past it the wheel has left the vệt zone sideways, which is TRUOT_VET. The two are
-    /// different acts and must not both fire on the same drift, so the boundary is the line, not the
-    /// line's inner edge.
-    pub half_play_m: f64,
+    /// Distance from `y_m` to the centre of either vệt line.
+    pub line_offset_m: f64,
+    /// Half the painted width of a vệt line.
+    pub line_half_m: f64,
+}
+
+impl VetStrip {
+    /// Whether the wheel's patch touches the vệt paint on either side of the strip. This is exactly
+    /// the test the contact model uses for any painted line — the patch overlaps the band — so a
+    /// wheel charged DE_VACH here is a wheel whose contact code for that line is `ON_LINE`.
+    ///
+    /// Counting the patch, not the centre, is what keeps DE_VACH and TRUOT_VET from overlapping: a
+    /// patch reaches the paint out to `line_offset + line_half + patch_reach`, which is well past
+    /// where the strip's own half width ends.
+    pub fn touches_paint(&self, wheel_y: f64, patch_reach: f64) -> bool {
+        (wheel_y - self.y_m).abs() + patch_reach >= self.line_offset_m - self.line_half_m
+    }
+
+    /// Whether the wheel has left the strip on the *outside* of the paint: its patch is entirely
+    /// clear of the far side of either vệt line. Anything short of that still has the patch
+    /// somewhere within the strip's full painted width, which is what "in the vệt zone" means.
+    ///
+    /// This is a different act from `touches_paint`, and strictly wider: `touches_paint` implies
+    /// `!left_zone` (a patch on the paint is by definition not entirely clear of it), so a wheel can
+    /// be on the paint and not have left — the DE_VACH-only case. The two are never both true for one
+    /// wheel, by construction.
+    pub fn left_zone(&self, wheel_y: f64, patch_reach: f64) -> bool {
+        (wheel_y - self.y_m).abs() - patch_reach > self.line_offset_m + self.line_half_m
+    }
+
 }
 
 impl Course {
@@ -193,25 +207,6 @@ impl Course {
             out[i] = (x + lx * c - ly * s, y + lx * s + ly * c);
         }
         out
-    }
-
-    /// The four wheels' contacts, reusing the previous result when the car has not moved. Returns
-    /// the contacts and the wheel centres they belong to, in the order FL, FR, RL, RR.
-    pub fn wheels_contact(&self, rs: &Ruleset, x: f64, y: f64, heading: f64) -> ([(Contact, [(f64, f64); 4]); 4], [(f64, f64); 4]) {
-        let pose = (x, y, heading);
-        if let Some((cached_pose, cached)) = self.cache.get() {
-            if cached_pose == pose {
-                let wheels = self.wheel_centres(rs, x, y, heading);
-                return (cached, wheels);
-            }
-        }
-        let wheels = self.wheel_centres(rs, x, y, heading);
-        let mut out = [(Contact::default(), [(0.0, 0.0); 4]); 4];
-        for (i, w) in wheels.iter().enumerate() {
-            out[i] = (self.contact(rs, *w, heading), self.patch(rs, *w, heading));
-        }
-        self.cache.set(Some((pose, out)));
-        (out, wheels)
     }
 
     /// The contact patch of one wheel as a convex quad, corners in order.
@@ -334,14 +329,8 @@ fn polyline_distance(
 ) -> Option<f64> {
     let mut best = f64::INFINITY;
     for seg in segments {
-        let dx = seg.a.0 - centre.0;
-        let dy = seg.a.1 - centre.1;
-        let ex = seg.b.0 - centre.0;
-        let ey = seg.b.1 - centre.1;
-        // Cheap reject: the segment's bounding box cannot be closer than this.
-        // The patch fits inside a disc of `patch_radius` about its centre, so a segment further
-        // than `reach` away from that centre cannot touch it and cannot be on the band either.
-        let _ = (dx, dy, ex, ey);
+        // Cheap reject: the patch fits inside a disc of `patch_radius` about its centre, so a
+        // segment further than `reach` from that centre cannot touch it.
         if point_segment_distance(centre, seg) > reach {
             continue;
         }
@@ -492,8 +481,8 @@ fn seg_length(seg: &Segment) -> f64 {
 
 /// A painted line with its drawn width.
 fn painted(kind: u8, band_half_m: f64, points: Vec<(f64, f64)>) -> Line {
-    let (segments, length_m) = segments_of(&points);
-    Line { kind, band_half_m, points, segments, length_m }
+    let (segments, _length) = segments_of(&points);
+    Line { kind, band_half_m, points, segments }
 }
 
 /// The two curb bands of a figure: offset just outside the limit lines, `CURB_WIDTH_M` wide.
@@ -515,8 +504,8 @@ fn course_from(rs: &Ruleset, figure: Figure, centre: Vec<(f64, f64)>, lines: Vec
         centre_cum.push(s);
         s += seg_length(seg);
     }
+    let _ = figure;
     Course {
-        figure,
         centre,
         centre_segments,
         centre_cum,
@@ -531,7 +520,6 @@ fn course_from(rs: &Ruleset, figure: Figure, centre: Vec<(f64, f64)>, lines: Vec
         start_x_m: extra.x,
         start_y_m: extra.y,
         start_heading_rad: extra.heading,
-        cache: core::cell::Cell::new(None),
     }
 }
 
@@ -583,13 +571,12 @@ fn left_normal(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     if len == 0.0 { (0.0, 0.0) } else { (-dy / len, dx / len) }
 }
 
-fn gate_across(point: (f64, f64), heading: f64, half_width: f64, progress_m: f64, kind: Gate) -> GateLine {
+fn gate_across(point: (f64, f64), heading: f64, half_width: f64, kind: Gate) -> GateLine {
     let n = (-sin(heading), cos(heading));
     GateLine {
         kind,
         a: (point.0 - n.0 * half_width, point.1 - n.1 * half_width),
         b: (point.0 + n.0 * half_width, point.1 + n.1 * half_width),
-        progress_m,
     }
 }
 
@@ -680,16 +667,17 @@ fn vet_figure(rs: &Ruleset) -> Option<Course> {
     // Marks, in order: the start of the first bend, its end, the second bend's start and end, and
     // the start of the lead-out. The six named spans above map onto them one to one.
     let gates = vec![
-        gate_across((gate_x, 0.0), 0.0, half + 0.5, gate_x, Gate::Entry),
-        gate_across((vet_x0, 0.0), 0.0, half + 0.5, vet_x0, Gate::VetStart),
-        gate_across((vet_x1, 0.0), 0.0, half + 0.5, vet_x1, Gate::VetEnd),
-        gate_across((exit_x, -drop), 0.0, half + 0.5, total - lead, Gate::Exit),
+        gate_across((gate_x, 0.0), 0.0, half + 0.5, Gate::Entry),
+        gate_across((vet_x0, 0.0), 0.0, half + 0.5, Gate::VetStart),
+        gate_across((vet_x1, 0.0), 0.0, half + 0.5, Gate::VetEnd),
+        gate_across((exit_x, -drop), 0.0, half + 0.5, Gate::Exit),
     ];
     let vet = VetStrip {
         x0: vet_x0,
         x1: vet_x1,
         y_m: vet_y,
-        half_play_m: line_offset,
+        line_offset_m: line_offset,
+        line_half_m: half_line,
     };
     let pose = StartPose {
         x: 0.0,
@@ -761,8 +749,8 @@ fn curve_figure(rs: &Ruleset) -> Option<Course> {
     lines.extend(curbs(&centre, half, sh));
     let total = centre_length_of(&centre);
     let gates = vec![
-        gate_across(entry, entry_tangent, half + 0.5, lead, Gate::Entry),
-        gate_across(exit, exit_tangent, half + 0.5, total - lead, Gate::Exit),
+        gate_across(entry, entry_tangent, half + 0.5, Gate::Entry),
+        gate_across(exit, exit_tangent, half + 0.5, Gate::Exit),
     ];
     let half_turn = pi * r;
     let parts = vec![
@@ -782,16 +770,6 @@ fn curve_figure(rs: &Ruleset) -> Option<Course> {
     Some(course_from(rs, Figure::Curve, centre, lines, gates, parts, None, pose))
 }
 
-
-impl Course {
-    /// Distances from a point to every line, for the geometry diagnostics in the tests.
-    pub fn line_distances(&self, p: (f64, f64)) -> Vec<(u8, f64)> {
-        self.lines
-            .iter()
-            .map(|l| (l.kind, l.segments.iter().map(|s| point_segment_distance(p, s)).fold(f64::INFINITY, f64::min)))
-            .collect()
-    }
-}
 
 impl Course {
     /// Every line with its band half-width and the exact distance from a point's patch.

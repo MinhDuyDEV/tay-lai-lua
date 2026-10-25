@@ -414,7 +414,7 @@ impl Session {
             h.f64(s.clock_seconds());
             h.bool(s.clock_running());
             h.u32(s.clock_charges());
-            h.bool(s.vet_reached());
+            h.u8(s.vet_wheels());
             for ep in s.episode_table() {
                 h.bool(ep.touching);
                 h.f64(ep.elapsed_s);

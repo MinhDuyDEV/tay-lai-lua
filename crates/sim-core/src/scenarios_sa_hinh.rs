@@ -437,34 +437,9 @@ fn de_vach_does_not_trigger_on_a_clean_pass() {
     }
 }
 
-/// Turn the car slightly as it enters the vệt strip, so its right side is angled across the strip:
-/// the front-right wheel rides one vệt line while the rear-right one rides the other. Two lines,
-/// two episodes — the case the brief asks for, on the figure that has two lines close enough for
-/// one car to touch both.
-fn angled_across_two_vet_lines(seed: u64) -> Session {
-    let mut s = Session::new(seed).unwrap();
-    // A short nudge of steering at the entry, then straight: the car keeps the heading it gained.
-    for t in 0..60 * TICKS_PER_S {
-        if t < 30 {
-            s.step(parked());
-            continue;
-        }
-        let steer = if t < 30 + 90 { -14000 } else { 14000 };
-        s.step(driving(steer, 60));
-        let snap = state_of(&s);
-        if snap[CONTACT_FR] != 0.0 && snap[CONTACT_RR] != 0.0 {
-            break;
-        }
-        if s.view().disqualified {
-            break;
-        }
-    }
-    s
-}
-
-/// Put the car on the figure's first straight, `offset` metres left of its centreline, and hold it
-/// still (brake and clutch in) for `seconds`. Used where the thing under test is the clock or the
-/// episode timer rather than the driving.
+/// Put the car on a figure's first straight, `offset` metres left of its centreline, and hold it
+/// still (brake and clutch in) for `seconds`. Used where the thing under test is a timer rather than
+/// the driving: a stopped wheel keeps its episode running.
 fn pose_test_on_first_straight(seed: u64, offset: f64, seconds: f64) -> Session {
     let mut s = Session::new(seed).unwrap();
     let block = s.course_block();
@@ -481,110 +456,182 @@ fn pose_test_on_first_straight(seed: u64, offset: f64, seconds: f64) -> Session 
     s
 }
 
-/// Place the car at an exact pose on bài 6's first straight and step it there. The episode rule is
-/// about what the scoring code does with a given set of contacts; a pose a driver can only hold on
-/// a knife-edge would make the test about the driver instead.
-fn pose_test(offset: f64, heading: f64, ticks: u32) -> Session {
-    let mut s = Session::new(CURVE | 1).unwrap();
-    // Find the figure's entry heading and a point on its first straight to place the car at.
-    let block = s.course_block();
-    let pts = centreline(&block);
-    let start = pts[0];
-    let ahead = pts[3.min(pts.len() - 1)];
-    let entry_heading = (ahead.1 - start.1).atan2(ahead.0 - start.0);
-    let (nx, ny) = (-entry_heading.sin(), entry_heading.cos());
-    // 2 m along the straight, `offset` metres to its left.
-    let p = (
-        start.0 + 2.0 * entry_heading.cos() + offset * nx,
-        start.1 + 2.0 * entry_heading.sin() + offset * ny,
-    );
-    s.place_car(p.0, p.1, entry_heading + heading);
-    for _ in 0..ticks {
-        s.step(TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() });
-    }
-    s
-}
-
-#[test]
-fn de_vach_counts_one_episode_when_two_wheels_touch_one_line_in_turn() {
-    // Two wheels of the same side touch the same line one after the other, without either of them
-    // leaving it in between: the scrape is one act on one line, so one charge. A per-wheel count
-    // would charge it twice.
-    let s = offset_run(CURVE | 1, 1.45, 60 * TICKS_PER_S, |s| {
-        state_of(s)[LONGEST_EPISODE] >= 1.5
-    });
-    let snap = state_of(&s);
-    let v = s.view();
-    assert!(snap[CONTACT_FL] != 0.0 || snap[CONTACT_RL] != 0.0, "a left wheel is on the line");
-    assert_eq!(v.fired("SH.06.DE_VACH"), 1, "one line, one episode: {:?}", v.fired_ids());
-    assert!(v.fired("SH.06.DE_VACH_KEO_DAI") == 0, "and not yet a long one");
-}
-
-#[test]
-fn de_vach_counts_two_episodes_when_one_wheel_is_on_each_of_two_lines() {
-    // The car sits in the vệt strip with its right side angled across it, so the front-right wheel is
-    // on one vệt line and the rear-right wheel on the other at the same moment. Two lines are two
-    // mistakes, counted separately. The exact pose is placed rather than driven because the window
-    // between the two lines is a couple of centimetres deep.
-    let s = pose_in_vet(-0.014, 0.20, 2);
-    let snap = state_of(&s);
-    let v = s.view();
-    assert_eq!(snap[CONTACT_FR], 1.0, "front-right on one vệt line");
-    assert_eq!(snap[CONTACT_RR], 1.0, "rear-right on the other, at the same moment");
-    assert_eq!(v.fired("SH.04.DE_VACH"), 2, "two lines count separately: {:?}", v.fired_ids());
-    assert!(!v.disqualified, "and it is still a deduction, not the vệt suspension");
-}
-
-/// Place the car inside bài 4's vệt strip at a heading offset, so its two right wheels are on the
-/// strip's two lines, and hold it still.
+/// Place the car inside bài 4's vệt strip at a lateral offset and heading, and hold it still.
 ///
-/// The strip lies in the figure's first straight, which runs along the figure's own `+x` from the
-/// origin; the car is placed 25 m along it (comfortably inside the strip) with its lateral offset and
-/// heading given directly. This is a pose, not a manoeuvre: the window between the two vệt lines is
-/// under a metre wide, and what is under test is the counting, not the driving.
-fn pose_in_vet(lateral_offset: f64, heading: f64, ticks: u32) -> Session {
+/// The strip runs along the figure's own `+x` from the entry gate, so the pose is given in the figure
+/// frame directly: `car_x` along the first straight (well inside the strip, so both right wheels are),
+/// `car_y` across it, `heading` about it.
+fn pose_in_vet(car_x: f64, car_y: f64, heading: f64, ticks: u32) -> Session {
     let mut s = Session::new(VET | 1).unwrap();
-    // 6 m along the first straight, inside the vệt strip, at the offset and heading asked for.
-    s.place_car(6.0, lateral_offset, heading);
+    s.place_car(car_x, car_y, heading);
     for _ in 0..ticks {
         s.step(TickInput { brake: 255, clutch: 255, ..Default::default() });
     }
     s
 }
 
-// ---------------------------------------------------------------------------------------------
-// SH.04.DE_VACH_KEO_DAI / SH.06.DE_VACH_KEO_DAI — "cứ quá 05 giây, trừ 05 điểm."
-// ---------------------------------------------------------------------------------------------
-
 #[test]
-fn de_vach_keo_dai_charges_again_after_five_seconds_on_the_same_line() {
-    // Stopped with a wheel on the line: the episode runs while the car stands still, so the timer is
-    // the only thing moving. Charged at 5 s, not before.
-    let s = pose_test_on_first_straight(CURVE | 1, 1.05, 8.0);
-    let v = s.view();
-    assert_eq!(v.fired("SH.06.DE_VACH"), 1, "one episode, however long: {:?}", v.fired_ids());
-    assert_eq!(v.fired("SH.06.DE_VACH_KEO_DAI"), 1, "charged once past five seconds: {:?}", v.fired_ids());
-    assert_eq!(v.score, 90);
+fn de_vach_counts_one_episode_when_two_wheels_share_one_line() {
+    // Both right wheels on the SAME vệt line at once: one line, so one charge. A per-wheel counter
+    // would charge it twice, which is exactly what this rules out. There are two such bands, one per
+    // line ([-0.395, -0.100] and [+0.100, +0.396] in car_y); 0,25 m is the middle of the upper one,
+    // so this is not a knife edge.
+    let s = pose_in_vet(7.0, 0.25, 0.0, 2);
     let snap = state_of(&s);
-    assert!(snap[LONGEST_EPISODE] >= 5.0, "the episode ran at least five seconds, got {}", snap[LONGEST_EPISODE]);
-    assert_eq!(snap[7], 0.0, "the car never moved: the timer ran on a stopped wheel");
+    let v = s.view();
+    assert_eq!(snap[CONTACT_FR], 1.0, "front-right on the vệt line");
+    assert_eq!(snap[CONTACT_RR], 1.0, "rear-right on the same line, same moment");
+    assert_eq!(v.fired("SH.04.DE_VACH"), 1, "one line, one episode: {:?}", v.fired_ids());
+    assert_eq!(v.score, 95, "and five points, not ten");
+    // The band is wide, not a knife edge: a hand's width either side still gives one episode.
+    for y in [0.12, 0.18, 0.32, 0.38] {
+        let s = pose_in_vet(7.0, y, 0.0, 2);
+        let snap = state_of(&s);
+        assert_eq!(
+            (snap[CONTACT_FR], snap[CONTACT_RR]),
+            (1.0, 1.0),
+            "at {y:.2} m both right wheels must still be on that line"
+        );
+        assert_eq!(s.view().fired("SH.04.DE_VACH"), 1, "still one line at {y:.2} m");
+    }
 }
 
 #[test]
-fn de_vach_keo_dai_does_not_trigger_before_five_seconds() {
-    // The same stopped car, but the run ends at 2 s: well before the five-second mark, so only
-    // DE_VACH is charged. The near side of `de_vach_keo_dai_charges_again_...`.
-    let s = pose_test_on_first_straight(CURVE | 1, 1.05, 2.0);
+fn de_vach_counts_two_episodes_when_one_wheel_is_on_each_of_two_lines() {
+    // The car sits in the vệt strip with its right side angled across it, so the front-right wheel is
+    // on one vệt line and the rear-right on the other: two lines, two charges. Placed rather than
+    // driven, but not a knife edge — 0.01 rad of heading either side still covers both lines.
+    let s = pose_in_vet(7.0, -0.0145, 0.2077, 2);
+    let snap = state_of(&s);
     let v = s.view();
-    assert_eq!(v.fired("SH.06.DE_VACH"), 1, "{:?}", v.fired_ids());
-    assert_eq!(v.fired("SH.06.DE_VACH_KEO_DAI"), 0, "under five seconds costs no extra: {:?}", v.fired_ids());
-    assert_eq!(v.score, 95);
+    assert_eq!(snap[CONTACT_FR], 1.0, "front-right on one vệt line");
+    assert_eq!(snap[CONTACT_RR], 1.0, "rear-right on the other, at the same moment");
+    assert_eq!(v.fired("SH.04.DE_VACH"), 2, "two lines count separately: {:?}", v.fired_ids());
+    assert_eq!(v.score, 90, "five points each");
+    assert!(!v.disqualified, "and it is a deduction, not the vệt suspension");
+    for dh in [-0.008, 0.008] {
+        let h = 0.2077 + dh;
+        let y = 0.675 * libm::cos(h) - 0.675;
+        let s = pose_in_vet(7.0, y, h, 2);
+        let snap = state_of(&s);
+        assert_eq!(
+            (snap[CONTACT_FR], snap[CONTACT_RR]),
+            (1.0, 1.0),
+            "at heading {h:.4} both lines must still be covered"
+        );
+        assert_eq!(s.view().fired("SH.04.DE_VACH"), 2, "still two lines at heading {h:.4}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
-// SH.04.TRUOT_VET — "Bánh xe trước và bánh xe sau bên lái phụ không qua vùng giới hạn của hình vệt
-// bánh xe, bị đình chỉ sát hạch."
+// The vệt boundary: touching the paint is DE_VACH, leaving the strip is TRUOT_VET, and the two are
+// mutually exclusive by construction. The reviewer's repro was an ordinary 0,22 m error left of the
+// lane centre through the strip, which used to charge both on one tick.
 // ---------------------------------------------------------------------------------------------
+
+/// Drive through bài 4's vệt strip holding `offset` metres left of the lane centre (+ = left),
+/// slowly, and stop as soon as the strip's length is behind the car.
+///
+/// Stopping there is deliberate: past the strip the same sloppy line runs the car into a *limit* line
+/// and then the curb, and those are different rules on different lines. This helper is about the vệt.
+fn hold_offset_through_the_vet(offset: f64) -> Session {
+    let mut s = Session::new(VET | 1).unwrap();
+    // The strip ends `Lvb` past the entry gate; the entry gate is `lead_m` in.
+    let vet_end = {
+        let block = s.course_block();
+        let mut i = 0;
+        let mut end = f64::INFINITY;
+        while i + 2 < block.len() {
+            let n = block[i + 2] as usize;
+            if block[i] == 4.0 && block[i + 1] == 4.0 {
+                // The vệt-end gate: its distance along the first straight is its x.
+                end = end.min(block[i + 3]);
+            }
+            i += 3 + 2 * n;
+        }
+        end
+    };
+    for t in 0..60 * TICKS_PER_S {
+        if t < 30 {
+            s.step(parked());
+            continue;
+        }
+        let snap = state_of(&s);
+        if snap[PROGRESS] > vet_end {
+            break;
+        }
+        let error = offset - snap[LATERAL];
+        let steer = ((0.5 * error - 1.2 * snap[HEADING_ERR_IDX]) / 0.55).clamp(-1.0, 1.0);
+        s.step(TickInput {
+            steering: (steer * 32760.0) as i16,
+            throttle: if snap[7] < 0.8 { 80 } else { 0 },
+            brake: if snap[7] > 1.0 { 100 } else { 0 },
+            clutch: if snap[7] > 0.8 { 255 } else { 160 },
+            gear: 1,
+            ..Default::default()
+        });
+        if s.view().disqualified {
+            break;
+        }
+    }
+    s
+}
+
+#[test]
+fn touching_the_vet_paint_is_de_vach_only_never_also_a_slip_off() {
+    // The reviewer's case: a small error left of the lane centre through the strip. The right wheels
+    // touch the upper vệt line, so DE_VACH is charged — and because a patch on the paint is by
+    // definition still inside the strip, TRUOT_VET must not fire with it. 0,22 m is the exact repro.
+    for offset in [0.20, 0.22, 0.25, 0.30] {
+        let s = hold_offset_through_the_vet(offset);
+        let v = s.view();
+        assert!(v.fired("SH.04.DE_VACH") >= 1, "at {offset} m the right wheels are on the paint: {:?}", v.fired_ids());
+        assert_eq!(v.fired("SH.04.TRUOT_VET"), 0, "and still inside the strip at {offset} m: {:?}", v.fired_ids());
+        assert!(!v.disqualified, "so no suspension at {offset} m");
+    }
+}
+
+#[test]
+fn leaving_the_vet_strip_past_the_paint_is_the_slip_off() {
+    // Far enough left that the right wheels' patches clear the upper vệt line entirely: that is
+    // outside the strip, so it is the slip-off, and it suspends the run.
+    for offset in [0.45, 0.50, 0.60] {
+        let s = hold_offset_through_the_vet(offset);
+        let v = s.view();
+        assert_eq!(v.fired("SH.04.TRUOT_VET"), 1, "at {offset} m the strip is left behind: {:?}", v.fired_ids());
+        assert!(v.disqualified, "and that is a suspension at {offset} m");
+    }
+}
+
+#[test]
+fn the_vet_zone_edge_never_charges_both_for_one_tick() {
+    // Sweep the offset across both edges. A run may earn DE_VACH early (it brushed the paint on the
+    // way out) *and* TRUOT_VET later (it then left the strip) — those are two acts at two times and
+    // the law lists both. What must never happen is the two landing on the same tick, which is the
+    // overlap the reviewer found. So the sweep asserts the per-tick rule, not a per-run one.
+    for step in 0..=16 {
+        let offset = 0.20 + f64::from(step) * 0.025;
+        let s = hold_offset_through_the_vet(offset);
+        assert!(
+            !same_tick_has_both(&s, "SH.04.DE_VACH", "SH.04.TRUOT_VET"),
+            "at {offset:.3} m off centre DE_VACH and TRUOT_VET landed on one tick: {:?}",
+            s.view().fired_ids()
+        );
+        // And the suspension, when it comes, is only ever the slip-off.
+        let slip = s.view().fired("SH.04.TRUOT_VET") > 0;
+        assert_eq!(slip, s.view().disqualified, "only the slip-off suspends, at {offset:.3} m");
+    }
+}
+
+/// Whether two rules fired on the same tick anywhere in the run. Two charges for one act share a
+/// tick; two separate acts do not.
+fn same_tick_has_both(s: &Session, a: &str, b: &str) -> bool {
+    let rs = crate::rules::Ruleset::load();
+    let code_of = |id: &str| rs.index_of(id).map(|i| rs.rules[i].code);
+    let (Some(ca), Some(cb)) = (code_of(a), code_of(b)) else { return false };
+    let ticks_a: Vec<u32> = s.view().events().iter().filter(|e| e.code == ca).map(|e| e.tick).collect();
+    s.view().events().iter().any(|e| e.code == cb && ticks_a.contains(&e.tick))
+}
 
 #[test]
 fn truot_vet_triggers_when_the_right_wheels_miss_the_strip() {
