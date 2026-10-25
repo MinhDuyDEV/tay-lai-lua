@@ -74,7 +74,7 @@ hash(session) -> u64                          // mã băm trạng thái để ki
   - Mỗi bước nhận đúng một snapshot thao tác.
   - Bản ghi lượt chạy lưu đúng các snapshot đã dùng.
 - **File `.wasm` không import gì từ bên ngoài.** Không dùng `env.sin` hay `env.pow`, không dùng wasm-bindgen trong lõi.
-  - Phần giao tiếp chỉ gồm vài hàm `extern "C"` cùng các hàm cấp phát và giải phóng bộ nhớ.
+  - Phần giao tiếp chỉ gồm vài hàm `extern "C"` cùng các hàm cấp phát và giải phóng bộ nhớ. Các hàm này nằm trong mô-đun `abi` của chính `sim-core` (crate vừa `cdylib` vừa `rlib`), không có crate `sim-abi` riêng.
   - Nhờ vậy trình duyệt và wazero chạy **cùng một file**.
 - **Cấu hình build và tính toán:**
   - Build với `panic=abort`.
@@ -87,7 +87,7 @@ hash(session) -> u64                          // mã băm trạng thái để ki
 
 | Phần | Vai trò | v1 |
 |---|---|---|
-| Họ xe | `trait VehicleModel`: nhận thao tác, trả về trạng thái và hình bao (thân xe, từng bánh) | Ô tô thân liền: mô hình xe đạp động học (kinematic bicycle) cùng hệ truyền động: côn, số sàn/tự động, vòng tua, chết máy |
+| Họ xe | Mô-đun xe: nhận thao tác, trả về trạng thái và hình bao (thân xe, từng bánh). Chưa có `trait`; chỉ tách thành `trait VehicleModel` khi có họ xe thứ hai | Ô tô thân liền: mô hình xe đạp động học (kinematic bicycle) cùng hệ truyền động: côn, số sàn/tự động, vòng tua, chết máy |
 | Hình học | Va chạm 2D: bánh xe với vạch hoặc polyline, thân xe với vùng hoặc ô đỗ, khoảng cách đầu xe tới vạch dừng | Có |
 | Máy dò (detector) | Các hàm nhỏ, mỗi hàm phát hiện một loại sự kiện: `wheel_on_line`, `stop_distance`, `rollback`, `timer`, `speed_over`, `rpm_over`, `stall`, `signal_state`, `red_light`, `yield_pedestrian`, `collision`… | Đủ cho hạng B |
 | Bộ luật | Đọc dữ liệu luật (mục 6) và nối máy dò với điểm trừ | `tt108-2026` (và `tt12-2025` nếu cần) |
@@ -100,7 +100,7 @@ hash(session) -> u64                          // mã băm trạng thái để ki
 - xe 3 bánh (B1);
 - xe 2 bánh (A1, A).
 
-Theo nguyên tắc "một adapter chỉ là seam giả định", v1 **chỉ khai báo trait và có một adapter** là ô tô thân liền. Không dựng sẵn hạ tầng chung cho các họ xe chưa làm. Xe tải và xe khách (C1–D) dùng cùng adapter ô tô, chỉ khác tham số.
+Theo nguyên tắc "một adapter chỉ là seam giả định", v1 **chỉ có một adapter** là ô tô thân liền, viết thẳng, chưa khai báo trait. Không dựng sẵn hạ tầng chung cho các họ xe chưa làm. Xe tải và xe khách (C1–D) dùng cùng adapter ô tô, chỉ khác tham số.
 
 **Vật lý:** v1 **không dùng engine vật lý**. Ở tốc độ sa hình (≤ 24 km/h) mô hình động học đã đủ. Khi cần va chạm vật rắn hoặc thăng bằng xe máy, sẽ thêm `rapier3d` bật tính năng `enhanced-determinism` làm dependency Rust.
 
@@ -306,8 +306,7 @@ apps/
   web/                Next.js + R3F + Worker nạp sim.wasm
   api/                Go: chi + connect-go + pgx/sqlc + wazero
 crates/
-  sim-core/           Rust: họ xe, hình học, máy dò, bộ luật, giám khảo, đạo diễn, replay
-  sim-abi/            Lớp xuất hàm extern "C" tối giản → sim.wasm (không import gì)
+  sim-core/           Rust: họ xe, hình học, máy dò, bộ luật, giám khảo, đạo diễn, replay; mô-đun `abi` xuất hàm extern "C" → sim.wasm (không import gì)
   course-gen/         QCVN 15 → hình học chấm điểm + mesh (dùng chung web/sim)
   road-import/        OpenDRIVE → đồ thị làn (chạy lúc build)
 proto/                buf: api.v1, replay.v1, content.v1
@@ -371,7 +370,7 @@ docs/
 | Bộ luật | `ruleset` | Bộ luật chấm điểm theo một thông tư, có ngày hiệu lực |
 | Máy dò | `detector` | Hàm phát hiện một loại sự kiện từ trạng thái mô phỏng |
 | Đình chỉ | `DISQUALIFY` | Bị dừng thi ngay (trước đây gọi là "truất quyền") |
-| Họ xe | `VehicleModel` | Mô hình chuyển động của một loại xe |
+| Họ xe | `VehicleModel` (khi có họ xe thứ hai) | Mô hình chuyển động của một loại xe |
 | Giám khảo ảo | `examiner` | Ra hiệu lệnh và quản lý trình tự bài |
 | Đạo diễn tình huống | `scenario_director` | Sinh xe và người cần cho từng bài đường trường |
 | Bản ghi lượt chạy | `replay` | Header + log thao tác, đủ để chạy lại y hệt |
