@@ -1,7 +1,7 @@
 version: "3"
 
 # The lane's done check. `task check` is the whole thing: build, gate the .wasm, rule
-# tests, then every golden trace on every engine.
+# tests, then every golden trace on every engine, then the web app and its end-to-end test.
 #
 # Browsers are a prerequisite, not part of the check (they are a 300 MB download):
 #   cd tools/browser && npm ci && npx playwright install --with-deps chromium firefox webkit
@@ -9,6 +9,8 @@ version: "3"
 vars:
   WASM: "{{.ROOT_DIR}}/build/sim.wasm"
   GOLDEN: "{{.ROOT_DIR}}/golden"
+  WEB: "{{.ROOT_DIR}}/apps/web"
+  WEB_WASM: "{{.ROOT_DIR}}/apps/web/public/sim.wasm"
 
 tasks:
   build:
@@ -45,9 +47,59 @@ tasks:
         (cd tools/wazero && go run . --wasm {{.WASM}} --golden {{.GOLDEN}}) || status=1
         exit $status
 
+  # The web app. Rust builds the .wasm; Next never needs the Rust toolchain, it only needs the
+  # file in apps/web/public. The copy is gitignored, so the ordering lives here.
+
+  web:install:
+    desc: install apps/web dependencies from its own lockfile
+    cmds:
+      - cd {{.WEB}} && pnpm install --frozen-lockfile
+
+  web:wasm:
+    desc: copy sim.wasm into the static assets the site serves
+    deps: [build]
+    cmds:
+      - mkdir -p {{.WEB}}/public
+      - cp {{.WASM}} {{.WEB_WASM}}
+
+  web:build:
+    desc: static-export the web app
+    deps: [web:wasm]
+    cmds:
+      - cd {{.WEB}} && pnpm build
+
+  web:test:
+    desc: the unit tests in apps/web (node --test, TypeScript via type stripping)
+    deps: [build]
+    cmds:
+      - cd {{.WEB}} && pnpm test
+
+  web:e2e:
+    desc: the end-to-end test against a real static export
+    deps: [web:build, build]
+    cmds:
+      - cd tools/browser && npm ci --no-audit --no-fund
+      - cd tools/browser && node e2e.mjs --site {{.WEB}}/out --wasm {{.WASM}}
+
+  web:preview:
+    desc: build and serve the site at http://localhost:4173/thi
+    deps: [web:build]
+    cmds:
+      - cd {{.WEB}} && node scripts/serve.mjs --port 4173
+
+  web:dev:
+    desc: Next dev server with hot reload (sim.wasm must already be in apps/web/public)
+    deps: [web:wasm]
+    cmds:
+      - cd {{.WEB}} && pnpm dev
+
   check:
     desc: the done check
     cmds:
       - task: wasm-gate
       - task: test
       - task: golden
+      - task: web:install
+      - task: web:build
+      - task: web:test
+      - task: web:e2e

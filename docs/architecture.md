@@ -140,6 +140,7 @@ Tách như vậy để thêm một hạng xe thường chỉ là thêm dữ li�
   - Mỗi khung hình (`rAF`), lấy thao tác hiện tại gửi cho Worker.
   - Worker chạy đủ số bước cố định cần chạy, trả về trạng thái.
   - React/three nội suy giữa 2 trạng thái gần nhất.
+  - Hiện tại lõi mô phỏng chạy trên main thread; Worker là phương án sẽ đo sau (mục 9).
   - Vẽ 3D không nằm trong React state. Dùng ref và `useFrame`. Zustand chỉ dùng cho giao diện.
 - **Sân thi** được dựng từ `courses` và kích thước xe ngay trong trình duyệt, gần như không phải tải file. Chỉ xe, cảnh vật và biển báo là file glTF, nén meshopt và KTX2 bằng gltf-transform.
 - **Âm thanh:** tiếng động cơ được tổng hợp trong AudioWorklet theo vòng tua, tải và vị trí côn.
