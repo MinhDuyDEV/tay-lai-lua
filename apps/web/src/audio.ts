@@ -6,7 +6,7 @@
 // processor. What exists now is the part that is not theirs: the gesture, the resume, the state.
 
 'use client';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 export type AudioState = 'idle' | 'starting' | 'running' | 'failed';
 
@@ -70,5 +70,5 @@ export function useEngineAudio(): Engine {
 
   useEffect(() => () => dispose(), [dispose]);
 
-  return { state: () => state.current, start, dispose };
+  return useMemo(() => ({ state: () => state.current, start, dispose }), [start, dispose]);
 }

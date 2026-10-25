@@ -1,6 +1,6 @@
 // End-to-end for bài 1 in the built site: a learner who has only a keyboard.
 //
-//   node e2e.mjs [--site ../../apps/web/out] [--wasm ../../build/sim.wasm] [--ruleset ../../content/rulesets/tt108-2026.json]
+//   node e2e.mjs [--site apps/web/out] [--wasm build/sim.wasm] [--ruleset content/rulesets/tt108-2026.json]
 //
 // Rules this file keeps:
 //  * Keyboard events only. The page is never poked: every key goes through page.keyboard.
@@ -10,15 +10,16 @@
 //  * Nothing is skipped. A browser or WebGL that cannot start is a failure.
 //  * The page has no stand-in for the core: it loads build/sim.wasm or shows an error and no hash.
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { serve } from '../../apps/web/scripts/serve.mjs';
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) args.set(process.argv[i].replace(/^--/, ''), process.argv[i + 1]);
-const site = args.get('site') ?? '../../apps/web/out';
-const wasmB64 = readFileSync(args.get('wasm') ?? '../../build/sim.wasm').toString('base64');
-const ruleset = JSON.parse(readFileSync(args.get('ruleset') ?? '../../content/rulesets/tt108-2026.json', 'utf8'));
+const here = (rel) => resolve(import.meta.dirname, rel);
+const site = args.get('site') ?? here('../../apps/web/out');
+const wasmB64 = readFileSync(args.get('wasm') ?? here('../../build/sim.wasm')).toString('base64');
+const ruleset = JSON.parse(readFileSync(args.get('ruleset') ?? here('../../content/rulesets/tt108-2026.json'), 'utf8'));
 
 // Software GL through ANGLE/SwiftShader: the same path on a headless Linux runner and on a Mac.
 const CHROMIUM_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
@@ -54,7 +55,22 @@ async function until(page, what, cond, allowed = []) {
   }
 }
 
-const clutchDown = (d) => Number(d.clutch) > 0.95;
+/**
+ * Keep the car rolling at a gentle speed until `cond` holds: throttle down below 1.2 m/s, up again
+ * at 2.2 m/s. Every switch waits on the published speed, so it is the state that decides.
+ */
+async function cruiseUntil(page, what, cond, allowed) {
+  const holds = () => page.$eval(stage, (el, c) => new Function('d', `return (${c});`)(el.dataset), cond);
+  let throttle = true;
+  while (!(await holds())) {
+    const flip = throttle ? `Number(d.speed) >= 2.2` : `Number(d.speed) <= 1.2`;
+    await until(page, `${what} (or a speed change)`, `(${cond}) || (${flip})`, allowed);
+    if (await holds()) break;
+    await (throttle ? page.keyboard.up('ArrowUp') : page.keyboard.down('ArrowUp'));
+    throttle = !throttle;
+  }
+  if (throttle) await page.keyboard.up('ArrowUp');
+}
 
 /** One whole run of bài 1 from the keyboard. `belt` false leaves the seat belt unfastened. */
 async function drive(page, { belt, allowed }) {
@@ -87,19 +103,17 @@ async function drive(page, { belt, allowed }) {
   await key.press('KeyP');
   await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
 
-  // Pull away: clutch up through the bite, a little throttle, then coast on what we have.
+  // Pull away: clutch up through the bite, throttle down, then hold a gentle speed.
   await key.up('Space');
   await key.down('ArrowUp');
   await until(page, 'moving', `Number(d.speed) > 0.5`, allowed);
-  await until(page, 'across the start line', `Number(d.bumper) >= 0`, allowed);
+  await cruiseUntil(page, 'bumper past 4.5 m', `Number(d.bumper) >= 4.5`, allowed);
 
   // The law's window for the signal is 4–6 m after the line; switch it off inside it.
-  await until(page, 'bumper past 4.5 m', `Number(d.bumper) >= 4.5`, allowed);
   await key.press('KeyQ');
   await until(page, 'left signal off', `d.signal === 'off'`, allowed);
 
-  await until(page, 'end of the exercise', `d.phase === 'done'`, allowed);
-  await key.up('ArrowUp');
+  await cruiseUntil(page, 'end of the exercise', `d.phase === 'done'`, allowed);
 }
 
 let failures = 0;

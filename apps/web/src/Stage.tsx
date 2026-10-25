@@ -105,23 +105,24 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
   const enter = useCallback(() => {
     audio.start();
     setEntered(true);
-    // The key that dismissed the overlay must not also count as an order or a toggle. The keyboard
-    // module hears this same event after us, so clear once the event has been fully dispatched.
-    setTimeout(() => runRef.current?.keyboard.clear(), 0);
+
   }, [audio]);
 
   // The run owns restart (Esc/Backspace and this button alike); `onRestart` clears the feed.
   const restart = useCallback(() => runRef.current?.restart(), []);
 
+  // The first key only enters the car. It is taken in the capture phase and stopped there, so the
+  // keyboard module never sees it and it cannot count as an order or a toggle.
   useEffect(() => {
     if (entered) return;
     const onFirstKey = (event: KeyboardEvent) => {
-      // Ignore browser shortcuts, the same way the keyboard module does.
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
       enter();
     };
-    window.addEventListener('keydown', onFirstKey, { once: true });
-    return () => window.removeEventListener('keydown', onFirstKey);
+    window.addEventListener('keydown', onFirstKey, { capture: true });
+    return () => window.removeEventListener('keydown', onFirstKey, { capture: true });
   }, [entered, enter]);
 
   const done = run ? run.state.phase === 'done' || run.state.disqualified : false;
