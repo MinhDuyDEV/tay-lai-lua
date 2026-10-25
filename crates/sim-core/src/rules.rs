@@ -238,18 +238,23 @@ impl SaHinh {
     /// The car's own minimum turning radius on the front outer wheel's contact point — QCVN 15's
     /// `Rqv`.
     ///
-    /// The kinematic bicycle turns about a point on the rear axle line, `wheelbase / tan(δ)` to the
-    /// side. The front outer wheel's contact point is `wheelbase` ahead of that line and half a
-    /// track outboard of the wheel centre, so its radius is `sqrt(wheelbase² + (pivot + track/2)²)`;
-    /// the outermost thing the car sweeps is that point plus half the tyre's width.
+    /// Follow the model, not the textbook: `vehicle.rs` turns the *reference point* (the car's
+    /// centre) at `v · tan(δ) / L`, so at full lock the centre traces a circle of `L / tan(δ)` —
+    /// 3,914 m for this car — and the turning centre lies on the line through the centre,
+    /// perpendicular to the heading. The front axle is `wheelbase / 2` *ahead of that line*, not a
+    /// whole wheelbase ahead, and the front outer wheel's centre is half a track outboard of its
+    /// axle. So the wheel centre traces `sqrt((L/2)² + (pivot + track/2)²)` = 4,744 m, and the
+    /// patch's outer edge adds half a tyre width: 4,841 m.
     ///
-    /// This is not `wheelbase / sin(δ)` — 4,74 m here — because that is the radius of a point lying
-    /// *on* the front axle line, and the contact patch's outer edge lies outboard of it, so it
-    /// swings slightly wider.
+    /// This is `Rqv` for this model. It is a hair under the legal 4,9 m floor for an exam car (see
+    /// `assumptions.rqv_against_the_legal_minimum`), which makes the figures marginally easier than
+    /// they would be with a real one — the honest direction to be wrong in, and named rather than
+    /// hidden.
     pub fn rqv_m(&self, v: &Vehicle) -> f64 {
-        let pivot = v.wheelbase_m / libm::tan(v.max_steer_rad);
+        let pivot = self.min_centre_radius_m(v);
+        let half_base = 0.5 * v.wheelbase_m;
         let out = pivot + 0.5 * self.track_m;
-        sqrt(v.wheelbase_m * v.wheelbase_m + out * out) + 0.5 * self.tyre_width_m
+        sqrt(half_base * half_base + out * out) + 0.5 * self.tyre_width_m
     }
 
     /// Bài 4's figure: Bvb = B1 + 0.2, Lvb = a, Sv = 1.5a, Lv = 2.0a, Bv = 2.2b.
@@ -257,11 +262,10 @@ impl SaHinh {
         self.tyre_width_m + 0.2
     }
 
-    /// The radius the car's own centre traces at full lock: the tightest turn it can hold.
+    /// The radius the car's own reference point traces at full lock: the tightest turn it can hold.
+    /// `vehicle.rs` turns it at `v · tan(δ) / L`, so the radius is exactly `L / tan(δ)`.
     pub fn min_centre_radius_m(&self, v: &Vehicle) -> f64 {
-        let pivot = v.wheelbase_m / libm::tan(v.max_steer_rad);
-        let half_base = 0.5 * v.wheelbase_m;
-        sqrt(pivot * pivot + half_base * half_base)
+        v.wheelbase_m / libm::tan(v.max_steer_rad)
     }
 
     /// The radius a bend is drawn at: comfortably above the car's tightest (`1,5×`), so the learner

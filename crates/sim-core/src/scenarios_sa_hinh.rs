@@ -812,14 +812,20 @@ fn rqv_comes_from_the_model_and_the_figure_is_built_on_it() {
     let sh = &rs.sa_hinh;
     let v = &rs.vehicle;
     let rqv = sh.rqv_m(v);
-    // The rear axle turns on a circle of `wheelbase / tan(max_steer)`; the front outer wheel's
-    // contact point is `wheelbase` ahead of that and half a track outboard, plus half a tyre.
+    // Follow the model: the reference point turns at `wheelbase / tan(max_steer)`, the front axle
+    // is half a wheelbase ahead of that line, and the outer wheel's patch adds half a tyre.
     let pivot = v.wheelbase_m / libm::tan(v.max_steer_rad);
-    let expected = libm::sqrt(v.wheelbase_m * v.wheelbase_m + (pivot + 0.5 * sh.track_m) * (pivot + 0.5 * sh.track_m))
-        + 0.5 * sh.tyre_width_m;
+    let half_base = 0.5 * v.wheelbase_m;
+    let out = pivot + 0.5 * sh.track_m;
+    let expected = libm::sqrt(half_base * half_base + out * out) + 0.5 * sh.tyre_width_m;
     assert!((rqv - expected).abs() < 1e-12, "rqv is the model's, got {rqv} want {expected}");
-    assert!((rqv - 4.9).abs() > 0.05, "and it is not the legal 4,9 m, it is {rqv:.3}");
-    assert!((rqv - 4.74).abs() > 0.05, "nor wheelbase / sin(max_steer) = 4,74, it is {rqv:.3}");
+    assert!(
+        (sh.min_centre_radius_m(v) - pivot).abs() < 1e-12,
+        "the reference point's radius is wheelbase / tan(max_steer), not a hypot of it"
+    );
+    // A hair under the legal 4,9 m floor for an exam car: named in the ruleset assumptions, because
+    // it makes the figures marginally easier than a real car's would be.
+    assert!((4.8..4.9).contains(&rqv), "rqv sits just under the legal minimum, got {rqv:.4}");
     // The figure's radii follow from it, and the inner circle is still a lane wide.
     let rn = sh.outer_radius_m(v);
     let rtr = sh.inner_radius_m(v);

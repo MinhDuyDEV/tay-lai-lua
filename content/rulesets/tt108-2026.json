@@ -722,8 +722,14 @@
     },
     {
       "field": "rqv_from_the_model",
-      "value": "Rqv = the sim car's own minimum turning radius on the front outer wheel's contact point at max_steer_rad, computed from the model (≈ 4,79 m); not the legal 4,9 m, and not wheelbase / sin(max_steer) = 4,74 m",
-      "why": "Văn bản chỉ cho ngưỡng ‘từ 4,9 m trở lên’ cho một xe thật, nên hình phải dùng bán kính quay vòng của chính xe mô phỏng. Rqv không lấy 4,74 m = cơ sở / sin(góc lái) vì đó là bán kính của một điểm nằm đúng trên trục trước, còn điểm ngoài cùng thật của bánh trước ngoài nằm hơi thấp hơn trục trước nên quay rộng hơn một chút. Công thức ở `SaHinh::rqv_m` trong rules.rs.",
+      "value": "Rqv = the sim car's own minimum turning radius on the front outer wheel's patch edge at max_steer_rad, computed from the model: 4,841 m (the wheel centre alone is 4,744 m). Not the legal 4,9 m.",
+      "why": "Văn bản chỉ cho ngưỡng ‘từ 4,9 m trở lên’ cho một xe thật, nên hình phải dùng bán kính quay vòng của chính xe mô phỏng. Theo đúng mô hình: vehicle.rs cho điểm chuẩn (tâm xe) quay với bán kính L/tan(δ) = 3,914 m, nên trục trước chỉ nằm trước đường đó nửa cơ sở, không phải một cơ sở. Tâm bánh trước ngoài vì vậy chạy vòng bán kính sqrt(1,2² + (3,914+0,675)²) = 4,744 m, thêm nửa bề rộng lốp thành 4,841 m. Công thức ở `SaHinh::rqv_m` trong rules.rs.",
+      "quote": "bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên"
+    },
+    {
+      "field": "rqv_against_the_legal_minimum",
+      "value": "Rqv = 4,841 m for this car, against the legal minimum of 4,9 m for an exam car: 59 mm tighter turning, so the figures are marginally easier than they would be with a real car",
+      "why": "Mô hình có Rqv = 4,841 m (bánh trước ngoài, mép vệt lốp) còn văn bản chỉ cho xe sát hạch ‘từ 4,9 m trở lên’. Chênh 0,059 m, tức xe mô phỏng quay vòng hơi chặt hơn xe thật mức tối thiểu, nên Rn = Rqv + 1,2 nhỏ hơn một chút và hình dễ hơn thật một chút. Đây là hướng sai đã biết và có tên, không phải số bịa: đổi max_steer_rad hoặc track_m là hình đổi theo. Nếu cần hình khó đúng bằng xe thật thì thay Rqv bằng 4,9 m, và khi đó bài 6 phải qua lại được — biên hiện tại còn dư (bài 6: 0,268 m; bài 4: 0,349 m).",
       "quote": "bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên"
     }
   ]
