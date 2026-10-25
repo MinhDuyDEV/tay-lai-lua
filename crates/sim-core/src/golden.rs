@@ -14,6 +14,11 @@ const BELT: u8 = TickInput::FLAG_BELT;
 const LEFT: u8 = TickInput::FLAG_SIGNAL_LEFT;
 const RIGHT: u8 = TickInput::FLAG_SIGNAL_RIGHT;
 const IGN: u8 = TickInput::FLAG_IGNITION;
+const ORDER: u8 = TickInput::FLAG_START_ORDER;
+
+/// Ticks of cold cranking every trace spends before its start order. `crank_ticks` is 18, so 20
+/// leaves the starter a margin; the prelude is unscored, so it costs the run nothing.
+const CRANK_TICKS: u32 = 20;
 
 pub struct Golden {
     pub name: &'static str,
@@ -37,41 +42,69 @@ fn record(seed: u64, ticks: u32, mut driver: impl FnMut(&crate::View, u32) -> Ti
     inputs
 }
 
-/// A clean pass: belt on, signal left at the order, gentle clutch, light throttle, the signal
-/// switched off once the bumper is inside the 5 m window, then a coast to the end mark. No rule
-/// fires. Recorded at metres, so the window is hit exactly.
+/// A clean pass: cold crank, belt on, the order, signal left, gentle clutch, light throttle, the
+/// signal switched off once the bumper is inside the 5 m window, then a coast to the end mark. No
+/// rule fires. Recorded at metres, so the window is hit exactly. The first `CRANK_TICKS` are the
+/// unscored cold start; the 330 scored ticks after the order are the run the trace always had.
 pub fn clean_pass() -> Golden {
     let seed = 1;
-    let inputs = record(seed, 330, |v, t| {
+    let inputs = record(seed, 330 + CRANK_TICKS, |v, t| {
         let signalling = v.front_bumper_m < 5.0;
         let mut flags = BELT;
         if signalling {
             flags |= LEFT;
         }
-        if t < 30 {
-            // Parked at the line: clutch pressed, neutral, handbrake on.
-            TickInput { gear: 0, clutch: 255, flags: flags | TickInput::FLAG_HANDBRAKE, ..Default::default() }
-        } else if t < 60 {
-            // Release the handbrake and feed the clutch in gently in first.
-            let clutch = 255u8.saturating_sub(((t - 30) * 5) as u8);
-            TickInput { gear: 1, clutch, throttle: 60, steering: (t as i16 - 45) * 40, flags, ..Default::default() }
-        } else if v.speed_mps < 3.0 {
-            TickInput { gear: 1, clutch: 60, throttle: 40, steering: 120, flags, ..Default::default() }
+        if t < CRANK_TICKS {
+            // Cold: key held, clutch pressed, neutral, handbrake on. Nothing is scored yet.
+            TickInput {
+                gear: 0,
+                clutch: 255,
+                flags: flags | TickInput::FLAG_HANDBRAKE | IGN,
+                ..Default::default()
+            }
         } else {
-            // Coast: off the throttle, a touch of steer, signal already off.
-            TickInput { gear: 1, clutch: 60, steering: 0, flags, ..Default::default() }
+            // Đèn xanh: every clock in the run counts from this tick.
+            let t = t - CRANK_TICKS;
+            flags |= ORDER;
+            if t < 30 {
+                // Parked at the line: clutch pressed, neutral, handbrake on.
+                TickInput { gear: 0, clutch: 255, flags: flags | TickInput::FLAG_HANDBRAKE, ..Default::default() }
+            } else if t < 60 {
+                // Release the handbrake and feed the clutch in gently in first.
+                let clutch = 255u8.saturating_sub(((t - 30) * 5) as u8);
+                TickInput { gear: 1, clutch, throttle: 60, steering: (t as i16 - 45) * 40, flags, ..Default::default() }
+            } else if v.speed_mps < 3.0 {
+                TickInput { gear: 1, clutch: 60, throttle: 40, steering: 120, flags, ..Default::default() }
+            } else {
+                // Coast: off the throttle, a touch of steer, signal already off.
+                TickInput { gear: 1, clutch: 60, steering: 0, flags, ..Default::default() }
+            }
         }
     });
     Golden { name: "xuat_phat_clean", seed, inputs }
 }
 
-/// A messy run: stall, restart, rev past 4000, a signal switched off far too early, a handbrake
-/// stall, and a right signal at the end. Chosen so the float paths (clutch slip, rpm, steering)
-/// all move, and so a one-bit float difference anywhere turns into a different final hash.
+/// A messy run: cold crank, stall, restart, rev past 4000, a signal switched off far too early, a
+/// handbrake stall, and a right signal at the end. Chosen so the float paths (clutch slip, rpm,
+/// steering) all move, and so a one-bit float difference anywhere turns into a different final
+/// hash. The cold crank is unscored; the order is given on the first tick after the engine
+/// catches, so the stall at the line is scored exactly as it always was.
 pub fn messy_run() -> Golden {
     let seed = 0x0123_4567_89ab_cdef;
     let mut stage = 0u8;
-    let inputs = record(seed, 460, |v, t| {
+    // Tick of the start order, which is the first tick after the engine catches.
+    let mut order_at: Option<u32> = None;
+    let inputs = record(seed, 460 + CRANK_TICKS + 1, |v, t| {
+        let t = match order_at {
+            None => {
+                // Cold: key held, clutch pressed, neutral, nothing scored either way.
+                if v.engine_on {
+                    order_at = Some(t);
+                }
+                return TickInput { gear: 0, clutch: 255, flags: IGN, ..Default::default() };
+            }
+            Some(order_tick) => t - order_tick,
+        };
         // Advance the stage on what the simulation says, not on a guessed tick.
         match stage {
             0 if t >= 18 => stage = 1,
@@ -84,19 +117,20 @@ pub fn messy_run() -> Golden {
             7 if v.speed_mps <= 0.0 => stage = 8,
             _ => {}
         }
+        let ordered = |flags: u8| flags | ORDER;
         match stage {
             // Sitting at the line, no belt yet, neutral, engine idling.
-            0 => TickInput { gear: 0, clutch: 255, ..Default::default() },
+            0 => TickInput { gear: 0, clutch: 255, flags: ORDER, ..Default::default() },
             // Drop the clutch in first at idle: dead stall.
-            1 => TickInput { gear: 1, clutch: 0, steering: -60, ..Default::default() },
+            1 => TickInput { gear: 1, clutch: 0, steering: -60, flags: ORDER, ..Default::default() },
             // Restart: clutch in, neutral, key held.
-            2 => TickInput { gear: 0, clutch: 255, flags: IGN, ..Default::default() },
+            2 => TickInput { gear: 0, clutch: 255, flags: IGN | ORDER, ..Default::default() },
             // Belt on, signal left, rev it in neutral past 4000.
             3 => TickInput {
                 gear: 0,
                 clutch: 255,
                 throttle: 255,
-                flags: BELT | LEFT,
+                flags: ordered(BELT | LEFT),
                 ..Default::default()
             },
             // Launch in first with a fast clutch drop and a lot of throttle.
@@ -105,7 +139,7 @@ pub fn messy_run() -> Golden {
                 clutch: 40,
                 throttle: 200,
                 steering: 300,
-                flags: BELT | LEFT,
+                flags: ordered(BELT | LEFT),
                 ..Default::default()
             },
             // Signal switched off at 5 m... which is inside the window; stage 6 then
@@ -115,7 +149,7 @@ pub fn messy_run() -> Golden {
                 clutch: 20,
                 throttle: 150,
                 steering: 100,
-                flags: BELT,
+                flags: ordered(BELT),
                 ..Default::default()
             },
             // Handbrake stop in second gear: the second stall.
@@ -124,11 +158,16 @@ pub fn messy_run() -> Golden {
                 clutch: 0,
                 brake: 255,
                 steering: -200,
-                flags: BELT | TickInput::FLAG_HANDBRAKE,
+                flags: ordered(BELT | TickInput::FLAG_HANDBRAKE),
                 ..Default::default()
             },
             // Odd signal use at the end: right instead of left, engine off.
-            _ => TickInput { gear: 0, clutch: 255, flags: BELT | RIGHT, ..Default::default() },
+            _ => TickInput {
+                gear: 0,
+                clutch: 255,
+                flags: ordered(BELT | RIGHT),
+                ..Default::default()
+            },
         }
     });
     Golden { name: "xuat_phat_messy", seed, inputs }
@@ -280,5 +319,82 @@ mod tests {
         let v = v.view();
         assert_eq!(v.fired_ids(), Vec::<&str>::new(), "clean run must be clean");
         assert_eq!(v.score, 100);
+    }
+
+    /// The snapshot the web reads (`sim_state`) must say what the core actually consumed: feed a
+    /// distinctive input, then read the same numbers back. The field order is the list in
+    /// `lib.rs`; this indexes it, so a reorder breaks here instead of in TS.
+    #[test]
+    fn snapshot_reports_what_the_core_consumed() {
+        let mut s = Session::new(2026);
+        for _ in 0..40 {
+            s.step(TickInput { clutch: 255, flags: IGN, ..Default::default() });
+        }
+        let input = TickInput {
+            steering: 1200,
+            throttle: 70,
+            brake: 30,
+            clutch: 168,
+            gear: 1,
+            flags: TickInput::FLAG_BELT | TickInput::FLAG_SIGNAL_LEFT | TickInput::FLAG_START_ORDER,
+        };
+        s.step(input);
+
+        let snap = s.snapshot();
+        let v = s.view();
+        assert_eq!(snap.len(), 21, "the snapshot is the 21 documented values");
+        assert_eq!(snap[0], f64::from(v.tick));
+        assert_eq!(
+            snap[1],
+            match v.phase {
+                crate::Phase::Waiting => 0.0,
+                crate::Phase::Launched => 1.0,
+                crate::Phase::PastLine => 2.0,
+                crate::Phase::Done => 3.0,
+            },
+            "the order tick puts the run in Launched"
+        );
+        assert_eq!(snap[2], f64::from(v.score));
+        assert_eq!(snap[3], 0.0, "not disqualified");
+        assert_eq!(snap[7], v.speed_mps);
+        assert_eq!(snap[8], v.rpm);
+        assert_eq!(snap[9], v.front_bumper_m);
+        assert_eq!(snap[10], f64::from(u8::from(v.engine_on)));
+        assert_eq!(snap[13], 70.0 / 255.0, "throttle as consumed");
+        assert_eq!(snap[14], 30.0 / 255.0, "brake as consumed");
+        assert_eq!(snap[15], 168.0 / 255.0, "clutch as consumed");
+        assert_eq!(snap[16], 1.0, "first gear");
+        assert_eq!(snap[17], 0.0, "handbrake released");
+        assert_eq!(snap[18], 1.0, "belt on");
+        assert_eq!(snap[19], 1.0, "left signal");
+        assert!(
+            snap[12] > 0.0 && snap[12] < 0.55,
+            "steer is the radian value the car moved with, got {}",
+            snap[12]
+        );
+        // First gear, clutch partway out, engine at idle: the driveline drags it down, which is
+        // what the audio uses to tell lugging from a free rev.
+        assert!(snap[20] > 0.0, "engine load is positive while the clutch drags, got {}", snap[20]);
+    }
+
+    /// A trace replayed through the snapshot reader gives the same hash: reading the run is
+    /// read-only and leaves nothing behind that the hash could see.
+    #[test]
+    fn replaying_a_trace_through_the_snapshot_keeps_the_hash() {
+        for g in all() {
+            let mut s = Session::new(g.seed);
+            for &input in &g.inputs {
+                s.step(input);
+                let snap = s.snapshot();
+                assert_eq!(snap[0], f64::from(s.view().tick), "tick is not the snapshot's");
+            }
+            assert_eq!(hash_line(&s), format!("{:016x}\n", run(&g).hash()));
+            assert_eq!(
+                s.snapshot(),
+                run(&g).snapshot(),
+                "golden {} snapshot drifted on replay",
+                g.name
+            );
+        }
     }
 }

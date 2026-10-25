@@ -44,6 +44,9 @@ impl TickInput {
     pub const FLAG_IGNITION: u8 = 1 << 2;
     pub const FLAG_HANDBRAKE: u8 = 1 << 3;
     pub const FLAG_SIGNAL_RIGHT: u8 = 1 << 4;
+    /// The learner pressed the start order (đèn xanh). Latches: only the first tick carrying it
+    /// matters, and everything after that tick is scored.
+    pub const FLAG_START_ORDER: u8 = 1 << 5;
 
     pub fn from_wire(b: &[u8; Self::WIRE_LEN]) -> Self {
         Self {
@@ -118,6 +121,40 @@ impl Prng {
     }
 }
 
+/// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
+pub const SNAPSHOT_LEN: usize = 21;
+
+/// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
+/// no alignment logic. **This list is the field order** — the single place the wire layout of
+/// `sim_state` is written down. Booleans are 0.0 or 1.0; `phase` and `signal` are the codes in
+/// `phase_code` and `signal_code`. Adding a field means bumping `SNAPSHOT_LEN` here and in TS.
+///
+/// ```text
+///  0 tick                  steps since the start order (0 while it waits for the order)
+///  1 phase                 0 waiting | 1 launched | 2 past line | 3 done
+///  2 score                 100 down to 0
+///  3 disqualified          0 | 1
+///  4 car x_m               metres, car centre, on the course axis
+///  5 car y_m               metres
+///  6 heading_rad           radians, 0 = down the course
+///  7 speed_mps             m/s along the car's own +x axis
+///  8 rpm                   engine speed, 0 when the engine is off
+///  9 front_bumper_m        front-bumper centre, metres past the start line (negative = short)
+/// 10 engine_on             0 | 1
+/// 11 cranking              0 | 1, the starter is turning
+/// 12 steer_rad             -max_steer..max_steer, as consumed
+/// 13 throttle              0..1, as consumed
+/// 14 brake                 0..1, as consumed
+/// 15 clutch                0..1 pedal travel, as consumed (1 = fully pressed, clutch open)
+/// 16 gear                  -1..5, as consumed (0 = neutral)
+/// 17 handbrake             0 | 1
+/// 18 belt                  0 | 1
+/// 19 signal                0 off | 1 left | 2 right
+/// 20 engine_load_nm        Nm the clutch drags the engine down with; negative when the wheels
+///                          drive the engine. The audio tells lugging from a free rev by it.
+/// ```
+pub type Snapshot = [f64; SNAPSHOT_LEN];
+
 pub use exercise::Phase;
 
 pub struct Session {
@@ -152,6 +189,7 @@ impl Session {
             &self.thresholds,
             input.controls(&self.rules),
             input.signal(),
+            input.flags & TickInput::FLAG_START_ORDER != 0,
             &mut fired,
         );
         for rule in fired {
@@ -182,6 +220,36 @@ impl Session {
             events: &self.events,
             rules: &self.rules,
         }
+    }
+
+    /// Read-only snapshot of the run for the web layer, as a flat `f64` array. It is derived, so
+    /// it is not part of the hash.
+    pub fn snapshot(&self) -> Snapshot {
+        let s = &self.state;
+        let c = &s.controls;
+        let mut out = [0.0f64; SNAPSHOT_LEN];
+        out[0] = f64::from(s.tick);
+        out[1] = f64::from(phase_code(s.phase));
+        out[2] = f64::from(s.score);
+        out[3] = f64::from(u8::from(s.disqualified));
+        out[4] = s.car.x_m;
+        out[5] = s.car.y_m;
+        out[6] = s.car.heading_rad;
+        out[7] = s.car.speed_mps;
+        out[8] = s.car.rpm;
+        out[9] = s.front_bumper_x(&self.rules);
+        out[10] = f64::from(u8::from(s.car.engine_on));
+        out[11] = f64::from(u8::from(s.car.crank_left() > 0));
+        out[12] = c.steer_rad;
+        out[13] = c.throttle;
+        out[14] = c.brake;
+        out[15] = c.clutch;
+        out[16] = f64::from(c.gear);
+        out[17] = f64::from(u8::from(c.handbrake));
+        out[18] = f64::from(u8::from(c.has_belt));
+        out[19] = f64::from(signal_code(s.signal));
+        out[20] = s.car.engine_load(&self.rules.vehicle, &self.rules.drivetrain, c);
+        out
     }
 
     /// Hash of the full simulation state: every float as bits (NaN canonicalised, -0.0 folded),
@@ -275,9 +343,10 @@ impl View<'_> {
 
 fn phase_code(p: exercise::Phase) -> u8 {
     match p {
-        exercise::Phase::Launched => 0,
-        exercise::Phase::PastLine => 1,
-        exercise::Phase::Done => 2,
+        exercise::Phase::Waiting => 0,
+        exercise::Phase::Launched => 1,
+        exercise::Phase::PastLine => 2,
+        exercise::Phase::Done => 3,
     }
 }
 

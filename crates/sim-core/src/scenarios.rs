@@ -6,20 +6,37 @@
 //! driver does at a *place* ("switch the signal off once the bumper is 5 m past the line"),
 //! not at a tick number that would silently move if the car model changed.
 
-use crate::{Session, TickInput, View};
+use crate::{Phase, Session, TickInput, View};
 
 const BELT: u8 = TickInput::FLAG_BELT;
 const LEFT: u8 = TickInput::FLAG_SIGNAL_LEFT;
 const IGN: u8 = TickInput::FLAG_IGNITION;
+const ORDER: u8 = TickInput::FLAG_START_ORDER;
+
+/// Cold start, shared by every scenario: hold the key with the clutch pressed and in neutral
+/// until the engine catches. Nothing is scored before the start order, so this costs no points.
+fn crank(s: &mut Session) {
+    for _ in 0..600 {
+        if s.view().engine_on {
+            break;
+        }
+        s.step(TickInput { gear: 0, clutch: 255, flags: IGN, ..Default::default() });
+    }
+    assert!(s.view().engine_on, "the starter must catch before a scenario can be driven");
+}
 
 /// Drive for `ticks` steps. `driver` sees the state before the step and returns the input for it.
+/// The first of those steps carries the start order, so `t` is the test's own clock and the belt
+/// and signal of its input are what the order tick is judged on.
 fn drive(ticks: u32, mut driver: impl FnMut(&View, u32) -> TickInput) -> Session {
     let mut s = Session::new(2026);
+    crank(&mut s);
     for t in 0..ticks {
         let input = {
             let v = s.view();
             driver(&v, t)
         };
+        let input = if t == 0 { TickInput { flags: input.flags | ORDER, ..input } } else { input };
         s.step(input);
     }
     s
@@ -57,6 +74,68 @@ impl Launch {
 
 fn clean() -> Launch {
     Launch::clean()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Cold start and the start order (đèn xanh) — "thắt dây an toàn, dừng xe trước vạch xuất phát,
+// chờ hiệu lệnh". The engine is off at create; the starter is the only way it runs; nothing is
+// scored and no clock runs until the order tick.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn the_engine_starts_cold_and_only_the_starter_lights_it() {
+    let mut s = Session::new(2026);
+    let v = s.view();
+    assert!(!v.engine_on, "cold: the engine must start off");
+    assert_eq!(v.rpm, 0.0);
+    assert_eq!(v.phase, Phase::Waiting);
+
+    // Key held in first with the clutch released: the starter must not drag a car in gear.
+    for _ in 0..120 {
+        s.step(TickInput { gear: 1, clutch: 0, flags: IGN, ..Default::default() });
+    }
+    assert!(!s.view().engine_on, "the starter is refused while a gear is in and the clutch is out");
+
+    // Clutch pressed, neutral, key held: it cranks, then catches. Not instantly — that is the
+    // difference between the starter turning the engine and the engine being on from the start.
+    s.step(TickInput { gear: 0, clutch: 255, flags: IGN, ..Default::default() });
+    let cranking = s.snapshot();
+    assert_eq!(cranking[10], 0.0, "still off on the first key-down tick");
+    assert_eq!(cranking[11], 1.0, "the starter is turning");
+    for _ in 0..60 {
+        if s.view().engine_on {
+            break;
+        }
+        s.step(TickInput { gear: 0, clutch: 255, flags: IGN, ..Default::default() });
+    }
+    let started = s.snapshot();
+    assert_eq!(started[10], 1.0, "the starter caught");
+    assert_eq!(started[11], 0.0, "the starter stops once the engine runs");
+    assert!(started[8] > 400.0, "the engine idles above the stall speed, got {}", started[8]);
+}
+
+#[test]
+fn nothing_is_scored_before_the_start_order() {
+    let mut s = Session::new(2026);
+    crank(&mut s);
+    // Belt off, first gear, clutch dropped: a stall and two charges once the run is scored.
+    for _ in 0..120 {
+        s.step(TickInput { gear: 1, clutch: 0, ..Default::default() });
+    }
+    let v = s.view();
+    assert_eq!(v.tick, 0, "no clock runs before the order");
+    assert_eq!(v.phase, Phase::Waiting);
+    assert_eq!(v.fired_ids(), Vec::<&str>::new(), "nothing is scored before the order");
+    assert_eq!(v.score, 100);
+    assert!(!v.engine_on, "the car is live before the order: the dropped clutch killed the engine");
+
+    // The belt is judged at the order, and the clocks count from the same tick.
+    s.step(TickInput { flags: ORDER, ..Default::default() });
+    let v = s.view();
+    assert_eq!(v.tick, 1, "the order tick is tick 1");
+    assert_eq!(v.phase, Phase::Launched);
+    assert_eq!(v.fired_ids(), vec!["SH.01.DAY_AN_TOAN"], "the belt is judged at the order");
+    assert_eq!(v.score, 95);
 }
 
 // ---------------------------------------------------------------------------------------------
