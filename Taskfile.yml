@@ -70,14 +70,16 @@ tasks:
 
   web:test:
     desc: the unit tests in apps/web (node --test, TypeScript via type stripping)
+    deps: [build]
     cmds:
-      - cd {{.WEB}} && node --test "test/**/*.test.ts"
+      - cd {{.WEB}} && pnpm test
 
   web:e2e:
     desc: the end-to-end test against a real static export
-    deps: [web:build]
+    deps: [web:build, build]
     cmds:
-      - cd {{.WEB}} && pnpm e2e
+      - cd tools/browser && npm ci --no-audit --no-fund
+      - cd tools/browser && node e2e.mjs --site {{.WEB}}/out --wasm {{.WASM}}
 
   web:preview:
     desc: build and serve the site at http://localhost:4173/thi

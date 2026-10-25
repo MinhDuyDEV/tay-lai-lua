@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\"",
-    "e2e": "node --test \"e2e/**/*.test.mjs\""
+    "test": "node --test \"test/*.test.ts\" \"input/*.test.ts\""
   },
   "dependencies": {
     "@react-three/fiber": "9.8.2",
