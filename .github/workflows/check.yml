@@ -1,0 +1,54 @@
+name: check
+
+# `task check` is the whole lane's done check, run on one amd64 and one arm64 runner.
+# The point is that the same sim.wasm gives the same state hash on Chrome, Firefox,
+# WebKit, and wazero in compiler and interpreter mode, on both CPU architectures.
+
+on:
+  push:
+    branches: ['lane/**']
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest # amd64
+          - runner: ubuntu-24.04-arm # arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # rust-toolchain.toml pins the version and the wasm32 target, so `rustup show`
+      # installs exactly what `cargo build` needs.
+      - name: Install Rust
+        run: rustup show
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/wazero/go.mod
+          cache-dependency-path: tools/wazero/go.sum
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.x
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # Browsers are a prerequisite of `task check`, not part of it, so a dev machine
+      # is not made to download them on every run.
+      - name: Install Playwright browsers
+        working-directory: tools/browser
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium firefox webkit
+
+      - run: task check
