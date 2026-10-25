@@ -397,7 +397,7 @@
     {
       "field": "hill_stop_definition",
       "value": "the first step, after the car has moved forward (> 0.1 m/s), on which forward speed is <= 0; only the first stop counts",
-      "why": "‘Dừng xe’ không được định nghĩa. Tốc độ về 0, hoặc bị đẩy qua 0 sang chiều lùi ngay trong một bước (trọng lực có thể làm vậy), cũng là lần dừng, để xe tuột dốc mà không phanh vẫn bị tính 30 giây và bị xét tụt dốc.",
+      "why": "‘Dừng xe’ không được định nghĩa. Tốc độ về 0, hoặc bị đẩy qua 0 sang chiều lùi ngay trong một bước (trọng lực có thể làm vậy), cũng là lần dừng, để xe tuột dốc mà không phanh vẫn bị tính 30 giây và bị xét tụt dốc. Lần dừng đầu là lần duy nhất: dừng ngắn trước vạch hoặc chết máy rồi trôi đến khi đứng cũng là lần dừng đó, không có cơ hội dừng lại (chết máy trên dốc bị thêm CHUA_DEN_VACH nếu đứng cách vạch hơn 0,5 m).",
       "quote": "Xe bị tụt dốc quá 500mm kể từ khi dừng xe"
     },
     {
@@ -409,7 +409,7 @@
     {
       "field": "hill_stop_distance_a",
       "value": "A = stop line − front bumper at the stop; A > 0.5 m: SH.03.CHUA_DEN_VACH, run continues; A < 0: SH.03.QUA_VACH; otherwise a good stop",
-      "why": "A đo từ tim thanh cản trước (measure_point). Dừng chưa đến vạch bị trừ 05 điểm và bài vẫn tiếp tục; đồng hồ 30 giây và phép đo tụt dốc tính từ chính lần dừng đó. Thanh cản trước đã qua vạch (A < 0) là dừng quá vạch, bị đình chỉ.",
+      "why": "A đo từ tim thanh cản trước (measure_point). Dừng chưa đến vạch bị trừ 05 điểm và bài vẫn tiếp tục; đồng hồ 30 giây và phép đo tụt dốc tính từ chính lần dừng đó. Thanh cản trước đã qua vạch (A < 0) là dừng quá vạch, bị đình chỉ. Vạch dừng rộng 0,2 m nhưng được mô phỏng là một đường tại x; không quy định đo từ mép nào.",
       "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
     },
     {
