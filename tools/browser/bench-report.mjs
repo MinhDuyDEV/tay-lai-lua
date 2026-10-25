@@ -1,19 +1,18 @@
-// Print the table for one bench run directory (the raw JSON bench.mjs wrote), or the newest run.
+// Print the table for one frame-budget bench run directory (the raw JSON bench.mjs wrote), or the
+// newest run.
 //
 //   node bench-report.mjs [run-dir]
 //
 // Per config: median over repeats of p50/p95/p99 frame time (rAF delta) and callback CPU (en - st),
-// sim microseconds per tick, late-frame share, long tasks, latency L and L_submit (median, IQR, p95),
-// and the break-even point in milliseconds of sim per tick at 60 Hz and 120 Hz. Frames in the first
-// `warmupMs` and frames flagged by a trace reopen are excluded.
+// sim microseconds per tick, late-frame share, long tasks, and the break-even point in milliseconds
+// of sim per tick at 60 Hz and 120 Hz. Then the budget check for K=20 at 4x: frame p95 and
+// callback-CPU p95 against 16.7 ms. Frames in the first `warmupMs` and frames flagged by a trace
+// reopen are excluded.
 //
 // A cell is valid only if (A3.2): its hash is golden (and all K sessions hash alike), the tab was
 // never hidden, the throttle is seen inside the cell at frame scale, it ran >= 0.99 x 60 ticks/s with
 // no CATCHUP clip, and its refresh rate is within 2% of the run's median. An invalid cell is printed
-// and not used to decide.
-//
-// The Worker's CPU slow-down is modelled by dilating its sim batch (see host/worker.ts), so every
-// Worker number at a throttle above 1x is labelled with that model.
+// and not used for the budget check.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -54,39 +53,6 @@ function frames(cell) {
     if (i > 0) delta.push(s.ts[i] - s.ts[i - 1]);
   }
   return { delta, cpu, ticksPerFrame: kept ? ticks / kept : 0, kept };
-}
-
-/** Key latency L (the frame after the one that drew the consuming tick) and L_submit. */
-function latencies(cell) {
-  const { samples: s, markers, header: h } = cell;
-  const warm = h.startTs + (h.warmupMs ?? WARMUP_MS);
-  // The first frame whose seq reached the tick that consumed the marker; seq only rises, so search.
-  const firstAtOrAfter = (tick) => {
-    let lo = 0;
-    let hi = s.seq.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (s.seq[mid] < tick) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-  const L = [];
-  const Lsubmit = [];
-  for (const m of markers) {
-    const i = firstAtOrAfter(m.tick);
-    if (i >= s.ts.length || s.ts[i] < warm || s.reopen[i] || (i > 0 && s.reopen[i - 1])) continue;
-    if (i + 1 < s.ts.length && s.ts[i + 1] >= warm) L.push(s.ts[i + 1] - m.keyT);
-    Lsubmit.push(s.en[i] - m.keyT);
-  }
-  const dispatch = markers.map((m) => m.handlerNow - m.keyT).filter((x) => Number.isFinite(x));
-  return { L, Lsubmit, dispatch };
-}
-
-/** Share of kept samples that are true (1/0 flags in the samples). */
-function share(flags) {
-  const kept = flags.length ? flags : [];
-  return kept.length ? kept.reduce((a, b) => a + b, 0) / kept.length : 0;
 }
 
 /** Share of deltas well past the cell's own vsync period: frames that took an extra one (A3.3). */
@@ -150,11 +116,8 @@ function rejections(c, refresh) {
   return out;
 }
 
-const keyOf = (c) => `${c.config.tag}|${c.config.host}|${c.config.k}|${c.config.throttle}|${c.config.slow}`;
-const label = (c) =>
-  `${c.config.tag} ${c.config.host} K${c.config.k} ${c.config.throttle}x` +
-  (c.config.host === 'worker' ? (c.config.slow > 1 ? `, worker dilated ${c.config.slow}x` : ', worker unpadded') : '') +
-  '';
+const keyOf = (c) => `${c.config.tag}|${c.config.k}|${c.config.throttle}`;
+const label = (c) => `${c.config.tag} K${c.config.k} ${c.config.throttle}x`;
 
 /** The valid cells of one config, or all of them when none is valid (then `valid` says NO). */
 function pick(list, refresh) {
@@ -173,23 +136,9 @@ export function report(dir) {
   push(`warm-up ${WARMUP_MS} ms and trace-reopen frames excluded; frame time is the rAF delta; CPU ms is the callback's own duration.`);
   if (cells[0]?.header?.refreshHz) push(`rAF rate ${f(cells[0].header.refreshHz, 1)} Hz; the 16.7 ms line is the pre-registered one, not this display's period.`);
 
-  push('calibration (one spin loop, 5 reps, median; 4x/1x ratio is what matters):');
-  for (const c of run.calibration) {
-    const base = run.calibration[0];
-    push(
-      `  ${c.throttle}x: main ${f(c.mainMs, 0)} ms x${f(c.mainMs / base.mainMs)}, ` +
-        `worker raw ${f(c.workerRawMs, 0)} ms x${f(c.workerRawMs / base.workerRawMs)}, ` +
-        `worker dilated ${f(c.workerPaddedMs, 0)} ms x${f(c.workerPaddedMs / base.workerPaddedMs)}`,
-    );
-  }
-
-  if (run.workerCdp) {
-    const w = run.workerCdp;
-    push(
-      `worker target direct throttle: ${w.attach}; command -> ${w.throttleReply}; ` +
-        `spin ${f(w.spinMsBefore, 0)} -> ${f(w.spinMsAfter, 0)} ms (x${f(w.ratioAfterAttach)})`,
-    );
-  }
+  // The 1x reference for the in-cell throttle check: each cell's throttleSeen is divided by this.
+  push('calibration (the in-cell check at 1x: 200 calls of the fixed ~1 ms spin, 5 reps, median):');
+  for (const c of run.calibration) push(`  ${f(c.frameScaleMs, 0)} ms per 200 calls (throttle ${c.throttle}x)`);
   const refresh = runRefresh(cells);
   push(`per-cell refresh rate must sit within 2% of the run's median (${f(refresh, 1)} Hz) to count (A3.2d).`);
   const groups = new Map();
@@ -198,19 +147,18 @@ export function report(dir) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(c);
   }
-  const order = ['k1', 'decision', 'unpadded', 'sweep', 'quick'];
+  const order = ['k1', 'budget', 'sweep', 'quick'];
   const rows = [...groups.values()].sort(
     (a, b) =>
       order.indexOf(a[0].config.tag) - order.indexOf(b[0].config.tag) ||
       a[0].config.k - b[0].config.k ||
-      a[0].config.throttle - b[0].config.throttle ||
-      a[0].config.host.localeCompare(b[0].config.host),
+      a[0].config.throttle - b[0].config.throttle,
   );
 
   const header = [
-    'config', 'n', 'p50', 'p95', 'p99', 'late%', 'max d',
+    'config', 'n', 'throttle seen', 'p50', 'p95', 'p99', 'late%', 'max d',
     'cpu p50', 'cpu p95', 'cpu p99',
-    't/fr', 'step us', 'sim/fr', 'LT', 'busy%', 'L', 'L_sub', 'valid',
+    't/fr', 'step us', 'sim/fr', 'LT', 'valid',
   ];
   const table = [header];
   for (const list of rows) {
@@ -230,26 +178,11 @@ export function report(dir) {
     const step = median(use.map((c) => c.header.simProbe?.kUsPerStep).filter((v) => typeof v === 'number'));
     const tpf = median(fr.map((x) => x.ticksPerFrame));
     const lt = median(use.map((c) => c.longtasks.filter((t) => t.start >= c.header.startTs + (c.header.warmupMs ?? WARMUP_MS)).length));
-    // Frames where the Worker still had the previous request, as a share of the kept frames (A3.5).
-    // Read from the raw samples; the summary's `busyFrames` counts the whole run, warm-up included.
-    const busy = median(
-      use.map((c) => {
-        if (c.config.host !== 'worker') return 0;
-        const warm = c.header.startTs + (c.header.warmupMs ?? WARMUP_MS);
-        const flags = [];
-        for (let i = 0; i < c.samples.ts.length; i += 1) {
-          if (c.samples.ts[i] < warm || c.samples.reopen[i] || (i > 0 && c.samples.reopen[i - 1])) continue;
-          flags.push(c.samples.busy[i]);
-        }
-        return share(flags) * 100;
-      }),
-    );
-    const lat = use.map(latencies);
-    const L = lat.flatMap((x) => x.L);
-    const Lsub = lat.flatMap((x) => x.Lsubmit);
     table.push([
       label(use[0]),
       String(use.length),
+      // Measured inside the cell, against the 1x reference: "4x" is a number, not a label.
+      use[0].config.throttle > 1 ? `x${f(median(use.map((c) => c.header.throttleSeen)), 2)}` : '—',
       f(p(50)),
       f(p(95)),
       f(p(99)),
@@ -263,9 +196,6 @@ export function report(dir) {
       f(step, 1),
       f((step * tpf) / 1000),
       String(lt),
-      f(busy, 1),
-      f(L.length ? median(L) : null),
-      f(Lsub.length ? median(Lsub) : null),
       ok ? 'yes' : `NO (${list.length - use.length}) ${[...new Set(reasons)].slice(0, 3).join('; ')}`,
     ]);
   }
@@ -298,9 +228,7 @@ export function report(dir) {
     const probeDilatedUs = c0.header.simProbe?.kDilatedUsPerStep ?? probeUs;
     return {
       cell: c0,
-      host: c0.config.host,
       throttle: c0.config.throttle,
-      slow: c0.config.slow,
       k: c0.config.k,
       tag: c0.config.tag,
       cpuP95: cpu(95),
@@ -314,9 +242,9 @@ export function report(dir) {
   });
 
   /** Frame-derived microseconds per session-tick: slope of CPU p95 from K=1 to the largest K. */
-  const frameSlope = (host, throttle) => {
+  const frameSlope = (throttle) => {
     const points = perConfig
-      .filter((x) => x.host === host && x.throttle === throttle && x.cpuP95 !== null && x.ticksPerFrame > 0)
+      .filter((x) => x.throttle === throttle && x.cpuP95 !== null && x.ticksPerFrame > 0)
       .sort((a, b) => a.k - b.k);
     const base = points.find((x) => x.k === 1) ?? points[0];
     const top = points.at(-1);
@@ -330,101 +258,74 @@ export function report(dir) {
   const kBreak = (usPerTick, hz) => (usPerTick === null || usPerTick <= 0 ? null : (1_000_000 / hz) / usPerTick);
 
   push('\nbreak-even (ms of sim per tick = c x K, c the cost of one session-tick; one 1/60 s tick per frame):');
-  for (const host of ['main', 'worker']) {
-    for (const throttle of [1, 4, 6]) {
-      const rows2 = perConfig.filter((x) => x.host === host && x.throttle === throttle);
-      if (!rows2.length) continue;
-      const slope = frameSlope(host, throttle);
-      const top = rows2.reduce((a, b) => (b.k > a.k ? b : a));
-      const cFrame = slope?.slopeUs ?? null;
-      const cProbe = top.probeUsPerTick;
-      const cProbeDilated = top.probeDilatedUsPerTick;
-      const fmt = (c, hz) => {
-        const k = kBreak(c, hz);
-        if (k === null) return '—';
-        const extrapolated = top.k < k;
-        return `K=${Math.round(k).toLocaleString('en-US')}${extrapolated ? '*' : ''}`;
-      };
-      const padded = host === 'worker' && throttle > 1;
-      const probeOk = top.k >= 100; // a probe at K=1 is one session for 600 ticks: sub-millisecond noise
-      if (rows2.length === 1) {
-        push(`  ${host} ${throttle}x${padded ? ' (padded)' : ''}: only K=${top.k} measured at this throttle, no sweep, so no break-even`);
-        continue;
-      }
-      const frameSay =
-        cFrame === null
-          ? 'no K=1 baseline'
-          : cFrame <= 0
-            ? 'callback CPU does not grow with K (the sim is off the main thread), so no break-even'
-            : `frame c=${f(cFrame, 2)} us/tick -> 60 Hz ${fmt(cFrame, 60)}, 120 Hz ${fmt(cFrame, 120)}`;
-      push(
-        `  ${host} ${throttle}x${padded ? ' (padded)' : ''}: ${frameSay}` +
-          (probeOk
-            ? `; probe c=${f(cProbe, 3)} us/tick -> 60 Hz ${fmt(cProbe, 60)}` +
-              (padded ? `; probe dilated c=${f(cProbeDilated, 3)} -> 60 Hz ${fmt(cProbeDilated, 60)}` : '')
-            : '; probe at K=1 only (too short to time, see clockStepUs)'),
-      );
-      push(
-        `    K measured: ${rows2
-          .sort((a, b) => a.k - b.k)
-          .map((x) => `K${x.k} cpu p95 ${f(x.cpuP95)} ms, ${f(x.ticksPerFrame)} ticks/frame`)
-          .join(' | ')}`,
-      );
-      if (slope) push(`    frame slope from K=${slope.from} to K=${slope.to} at ${f(slope.tpf)} ticks/frame.`);
+  let extrapolated = false;
+  for (const throttle of [1, 4, 6]) {
+    const rows2 = perConfig.filter((x) => x.throttle === throttle);
+    if (!rows2.length) continue;
+    const slope = frameSlope(throttle);
+    const top = rows2.reduce((a, b) => (b.k > a.k ? b : a));
+    const cFrame = slope?.slopeUs ?? null;
+    const cProbe = top.probeUsPerTick;
+    const fmt = (c, hz) => {
+      const k = kBreak(c, hz);
+      if (k === null) return '—';
+      const beyond = top.k < k;
+      extrapolated ||= beyond;
+      return `K=${Math.round(k).toLocaleString('en-US')}${beyond ? '*' : ''}`;
+    };
+    if (rows2.length === 1) {
+      push(`  ${throttle}x: only K=${top.k} measured at this throttle, no sweep, so no break-even`);
+      continue;
     }
-  }
-  push('  * the crossing lies beyond the largest K measured, so it is extrapolated, not measured.');
-
-  // ---- Latency per config: median, IQR and p95 (A3.3), and the key dispatch lag (A3.6).
-  push('\nlatency (L = rAF of the frame after the one that drew the consuming tick; L_submit = end of that callback):');
-  push(`  ${'config'.padEnd(34)}  ${'L med'.padStart(7)} ${'L iqr'.padStart(7)} ${'L p95'.padStart(7)}  ${'Ls med'.padStart(7)} ${'Ls p95'.padStart(7)}  ${'lag med'.padStart(8)}  n`);
-  for (const list of rows) {
-    const { use } = pick(list, refresh);
-    const lat = use.map(latencies);
-    const L = spread(lat.flatMap((x) => x.L));
-    const Ls = spread(lat.flatMap((x) => x.Lsubmit));
-    const lag = spread(lat.flatMap((x) => x.dispatch));
+    // Below ~0.01 us/tick the frame line is clock noise, not a slope: say so instead of printing a
+    // break-even of a billion sessions.
+    const frameSay =
+      cFrame === null
+        ? 'no K=1 baseline'
+        : cFrame < 0.01
+          ? `callback CPU does not grow with K between the weights measured (slope ${f(Math.max(0, cFrame), 4)} us/tick, within clock noise), so no frame break-even`
+          : `frame c=${f(cFrame, 2)} us/tick -> 60 Hz ${fmt(cFrame, 60)}, 120 Hz ${fmt(cFrame, 120)}`;
     push(
-      `  ${label(use[0]).slice(0, 34).padEnd(34)}  ${f(L.median).padStart(7)} ${f(L.iqr).padStart(7)} ${f(L.p95).padStart(7)}  ` +
-        `${f(Ls.median).padStart(7)} ${f(Ls.p95).padStart(7)}  ${f(lag.median, 3).padStart(8)}  ${L.n}`,
+      `  ${throttle}x: ${frameSay}` +
+        (top.k >= 100 ? `; probe c=${f(cProbe, 3)} us/tick -> 60 Hz ${fmt(cProbe, 60)}` : '; probe at K=1 only (too short to time, see clockStepUs)'),
     );
-  }
-  push('  lag = performance.now() in the keydown handler minus e.timeStamp: near zero means the pressed key\'s timestamp is on the page clock.');
-
-  // ---- The decision (prereg 75433f9 + A3.1): a host misses if frame-time p95 > 16.7 ms OR
-  // callback-CPU p95 > 16.7 ms at K=20, 4x; the Worker wins only if main misses and the Worker passes.
-  const decisionRow = (host, tag) =>
-    perConfig.find((x) => x.tag === tag && x.host === host && x.k === 20 && x.throttle === 4 && (host === 'main' || tag === 'unpadded' || x.slow > 1));
-  const miss = (row) => (row ? row.frameP95 > FRAME || row.cpuP95 > FRAME : null);
-  const describe = (row) =>
-    row
-      ? `frame p95 ${f(row.frameP95)} ms, cpu p95 ${f(row.cpuP95)} ms -> ${miss(row) ? 'MISS' : 'pass'}`
-      : 'missing';
-  const main = decisionRow('main', 'decision');
-  const worker = decisionRow('worker', 'decision');
-  const unpadded = decisionRow('worker', 'unpadded');
-  if (main && worker) {
-    const mainValid = rejections(main.cell, refresh);
-    const workerValid = rejections(worker.cell, refresh);
-    const win = mainValid.length === 0 && workerValid.length === 0 && miss(main) && !miss(worker);
-    push('\ndecision cell K=20 4x (A3.1: miss = frame-time p95 > 16.7 ms OR callback-CPU p95 > 16.7 ms):');
-    push(`  main: ${describe(main)}${mainValid.length ? ` [not valid: ${[...new Set(mainValid)].join('; ')}]` : ''}`);
-    push(`  worker (padded ${worker.slow}x): ${describe(worker)}${workerValid.length ? ` [not valid: ${[...new Set(workerValid)].join('; ')}]` : ''}`);
-    if (unpadded) push(`  worker unpadded, reported not deciding: ${describe(unpadded)}`);
     push(
-      `  -> ${win ? 'WORKER' : 'MAIN'}` +
-        (mainValid.length || workerValid.length ? ' (a decision cell is not valid, so the rule keeps main)' : '') +
-        `  (rule: worker only if main misses and the worker passes; a tie or a miss in either direction stays main)`,
+      `    K measured: ${rows2
+        .sort((a, b) => a.k - b.k)
+        .map((x) => `K${x.k} cpu p95 ${f(x.cpuP95)} ms, ${f(x.ticksPerFrame)} ticks/frame`)
+        .join(' | ')}`,
     );
+    if (slope) push(`    frame slope from K=${slope.from} to K=${slope.to} at ${f(slope.tpf)} ticks/frame.`);
+  }
+  if (extrapolated) push('  * the crossing lies beyond the largest K measured, so it is extrapolated, not measured.');
+
+  // ---- Budget check for the cell the app's own weight sits at: K=20 under a 4x throttle, against
+  // the section 9 budget of 16.7 ms per frame (60 fps). Reported, not a host contest: there is one
+  // host, so the question is only whether it fits.
+  const budget = perConfig.filter((x) => x.tag === 'budget' && x.k === 20 && x.throttle === 4);
+  push('\nbudget check, K=20 at 4x against 16.7 ms (60 fps):');
+  if (!budget.length) {
+    push(run.quick ? '  quick run: no K=20 4x cell, no budget check' : '  no K=20 4x cell in this run');
   } else {
-    const have = [main, worker].filter(Boolean).length;
-    push(run.quick ? '\nquick run: not the decision cell, no verdict' : `\ndecision cell: ${have}/2 hosts present, no verdict`);
+    for (const row of budget) {
+      const why = rejections(row.cell, refresh);
+      const fits = row.frameP95 <= FRAME && row.cpuP95 <= FRAME;
+      push(
+        `  frame p95 ${f(row.frameP95)} ms, callback-CPU p95 ${f(row.cpuP95)} ms: ` +
+          (fits ? 'within budget' : 'over budget') +
+          ` (${f((row.frameP95 / FRAME) * 100, 0)}% and ${f((row.cpuP95 / FRAME) * 100, 0)}% of 16.7 ms)` +
+          (why.length ? ` [not a valid cell: ${[...new Set(why)].join('; ')}]` : ''),
+      );
+    }
+    push(
+      '  the Worker host was measured and lost at this cell (no better on frame time or callback CPU, and about a frame plus a millisecond of latency); the bench is main-thread only, and the break-even above is where that would change.',
+    );
   }
 
   if (failed.length) push(`\n${failed.length} cell(s) never started: ${failed.map((c) => c.config.cell).join(', ')}`);
   const invalid = cells.filter((c) => rejections(c, refresh).length > 0);
   if (invalid.length) {
-    push(`\n${invalid.length} cell(s) reported but not used to decide:`);
+    push(`\n${invalid.length} cell(s) reported but not used for the budget check:`);
     for (const c of invalid) push(`  ${c.config.cell}: ${[...new Set(rejections(c, refresh))].join('; ')}`);
   }
   for (const p of run.problems) push(`problem: ${p}`);

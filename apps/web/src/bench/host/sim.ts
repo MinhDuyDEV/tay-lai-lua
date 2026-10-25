@@ -1,10 +1,11 @@
 // K sim sessions over ONE WebAssembly.Instance, for the bench only.
 //
 // `session.ts` opens a fresh instance per session, which is right for the app (one session per run)
-// and impossible here: Chromium allows about 125 live instances per renderer, so K=400 could not
-// start. The core itself keeps every session on the wasm heap behind a handle (`sim_create` returns
-// one per call), so K handles on one instance give the same K ticks of sim work per frame — the same
-// step, event drain and state read the app's `Session.step` does — with no instance ceiling.
+// and impossible here: Chromium allows about 125 live instances per renderer, so the K sweep (up to
+// 10 000 sessions per tick) could not start. The core itself keeps every session on the wasm heap
+// behind a handle (`sim_create` returns one per call), so K handles on one instance give the same K
+// ticks of sim work per frame — the same step, event drain and state read the app's `Session.step`
+// does — with no instance ceiling.
 //
 // The layout of the state block still comes from contract.ts, so a core that changes it fails here
 // exactly as it fails in the app.

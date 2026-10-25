@@ -1,5 +1,5 @@
-// Shared shapes of the sim-core placement bench: what the scene reads, what the Worker is sent, and
-// what one frame of either host reports back.
+// Shared shapes of the frame-budget bench: what the scene reads, what a cell loads, and what one
+// frame reports back. The bench runs the sim on the main thread only, where the app runs it today.
 
 import type { SimState } from '../../sim/session.ts';
 
@@ -47,13 +47,7 @@ export interface Gate {
   measured: boolean;
 }
 
-/** A key marker consumed by a tick: `tick` is the sequence number after that tick ran. */
-export interface Consumed {
-  id: number;
-  tick: number;
-}
-
-/** What one frame of a host did on the sim side. */
+/** What one frame did on the sim side. */
 export interface FrameInfo {
   ticks: number;
   /** The frame hit CATCHUP: time was dropped, so the sim starved (a starved cell cannot decide). */
@@ -62,46 +56,13 @@ export interface FrameInfo {
   simUs: number;
   /** A trace ended and the sessions were reopened during this batch. */
   reopened: boolean;
-  consumed: Consumed[];
-  /** Worker host only: a request was still in flight, so none was sent this frame. */
-  busy: boolean;
 }
 
-export type ToWorker =
-  | { type: 'init'; assets: Assets; k: number; slow: number }
-  | { type: 'frame'; ts: number; markers: number[] }
-  | { type: 'finish' }
-  | { type: 'spin'; iters: number; pad: boolean; slow: number }
-  | { type: 'probe'; ticks: number };
-
-/** Step cost measured in one tight loop, undilated, on a throwaway set of sessions. */
+/** Step cost measured in one tight loop on a throwaway sim, so no hash is affected. */
 export interface Probe {
   ticks: number;
   k: number;
   /** Microseconds per tick for the first session alone, and for all K sessions together. */
   oneUsPerStep: number;
   kUsPerStep: number;
-  /** All K, with the Worker's dilation applied: what a throttled Worker spends per tick. */
-  kDilatedUsPerStep: number;
 }
-
-export interface FrameReply {
-  type: 'frame';
-  state: SimState;
-  clip: boolean;
-  previous: SimState;
-  alpha: number;
-  seq: number;
-  reopens: number;
-  ticks: number;
-  simUs: number;
-  reopened: boolean;
-  consumed: Consumed[];
-}
-
-export type FromWorker =
-  | { type: 'ready'; state: SimState }
-  | FrameReply
-  | { type: 'finished'; gates: Gate[] }
-  | { type: 'spun' }
-  | { type: 'probed'; probe: Probe };

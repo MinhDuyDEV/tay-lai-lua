@@ -1,14 +1,13 @@
-// The sim side of the bench, the same code in both hosts: K sessions fed from the golden traces,
-// the run.ts time base (fixed 1/60 step, accumulator, CATCHUP), and the hash gate.
+// The sim side of the bench: K sessions fed from the golden traces, the run.ts time base (fixed
+// 1/60 step, accumulator, CATCHUP), and the hash gate.
 //
-// The sim is driven ONLY by the golden TickInput bytes. A key marker is a counter that rides along;
-// it never reaches a session, so the hash stays the golden one.
+// The sim is driven ONLY by the golden TickInput bytes, so the hash stays the golden one.
 
 import { CATCHUP } from '../../run.ts';
 import { DT } from '../../../input/driver.ts';
 import type { SimState } from '../../sim/session.ts';
 import { openKSim, type KSim } from './sim.ts';
-import type { Assets, Consumed, Gate, Probe } from './types.ts';
+import type { Assets, Gate, Probe } from './types.ts';
 
 export interface Advance {
   ticks: number;
@@ -17,7 +16,6 @@ export interface Advance {
   /** Elapsed time of the batch in microseconds, as performance.now() sees it where this runs. */
   simUs: number;
   reopened: boolean;
-  consumed: Consumed[];
 }
 
 export interface Stepper {
@@ -32,8 +30,8 @@ export interface Stepper {
   readonly instances: number;
   /** Frames that hit CATCHUP and dropped time. */
   readonly clips: number;
-  /** Run the ticks due at rAF time `ts` (ms); `markers` are key ids seen since the last call. */
-  advance(ts: number, markers: readonly number[]): Advance;
+  /** Run the ticks due at rAF time `ts` (ms). */
+  advance(ts: number): Advance;
   /** Step the first session alone to the end of the current trace, gate it, and return every gate. */
   finish(): Gate[];
   /**
@@ -44,8 +42,7 @@ export interface Stepper {
   readonly gates: readonly Gate[];
 }
 
-/** `slow` is the Worker's sim dilation (1 on the main thread): the probe reports the dilated cost too. */
-export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
+export function createStepper(assets: Assets, k: number): Stepper {
   const { wasm, traces } = assets;
   const gates: Gate[] = [];
   let traceIdx = 0;
@@ -60,7 +57,6 @@ export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
   let clips = 0;
   /** null until the first frame: the first rAF has no delta to accumulate (run.ts starts at 0). */
   let lastMs: number | null = null;
-  let waiting: number[] = [];
 
   const open = () => {
     sim?.dispose();
@@ -126,21 +122,16 @@ export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
     get clips() {
       return clips;
     },
-    advance(ts, markers) {
+    advance(ts) {
       const real = lastMs === null ? 0 : (ts - lastMs) / 1000;
       lastMs = ts;
       accumulator += Math.max(0, real);
-      for (const id of markers) waiting.push(id);
 
-      const consumed: Consumed[] = [];
       let ticks = 0;
       let reopened = false;
       const t0 = performance.now();
       while (accumulator >= DT && ticks < CATCHUP) {
         if (tick()) reopened = true;
-        // A frame can run zero ticks: a marker waits for the first tick that follows it.
-        for (const id of waiting) consumed.push({ id, tick: seq });
-        waiting = [];
         accumulator -= DT;
         ticks += 1;
       }
@@ -151,7 +142,7 @@ export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
         clips += 1;
       }
       alpha = Math.min(1, accumulator / DT);
-      return { ticks, simUs, reopened, consumed, clip };
+      return { ticks, simUs, reopened, clip };
     },
     probe(n) {
       const t = traces[traceIdx];
@@ -166,7 +157,7 @@ export function createStepper(assets: Assets, k: number, slow = 1): Stepper {
       for (let i = 0; i < n; i += 1) all.step(t.bytes.subarray(8 + ((cursor + i) % ticksIn()) * 8, 16 + ((cursor + i) % ticksIn()) * 8));
       const kUsPerStep = ((performance.now() - start) * 1000) / n;
       all.dispose();
-      return { ticks: n, k, oneUsPerStep, kUsPerStep, kDilatedUsPerStep: kUsPerStep * slow };
+      return { ticks: n, k, oneUsPerStep, kUsPerStep };
     },
     finish() {
       // A cell can end mid-trace: finish that pass with the same golden input and gate it, unmeasured.
