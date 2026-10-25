@@ -24,6 +24,8 @@ const ruleset = JSON.parse(readFileSync(args.get('ruleset') ?? here('../../conte
 // Software GL through ANGLE/SwiftShader: the same path on a headless Linux runner and on a Mac.
 const CHROMIUM_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 const WAIT_MS = 45_000;
+// RMS of the analyser, full scale 1.0. The processor's peak is 0.22; anything above this is a signal.
+const AUDIBLE = 0.002;
 
 const stage = '#stage';
 const readStage = (page) => page.$eval(stage, (el) => ({ ...el.dataset }));
@@ -81,9 +83,16 @@ async function drive(page, { belt, allowed }) {
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
 
-  // The engine starts cold: the learner starts it.
+  // The engine starts cold, so the speakers must be silent until the learner starts it. This only
+  // means something because the idle check below hears the same output chain.
+  await until(page, 'audio processor loaded', `d.audio === 'running'`, allowed);
+  const cold = Number((await readStage(page)).audioLevel);
+  if (cold !== 0) throw new Error(`the engine is off but the audio output level is ${cold}`);
+
   await key.press('KeyE');
   await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
+  await until(page, 'audible engine at idle', `Number(d.audioLevel) > ${AUDIBLE}`, allowed);
+  console.log(`     audio level: off ${cold}, running ${(await readStage(page)).audioLevel} (rms, 1.0 = full scale)`);
   if (belt) {
     await key.press('KeyB');
     await until(page, 'belt on', `d.belt === 'yes'`, allowed);

@@ -4,3 +4,4 @@ public/sim.wasm
 next-env.d.ts
 tsconfig.tsbuildinfo
 node_modules/
+public/audio/

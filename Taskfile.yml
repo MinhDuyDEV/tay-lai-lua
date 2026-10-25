@@ -55,16 +55,17 @@ tasks:
     cmds:
       - cd {{.WEB}} && pnpm install --frozen-lockfile
 
-  web:wasm:
-    desc: copy sim.wasm into the static assets the site serves
+  web:assets:
+    desc: copy sim.wasm and the engine sound processor into the static assets the site serves
     deps: [build]
     cmds:
-      - mkdir -p {{.WEB}}/public
+      - mkdir -p {{.WEB}}/public/audio
       - cp {{.WASM}} {{.WEB_WASM}}
+      - cp {{.ROOT_DIR}}/packages/audio/engine-processor.js {{.WEB}}/public/audio/engine-processor.js
 
   web:build:
     desc: static-export the web app
-    deps: [web:wasm]
+    deps: [web:assets]
     cmds:
       - cd {{.WEB}} && pnpm build
 
@@ -88,8 +89,8 @@ tasks:
       - cd {{.WEB}} && node scripts/serve.mjs --port 4173
 
   web:dev:
-    desc: Next dev server with hot reload (sim.wasm must already be in apps/web/public)
-    deps: [web:wasm]
+    desc: Next dev server with hot reload 
+    deps: [web:assets]
     cmds:
       - cd {{.WEB}} && pnpm dev
 

@@ -85,7 +85,10 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
   // Publish the numbers the test polls, every frame, on the one root element.
   useEffect(() => {
     if (!run) return;
-    const write = () => root.current && paint(root.current, run, glOk, audio.state(), entered);
+    const write = () => {
+      audio.post(run.state);
+      if (root.current) paint(root.current, run, glOk, audio.state(), audio.level(), entered);
+    };
     write();
     return run.onFrame(write);
   }, [run, glOk, audio, entered]);
@@ -147,6 +150,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
       data-penalties=""
       data-gl-ok="yes"
       data-audio="idle"
+      data-audio-level="0.0000"
       data-hash=""
       data-entered="no"
     >
@@ -212,7 +216,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
 }
 
 /** Everything the test polls, written on the root element each frame. */
-function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, entered: boolean) {
+function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
   const s = run.state;
   const d = el.dataset;
   d.phase = s.phase;
@@ -231,6 +235,7 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, ente
   d.penalties = run.penalties.map((p) => p.id).join(' ');
   d.glOk = glOk ? 'yes' : 'no';
   d.audio = audio;
+  d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   d.entered = entered ? 'yes' : 'no';
   for (const step of STEPS) d[`step_${step.id}`] = stepDone(step.id, s, run.ordered) ? 'yes' : 'no';
