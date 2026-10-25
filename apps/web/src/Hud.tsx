@@ -9,7 +9,7 @@ import type { Ruleset } from './ruleset.ts';
 import { sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
-import { STEPS, stepDone } from './steps.ts';
+import { STEPS, type StepId } from './steps.ts';
 
 export interface HudProps {
   run: Run;
@@ -17,8 +17,13 @@ export interface HudProps {
   penalties: readonly Penalty[];
   /** The rpm the ruleset calls a penalty above (SH.X.RPM params.rpm). */
   rpmLimit: number;
-  audio: 'idle' | 'starting' | 'running' | 'failed';
+  /** Read each frame: the audio state lives in a ref, so a value passed at render time goes stale. */
+  audio: () => 'idle' | 'starting' | 'running' | 'failed';
   glOk: boolean;
+}
+
+function audioLabel(state: ReturnType<HudProps['audio']>) {
+  return state === 'running' ? 'Âm thanh: sẵn sàng' : state === 'failed' ? 'Âm thanh: không mở được' : 'Âm thanh: chờ';
 }
 
 /** Pedal and steer bars show what the core consumed, not what a key is doing. */
@@ -41,6 +46,7 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
   const steerLabel = useRef<HTMLSpanElement>(null);
   const hint = useRef<HTMLParagraphElement>(null);
   const stepEls = useRef(new Map<string, HTMLLIElement>());
+  const audioEl = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     const stop = run.onFrame(() => {
@@ -68,13 +74,19 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
         const text = run.driver.hint ?? '';
         if (hint.current.textContent !== text) hint.current.textContent = text;
       }
+      if (audioEl.current) {
+        const now = audio();
+        if (audioEl.current.dataset.audio !== now) {
+          audioEl.current.dataset.audio = now;
+          audioEl.current.textContent = audioLabel(now);
+        }
+      }
       for (const [id, el] of stepEls.current) {
-        const done = stepDone(id as (typeof STEPS)[number]['id'], s, run.ordered);
-        el.dataset.done = done ? 'yes' : 'no';
+        el.dataset.done = run.stepsDone.has(id as StepId) ? 'yes' : 'no';
       }
     });
     return stop;
-  }, [run, ruleset, rpmLimit]);
+  }, [run, ruleset, rpmLimit, audio]);
 
   return (
     <div className="hud">
@@ -189,8 +201,8 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
             ))}
           </ul>
         )}
-        <p className="audio" data-audio={audio}>
-          {audio === 'running' ? 'Âm thanh: sẵn sàng' : audio === 'failed' ? 'Âm thanh: không mở được' : 'Âm thanh: chờ'}
+        <p className="audio" data-audio="idle" ref={audioEl}>
+          {audioLabel('idle')}
         </p>
       </section>
 

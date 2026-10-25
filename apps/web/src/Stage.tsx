@@ -13,7 +13,7 @@ import Hud from './Hud.tsx';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
 import { openSession, type Session } from './sim/session.ts';
-import { STEPS, stepDone } from './steps.ts';
+import { STEPS } from './steps.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -176,7 +176,7 @@ export default function Stage({ ruleset, wasmUrl }: StageProps) {
           ruleset={ruleset}
           penalties={penalties}
           rpmLimit={rpmLine}
-          audio={audio.state()}
+          audio={audio.state}
           glOk={glOk}
         />
       ) : null}
@@ -238,7 +238,7 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, leve
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   d.entered = entered ? 'yes' : 'no';
-  for (const step of STEPS) d[`step_${step.id}`] = stepDone(step.id, s, run.ordered) ? 'yes' : 'no';
+  for (const step of STEPS) d[`step_${step.id}`] = run.stepsDone.has(step.id) ? 'yes' : 'no';
 }
 
 /** Fetch sim.wasm once. A module that will not instantiate fails here, not on the first key. */

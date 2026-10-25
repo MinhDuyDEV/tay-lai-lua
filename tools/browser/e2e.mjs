@@ -170,6 +170,11 @@ try {
       throw new Error('the WebGL renderer was not created');
     }
     if (d.audio !== 'running') throw new Error(`AudioContext is "${d.audio}", not running`);
+    // What the learner reads: every step of the checklist ticked, and the audio line says ready.
+    const todo = await page.$$eval('[data-step]', (els) => els.filter((e) => e.dataset.done !== 'yes').map((e) => e.dataset.step));
+    if (todo.length) throw new Error(`the checklist still shows these steps undone after a clean run: ${todo}`);
+    const audioLine = await page.$eval('.audio', (e) => e.dataset.audio);
+    if (audioLine !== 'running') throw new Error(`the HUD audio line says "${audioLine}", the page says running`);
     if (problems.length) throw new Error(problems.join('\n'));
     // Trace and hash read in one go: the page has stopped feeding the core, so they belong together.
     clean = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));

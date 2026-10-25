@@ -13,6 +13,7 @@ import { createDriver, DT, type Driver } from '../input/driver.ts';
 import { attachKeyboard, type Keyboard } from '../input/keyboard.ts';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { toPenalty } from './ruleset.ts';
+import { markDone, type StepId } from './steps.ts';
 import type { Session, SimState } from './sim/session.ts';
 
 /** One frame may run at most this many ticks; beyond that the run drops time rather than spiral. */
@@ -32,6 +33,8 @@ export interface Run {
   readonly alpha: number;
   /** True once the start order has been given. */
   readonly ordered: boolean;
+  /** The checklist steps done so far in this run; cleared on restart. */
+  readonly stepsDone: ReadonlySet<StepId>;
   /** Run `fn` once per frame, from inside the loop, after the ticks. Returns the unsubscribe. */
   onFrame(fn: () => void): () => void;
   hash(): string;
@@ -58,6 +61,9 @@ export function createRun(options: RunOptions): Run {
   const keyboard = attachKeyboard(target, new Set([...options.handledCodes, ...RESTART_CODES]));
   const penalties: Penalty[] = [];
 
+  const stepsDone = new Set<StepId>();
+  const mark = () => markDone(stepsDone, state, state.phase !== 'waiting', ruleset.course.signal_off_early_m);
+
   let driver = createDriver();
   let session = options.openSession();
   let state = session.state;
@@ -78,6 +84,7 @@ export function createRun(options: RunOptions): Run {
     state = session.state;
     previous = state;
     penalties.length = 0;
+    stepsDone.clear();
     accumulator = 0;
     lastMs = 0;
     alpha = 1;
@@ -95,6 +102,7 @@ export function createRun(options: RunOptions): Run {
     const result = session.step(input);
     previous = state;
     state = result.state;
+    mark();
     for (const event of result.events) {
       const penalty = toPenalty(ruleset, event);
       penalties.push(penalty);
@@ -154,6 +162,7 @@ export function createRun(options: RunOptions): Run {
     get ordered() {
       return state.phase !== 'waiting';
     },
+    stepsDone,
     hash: () => session.hash(),
     traceBase64() {
       const bytes = session.trace();
