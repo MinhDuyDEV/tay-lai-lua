@@ -34,12 +34,13 @@
                   ┌────────────── Cloudflare CDN (HAN/SGN/DAD) ───────────────┐
 Trình duyệt       │ apps/web: Next.js (file tĩnh) + file 3D + sim.wasm         │
                   └────────────────────────────────────────────────────────────┘
-  ┌──────────── main thread ─────────────┐    ┌──────── Web Worker ─────────┐
-  │ React UI (quy trình thi, HUD, KQ)    │    │ sim.wasm (Rust, sim-core)   │
-  │ R3F/three: vẽ + nội suy trạng thái   │◄───│  60 bước/giây cố định       │
-  │ Input: phím/tay cầm/vô lăng/cảm ứng ─┼───►│  họ xe · máy dò · luật      │
-  │ AudioWorklet: tiếng máy (rpm, côn)   │    │  đạo diễn · giám khảo · log │
-  └──────────────────────────────────────┘    └─────────────────────────────┘
+  ┌──────────────────── main thread ────────────────────┐   ┌─ AudioWorklet ─┐
+  │ React UI (quy trình thi, HUD, KQ)                    │   │ tiếng máy      │
+  │ R3F/three: vẽ + nội suy trạng thái                   │──►│ (rpm, côn)     │
+  │ Input: phím/tay cầm/vô lăng/cảm ứng                  │   └────────────────┘
+  │ sim.wasm (Rust, sim-core): 60 bước/giây cố định,     │
+  │   họ xe · máy dò · luật · đạo diễn · giám khảo · log │
+  └──────────────────────────────────────────────────────┘
           │ ConnectRPC (protobuf)                 │ bản ghi lượt chạy (zstd)
           ▼                                       ▼ tải thẳng qua link ký sẵn (presigned URL)
   apps/api: Go + chi + connect-go ──► PostgreSQL     Object storage tại VN
@@ -136,10 +137,9 @@ Tách như vậy để thêm một hạng xe thường chỉ là thêm dữ li�
   - Trên máy tính có thể bật thêm WebGPU, nhưng chỉ khi bộ đo của dự án cho thấy nhanh hơn (mục 9).
   - Các vật lặp lại như cọc, vạch, lề dùng `InstancedMesh` hoặc `BatchedMesh`.
 - **Vòng lặp vẽ:**
-  - Mỗi khung hình (`rAF`), lấy thao tác hiện tại gửi cho Worker.
-  - Worker chạy đủ số bước cố định cần chạy, trả về trạng thái.
+  - Mỗi khung hình (`rAF`), cộng thời gian thật vào bộ đếm rồi chạy đủ số bước cố định 1/60 s đến hạn (tối đa 6 bước mỗi khung), ngay trên main thread.
   - React/three nội suy giữa 2 trạng thái gần nhất.
-  - Hiện tại lõi mô phỏng chạy trên main thread; Worker là phương án sẽ đo sau (mục 9).
+  - Lõi mô phỏng chạy trên main thread. Đây là quyết định tạm thời đã có số đo (mục 9). Chuyển sang Worker chỉ khi một bước lõi vượt ngưỡng ở mục 9.
   - Vẽ 3D không nằm trong React state. Dùng ref và `useFrame`. Zustand chỉ dùng cho giao diện.
 - **Sân thi** được dựng từ `courses` và kích thước xe ngay trong trình duyệt, gần như không phải tải file. Chỉ xe, cảnh vật và biển báo là file glTF, nén meshopt và KTX2 bằng gltf-transform.
 - **Âm thanh:** tiếng động cơ được tổng hợp trong AudioWorklet theo vòng tua, tải và vị trí côn.
@@ -187,7 +187,7 @@ Sinh code: Rust (prost), Go (connect-go), TypeScript (protobuf-es/connect-es).
 ## 5. Vòng đời một lượt thi
 
 1. Web gọi `StartAttempt(class, ruleset, mode)`. API trả về `attempt_id`, seed, phiên bản nội dung và mã băm `sim.wasm` mong đợi.
-2. Worker gọi `create(config)`. Mỗi bước 1/60 s chạy `step(input)`. Sự kiện (lỗi, hiệu lệnh) được đẩy lên giao diện ngay lập tức.
+2. Vòng lặp của trang gọi `create(config)`. Mỗi bước 1/60 s chạy `step(input)`. Sự kiện (lỗi, hiệu lệnh) được đẩy lên giao diện ngay lập tức.
 3. Khi bài thi kết thúc:
    - web nén log thao tác,
    - tải lên object storage qua link ký sẵn,
@@ -270,12 +270,15 @@ Các con số dưới đây là **đề xuất của dự án, chưa có nguồn
 | Trang giới thiệu | Không tải three.js hay sim.wasm |
 | Bản ghi lượt chạy 18 phút, sau nén | Ước tính vài chục đến vài trăm KB, cần đo |
 
-**Hai câu hỏi phải trả lời bằng số đo:**
-1. **WebGPU hay WebGL** với cảnh giống sân thi. Đã có báo cáo WebGPURenderer tốn CPU hơn khoảng 2 lần với cảnh nhiều vật nhỏ không instancing.
-2. **Chạy lõi trong Worker hay trên main thread.**
-   - Worker tách lõi khỏi công việc vẽ, nhưng làm thao tác đến chậm thêm khoảng một khung hình.
-   - Lõi rất nhẹ, nên nếu độ trễ thao tác cảm nhận được thì có thể chạy cùng file `.wasm` trên main thread.
-   - Interface của `sim-core` không đổi trong cả hai trường hợp.
+**Hai câu hỏi và câu trả lời:**
+1. **WebGPU hay WebGL** với cảnh giống sân thi: **chưa đo.** Máy đo duy nhất là Apple M1 Max (Metal), không nói gì về GPU tích hợp Intel/AMD trên Windows hay Mali/Adreno của học viên, nên một số đo WebGPU từ máy này không quyết định được gì. Giữ WebGL; xem lại theo mục 13 khi có máy đại diện. Đã có báo cáo WebGPURenderer tốn CPU hơn khoảng 2 lần với cảnh nhiều vật nhỏ không instancing.
+2. **Chạy lõi trong Worker hay trên main thread: main thread** (tạm thời, xem điều kiện bên dưới).
+   - Cách đo: trang `/bench` (R3F cùng cấu hình `Stage`, sân đủ 11 bài hạng B theo QCVN 15 vẽ cùng lúc với 180 lệnh vẽ, 40 xe nền) chạy `sim.wasm` thật theo các vết chuẩn, mỗi ô 15 giây, 3 lần lặp xen kẽ, Chromium có đầu trên GPU thật. Chạy bằng `task bench`. Mọi số dưới đây là **"M1 Max"** hoặc **"M1 Max + 4× CPU throttle"** (màn hình 120 Hz). Throttle CPU của Chrome làm JS chậm đi 4,1 lần nhưng gần như không làm chậm phần gửi lệnh vẽ (CPU của một khung 1,0 ms ở 1× và 1,3 ms ở 4×). Vì thế dòng 4× là mô phỏng cho **lõi/JS chậm**, không phải GPU yếu. Throttle không tác động lên Worker, nên khi thử Worker ở 4× phải kéo dài bước mô phỏng của Worker 4 lần bằng cách chờ. Đó là mô hình, không phải đo trực tiếp.
+   - Một bước lõi hôm nay (bài 3, một phiên): **0,23 µs** ở 1×, khoảng 1 µs ở 4×. Giai đoạn 2 ước khoảng 20 phiên bài 3 mỗi bước (10–50; ước lượng của lead, chưa có lõi để đo), tức khoảng 5 µs.
+   - Ô quyết định (tải gấp 20 lần lõi, 4×): main thread có p95 thời gian khung 10,1 ms (chỉ là chu kỳ 120 Hz) và p95 CPU của callback 1,9 ms. Worker (có chờ bù) cho 10,1 ms và 2,0 ms. Main không trượt ngưỡng 16,7 ms nên theo quy tắc đã đăng ký trước (commit `75433f9`, sửa đổi A3) main thread thắng.
+   - Độ trễ thao tác (từ phím đến khung hình đã vẽ bước dùng phím đó, trung vị): main 17,6 ms, Worker 26,5 ms ở 4×. Chi phí Worker là **một khung hình cộng khoảng 1 ms** chuyển tin: 9,5 ms ở 120 Hz, khoảng 18 ms ở 60 Hz.
+   - Ngưỡng chuyển sang Worker: trên main thread, một bước lõi bắt đầu làm trượt 16,7 ms khi nặng hơn khoảng **14 ms** (ở 4×; khoảng 8.000 phiên bài 3 mỗi bước), tức khoảng 400 lần ước lượng giai đoạn 2. Ở 1× điểm này ngoại suy còn xa hơn (khoảng 12.600 phiên). Ở 4×, K = 10.000 phiên: main trượt (p95 18,6 ms) còn Worker chạy theo `rAF` không giữ đủ 60 bước/giây (54,3).
+   - Điều kiện của kết luận: **tạm thời cho đến khi một máy yếu thật chạy `task bench`** (Windows GPU tích hợp, 2 nhân). Đo trên M1 Max 10 nhân, Worker luôn có nhân rảnh. Chuyển sang Worker chỉ khi đo bằng `task bench` cho thấy một bước lõi trên main thread vượt ngưỡng trên. Mã Worker nằm ở commit `324df45`.
 
 ## 10. Mở rộng, dữ liệu cá nhân, hạ tầng
 
@@ -303,7 +306,7 @@ Các con số dưới đây là **đề xuất của dự án, chưa có nguồn
 
 ```
 apps/
-  web/                Next.js + R3F + Worker nạp sim.wasm
+  web/                Next.js + R3F + sim.wasm
   api/                Go: chi + connect-go + pgx/sqlc + wazero
 crates/
   sim-core/           Rust: họ xe, hình học, máy dò, bộ luật, giám khảo, đạo diễn, replay; mô-đun `abi` xuất hàm extern "C" → sim.wasm (không import gì)
@@ -328,7 +331,7 @@ docs/
 
 | Giai đoạn | Nội dung | Điều kiện xong |
 |---|---|---|
-| **0. Khung và thử nghiệm** | Git repo và monorepo (cả ba ngôn ngữ build được bằng một lệnh); `sim-core` với xe hạng B số sàn, côn và chết máy; bài **xuất phát** và **dốc** theo QCVN 15 và TT 108; phát lại và mã băm; cảnh đo hiệu năng; thử âm thanh côn | Test vết chuẩn khớp trên Chrome, Firefox, Safari và wazero (amd64 + arm64); file `.wasm` không có import; có số đo WebGL/WebGPU và Worker/main thread; giáo viên dạy lái thử và xác nhận cảm giác côn và dốc |
+| **0. Khung và thử nghiệm** | Git repo và monorepo (cả ba ngôn ngữ build được bằng một lệnh); `sim-core` với xe hạng B số sàn, côn và chết máy; bài **xuất phát** và **dốc** theo QCVN 15 và TT 108; phát lại và mã băm; cảnh đo hiệu năng; thử âm thanh côn | Test vết chuẩn khớp trên Chrome, Firefox, Safari và wazero (amd64 + arm64); file `.wasm` không có import; có số đo Worker/main thread (mục 9); số đo WebGL/WebGPU chờ một máy đại diện (mục 13); giáo viên dạy lái thử và xác nhận cảm giác côn và dốc |
 | 1. Sa hình hạng B | Đủ 11 bài, số sàn và số tự động; màn hình kết quả và phát lại có trích dẫn luật | Mỗi lỗi trong Phụ lục III có test |
 | 2. Đường trường hạng B | Tuyến ≥ 5 km, giám khảo ảo, đạo diễn tình huống, 12 bài | Mỗi bài kích hoạt được mọi lỗi của nó |
 | 3. Tài khoản và lưu trữ | Đăng nhập, lưu lượt thi, kiểm tra bằng wazero, tiến độ học | Dữ liệu cá nhân đặt đúng nơi luật sư đã xác nhận |
@@ -342,6 +345,7 @@ docs/
 |---|---|---|
 | WebGPU làm mặc định | Với cảnh nhiều vật nhỏ, WebGPU chưa nhanh hơn WebGL; Firefox Android chưa bật WebGPU mặc định | R3F v10 và drei v11 ổn định, và bộ đo của dự án cho thấy WebGPU nhanh hơn |
 | R3F v10 / drei v11 | Còn alpha; nhiều thành phần chưa chạy đúng trên WebGPU | Có bản beta hoặc stable |
+| Worker cho `sim-core` | Một bước lõi rẻ hơn ngưỡng khoảng 14 ms hàng nghìn lần (mục 9); Worker chỉ thêm một khung hình độ trễ | `task bench` trên máy yếu thật, hoặc một bước lõi đo được vượt ngưỡng ở mục 9 |
 | Engine vật lý (Rapier) | Mô hình động học đủ cho hạng B | Làm hạng E (khớp nối), xe máy, hoặc cần va chạm vật rắn |
 | Valkey / Redis | Postgres đủ dùng | Đo thấy nút thắt |
 | Kubernetes, microservices | Server nhẹ, không giữ trạng thái | Không có kế hoạch |
