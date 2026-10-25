@@ -5,6 +5,7 @@
 //!   sim_step(handle, input_ptr)      reads TickInput::WIRE_LEN bytes
 //!   sim_hash(handle) -> u64
 //!   sim_drain_events(handle, out_ptr, cap) -> n   writes n <= cap Event records (Event::WIRE_LEN each)
+//!   sim_state(handle, out_ptr, cap) -> n          writes n <= cap f64 snapshot values
 
 use crate::{Event, Session, TickInput};
 
@@ -59,6 +60,24 @@ pub unsafe extern "C" fn sim_drain_events(s: *mut Session, out: *mut u8, cap: us
     for (i, e) in events.into_iter().take(n).enumerate() {
         let dst = unsafe { core::slice::from_raw_parts_mut(out.add(i * Event::WIRE_LEN), Event::WIRE_LEN) };
         dst.copy_from_slice(&e.to_wire());
+    }
+    n
+}
+
+/// Writes the run snapshot into `out` as little-endian `f64` values and returns how many it wrote.
+/// Same shape as `sim_drain_events`: the caller allocates, the core reports the count. Values are
+/// copied as bytes, so the caller makes no alignment promise and a JS `DataView` reads them.
+/// The field order is the list in `lib.rs` above `Snapshot`.
+///
+/// # Safety
+/// `s` is a live session; `out` has room for `cap * 8` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) -> usize {
+    let snap = unsafe { &*s }.snapshot();
+    let n = snap.len().min(cap);
+    for (i, v) in snap.into_iter().take(n).enumerate() {
+        let dst = unsafe { core::slice::from_raw_parts_mut(out.add(i * 8), 8) };
+        dst.copy_from_slice(&v.to_le_bytes());
     }
     n
 }
