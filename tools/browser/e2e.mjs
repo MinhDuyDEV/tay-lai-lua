@@ -1,4 +1,4 @@
-// End-to-end for bài 1 in the built site: a learner who has only a keyboard.
+// End-to-end for bài 1 and bài 3 in the built site: a learner who has only a keyboard.
 //
 //   node e2e.mjs [--site apps/web/out] [--wasm build/sim.wasm] [--ruleset content/rulesets/tt108-2026.json]
 //
@@ -140,6 +140,59 @@ async function drive(page, { belt, allowed }) {
   await cruiseUntil(page, 'end of the exercise', `d.phase === 'done'`, allowed);
 }
 
+// Where bài 3's learner acts, as the page shows it: the clutch goes down 1.2 m short of the line and
+// the car slows on the slope by itself; the brake goes on once it is creeping, so the stop does not
+// hang on how fast this script's key reaches the page.
+const COAST_GAP_M = 1.2;
+const BRAKE_BELOW_MPS = 0.6;
+
+/**
+ * Bài 3 from the keyboard: gear 1, handbrake off, creep up, clutch then brake to stop inside A, hold
+ * with the handbrake. Then `finish` either pulls away (handbrake method) or lets the handbrake go with
+ * the clutch up and no throttle. Every key waits on the published state.
+ */
+async function driveHill(page, { finish, allowed }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+
+  // Before the first tick the snapshot already says clutch 1.00, so wait for ticks that consumed the key.
+  const tick = Number((await readStage(page)).tick);
+  await key.down('Space');
+  // Fully down: the gear lever only goes in with the pedal at the floor.
+  await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
+  await key.press('Digit1');
+  await until(page, 'gear 1', `d.gear === '1'`, allowed);
+  await key.press('KeyP');
+  await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+  await key.up('Space');
+
+  await until(page, `${COAST_GAP_M} m short of the line`, `Number(d.lineGap) < ${COAST_GAP_M}`, allowed);
+  await key.down('Space');
+  await until(page, 'slowed to a creep', `Number(d.speed) < ${BRAKE_BELOW_MPS}`, allowed);
+  await key.down('ArrowDown');
+  await until(page, 'stopped', `d.phase === 'stopped'`, allowed);
+  await key.press('KeyP');
+  await until(page, 'handbrake on', `d.handbrake === 'yes'`, allowed);
+  await key.up('ArrowDown');
+
+  await key.up('Space');
+  if (finish === 'pull-away') {
+    await key.down('ArrowUp');
+    await until(page, 'clutch at the bite', `Number(d.clutch) <= 0.65`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released on the slope', `d.handbrake === 'no'`, allowed);
+    await until(page, 'over the stop line', `d.phase === 'done'`, allowed);
+    await key.up('ArrowUp');
+  } else {
+    await until(page, 'clutch fully up', `Number(d.clutch) <= 0.05`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released with the clutch up', `d.handbrake === 'no'`, allowed);
+    await until(page, 'disqualified', `d.disqualified === 'yes'`, allowed);
+  }
+}
+
 let failures = 0;
 const check = async (name, fn) => {
   try {
@@ -152,7 +205,7 @@ const check = async (name, fn) => {
 };
 
 const server = await serve(site, 0);
-const url = `http://localhost:${server.address().port}/thi`;
+const origin = `http://localhost:${server.address().port}`;
 let browser;
 try {
   browser = await chromium.launch({ args: CHROMIUM_ARGS });
@@ -165,7 +218,7 @@ try {
 /** Everything a page said about itself, kept for `pageReady` to print when the page never boots. */
 const pageLog = new WeakMap();
 
-async function fresh() {
+async function fresh(path = '/thi') {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   const problems = [];
   const log = [];
@@ -180,7 +233,7 @@ async function fresh() {
   });
   page.on('requestfailed', (r) => log.push(`requestfailed: ${r.url()} ${r.failure()?.errorText ?? ''}`));
   page.on('response', (r) => r.status() >= 400 && log.push(`http ${r.status()}: ${r.url()}`));
-  await page.goto(url);
+  await page.goto(origin + path);
   return { page, problems };
 }
 
@@ -209,16 +262,19 @@ try {
     await page.close();
   });
 
-  await check('the recorded trace replays to the hash the page shows', async () => {
-    if (!clean) throw new Error('no clean run to replay');
-    if (clean.hash !== clean.shown) throw new Error(`page hash ${clean.hash} differs from data-hash ${clean.shown}`);
+  /** Replay a recorded run through the golden runner's page script; the trace header names the exercise. */
+  const replays = async (run) => {
+    if (!run) throw new Error('no clean run to replay');
+    if (run.hash !== run.shown) throw new Error(`page hash ${run.hash} differs from data-hash ${run.shown}`);
     const page = await browser.newPage();
     await page.setContent('<!doctype html><meta charset="utf-8"><title>replay</title>');
     await page.addScriptTag({ path: join(import.meta.dirname, 'page.js') });
-    const replayed = await page.evaluate((a) => window.runGolden(a), { wasmB64, traceB64: clean.trace });
+    const replayed = await page.evaluate((a) => window.runGolden(a), { wasmB64, traceB64: run.trace });
     await page.close();
-    if (replayed !== clean.hash) throw new Error(`replay gave ${replayed}, the page showed ${clean.hash}`);
-  });
+    if (replayed !== run.hash) throw new Error(`replay gave ${replayed}, the page showed ${run.hash}`);
+  };
+
+  await check('the recorded trace replays to the hash the page shows', () => replays(clean));
 
   await check('bài 1 without the seat belt: SH.01.DAY_AN_TOAN, score 95, quote shown', async () => {
     const { page, problems } = await fresh();
@@ -230,6 +286,44 @@ try {
     const rule = ruleset.rules.find((r) => r.id === 'SH.01.DAY_AN_TOAN');
     const shown = await page.$eval('[data-penalty="SH.01.DAY_AN_TOAN"] blockquote', (e) => e.textContent);
     if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+
+  let hillClean;
+  await check('bài 3 clean run: stop inside A, start on the slope, score 100, header says exercise 3', async () => {
+    const { page, problems } = await fresh('/thi/3');
+    await driveHill(page, { finish: 'pull-away', allowed: [] });
+    const d = await readStage(page);
+    if (d.exercise !== '3' || d.phase !== 'done' || d.score !== '100' || d.penalties !== '' || d.disqualified !== 'no') {
+      throw new Error(`not a clean finish: ${JSON.stringify(d)}`);
+    }
+    console.log(`     A ${d.stopA} m of ${ruleset.hill.max_a_m} m, rollback ${d.rollback} m`);
+    if (Number(d.stopA) < 0 || Number(d.stopA) > ruleset.hill.max_a_m) throw new Error(`A ${d.stopA} m is outside the window`);
+    if (Number(d.rollback) > ruleset.hill.max_rollback_m) throw new Error(`rolled back ${d.rollback} m`);
+    if (d.glOk !== 'yes') throw new Error('the WebGL renderer was not created');
+    const todo = await page.$$eval('[data-step]', (els) => els.filter((e) => e.dataset.done !== 'yes').map((e) => e.dataset.step));
+    if (todo.length) throw new Error(`the checklist still shows these steps undone after a clean run: ${todo}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    hillClean = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+    const exerciseId = Buffer.from(hillClean.trace, 'base64')[7];
+    if (exerciseId !== 3) throw new Error(`the trace header carries exercise id ${exerciseId}, not 3`);
+    await page.close();
+  });
+
+  await check('the bài 3 trace replays to the hash the page shows', () => replays(hillClean));
+
+  await check('bài 3 handbrake released with the clutch up: SH.03.TUT_DOC, đình chỉ, quote shown', async () => {
+    const { page, problems } = await fresh('/thi/3');
+    // A stall can come first as the car rolls back; it is part of the same mistake.
+    await driveHill(page, { finish: 'roll-back', allowed: ['SH.03.TUT_DOC', 'SH.X.CHET_MAY'] });
+    const d = await readStage(page);
+    if (!d.penalties.split(' ').includes('SH.03.TUT_DOC')) throw new Error(`SH.03.TUT_DOC did not fire: ${JSON.stringify(d)}`);
+    const rule = ruleset.rules.find((r) => r.id === 'SH.03.TUT_DOC');
+    const shown = await page.$eval('[data-penalty="SH.03.TUT_DOC"] blockquote', (e) => e.textContent);
+    if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    const points = await page.$eval('[data-penalty="SH.03.TUT_DOC"] .points', (e) => e.textContent);
+    if (points !== 'Đình chỉ') throw new Error(`the HUD says "${points}", not "Đình chỉ"`);
     if (problems.length) throw new Error(problems.join('\n'));
     await page.close();
   });

@@ -102,6 +102,7 @@ body {
 
 .hud-steps .key {
   white-space: nowrap;
+  flex: none;
 }
 
 .hint {

@@ -300,12 +300,12 @@ function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ru
   const gap = stopped ? s.stopGapAM : s.lineGapM;
   if (a.label) a.label.textContent = stopped ? 'A lúc dừng' : s.lineGapM < 0 ? 'Quá vạch' : 'Còn tới vạch';
   a.value.textContent = mm(gap);
-  a.limit.textContent = `không quá ${mm(hill.max_a_m)}`;
+  a.limit.textContent = `không quá ${mm(hill.max_a_m)} mm`;
   a.cell.dataset.state = gap >= 0 && gap <= hill.max_a_m ? 'ok' : stopped ? 'bad' : 'neutral';
 
   const r = parts.rollback;
   r.value.textContent = mm(s.rollbackM);
-  r.limit.textContent = `không quá ${mm(hill.max_rollback_m)}`;
+  r.limit.textContent = `không quá ${mm(hill.max_rollback_m)} mm`;
   r.cell.dataset.state = s.rollbackM > hill.max_rollback_m ? 'bad' : s.rollbackM > 0 ? 'warn' : 'neutral';
 
   const left = secondsLeft(s, ruleset);

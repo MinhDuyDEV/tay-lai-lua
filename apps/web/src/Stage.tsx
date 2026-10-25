@@ -46,6 +46,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
   const [penalties, setPenalties] = useState<readonly Penalty[]>(NO_PENALTIES);
   const [glOk, setGlOk] = useState(true);
   const [entered, setEntered] = useState(false);
+  const [done, setDone] = useState(false);
   const [bootProblem, setBootProblem] = useState<string | null>(null);
   const audio = useEngineAudio();
 
@@ -91,6 +92,8 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
     if (!run) return;
     const write = () => {
       audio.post(run.state);
+      // The run changes without a React render; the result card needs one when it ends (or restarts).
+      setDone(run.state.phase === 'done' || run.state.disqualified);
       if (root.current) paint(root.current, run, exercise, glOk, audio.state(), audio.level(), entered);
     };
     write();
@@ -132,13 +135,12 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
     return () => window.removeEventListener('keydown', onFirstKey, { capture: true });
   }, [entered, enter]);
 
-  const done = run ? run.state.phase === 'done' || run.state.disqualified : false;
-
   return (
     <div
       id="stage"
       ref={root}
       data-exercise={lesson}
+      data-tick="0"
       data-phase="waiting"
       data-ordered="no"
       data-engine-on="yes"
@@ -230,6 +232,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
 function paint(el: HTMLElement, run: Run, exercise: Exercise, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
   const s = run.state;
   const d = el.dataset;
+  d.tick = String(s.tick);
   d.phase = s.phase;
   d.ordered = run.ordered ? 'yes' : 'no';
   d.engineOn = s.engineOn ? 'yes' : 'no';
