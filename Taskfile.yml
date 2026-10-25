@@ -1,0 +1,27 @@
+version: "3"
+
+vars:
+  WASM: build/sim.wasm
+
+tasks:
+  build:
+    desc: build sim.wasm
+    cmds:
+      - cargo build -p sim-core --release --target wasm32-unknown-unknown
+      - mkdir -p build
+      - cp target/wasm32-unknown-unknown/release/sim_core.wasm {{.WASM}}
+
+  wasm-gate:
+    desc: sim.wasm must have no import and no relaxed-SIMD instruction
+    deps: [build]
+    cmds:
+      - |
+        wat=$(wasm-tools print {{.WASM}})
+        if echo "$wat" | grep -E '^\s*\(import ' ; then echo "FAIL: sim.wasm has imports"; exit 1; fi
+        if echo "$wat" | grep -E 'relaxed' ; then echo "FAIL: sim.wasm uses relaxed SIMD"; exit 1; fi
+        echo "wasm-gate ok"
+
+  check:
+    desc: the done check
+    cmds:
+      - task: wasm-gate
