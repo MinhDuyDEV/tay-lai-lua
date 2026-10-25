@@ -1,6 +1,5 @@
-// The sim seam. One interface, two implementations: the real `sim.wasm` and a fake that stands in
-// until peer-sim's `sim_state` lands. Which one is running is never a secret — the page publishes
-// it as `data-sim`, and the end-to-end test refuses anything but `wasm`.
+// The sim seam: a thin wrapper over the exports of sim.wasm. It records every tick it is fed, in the
+// golden .trace format, so what the learner did can be replayed through the very same core.
 
 import { STATE_LEN, readState, type SimState } from './contract.ts';
 export type { SimState };
@@ -19,8 +18,8 @@ export interface StepResult {
 }
 
 export interface Session {
-  /** `wasm` when the real core answered, `fake` only while `sim_state` is missing. */
-  readonly kind: 'wasm' | 'fake';
+  /** The core's state now: before any tick it is the car parked and waiting for the order. */
+  readonly state: SimState;
   /** Advance exactly one 1/60 s tick with these 8 TickInput bytes. */
   step(input: Uint8Array): StepResult;
   /** The core's state hash: 16 lowercase hex digits. */
@@ -39,25 +38,21 @@ interface Exports {
   sim_step(handle: number, inputPtr: number): void;
   sim_hash(handle: number): bigint;
   sim_drain_events(handle: number, outPtr: number, cap: number): number;
-  sim_state?(handle: number, outPtr: number, cap: number): number;
+  sim_state(handle: number, outPtr: number, cap: number): number;
 }
 
 export const SEED = 1n;
 const EVENTS_PER_DRAIN = 32;
 
-/**
- * Open a session from the shipped `sim.wasm` bytes. Throws if the module is unusable; falls back to
- * the fake only when `sim_state` is absent, which is the one difference the fake can stand in for.
- */
+/** Open a session from the shipped `sim.wasm` bytes. Throws if the module is not the core we expect. */
 export function openSession(wasmBytes: ArrayBuffer): Session {
   const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {});
   const exports = instance.exports as unknown as Exports;
-  if (typeof exports.sim_state !== 'function') return fakeSession('sim_state missing from sim.wasm');
+  if (typeof exports.sim_state !== 'function') throw new Error('sim.wasm has no sim_state: wrong build');
   return wasmSession(exports);
 }
 
 function wasmSession(exports: Exports): Session {
-  const simState = exports.sim_state!;
   const inPtr = exports.sim_alloc(8);
   const evPtr = exports.sim_alloc(EVENTS_PER_DRAIN * 8);
   const statePtr = exports.sim_alloc(STATE_LEN * 8);
@@ -76,8 +71,16 @@ function wasmSession(exports: Exports): Session {
     return out;
   };
 
+  const read = (): SimState => {
+    const count = exports.sim_state(handle, statePtr, STATE_LEN);
+    return readState(new Float64Array(exports.memory.buffer, statePtr, STATE_LEN), count);
+  };
+  let state = read();
+
   return {
-    kind: 'wasm',
+    get state() {
+      return state;
+    },
     step(input) {
       const copy = input.slice();
       records.push(copy);
@@ -85,9 +88,8 @@ function wasmSession(exports: Exports): Session {
       exports.sim_step(handle, inPtr);
       // Drain every tick, like the runners do, so a burst of events cannot overflow the buffer.
       const events = drain();
-      const count = simState(handle, statePtr, STATE_LEN);
-      const block = new Float64Array(exports.memory.buffer, statePtr, STATE_LEN);
-      return { state: readState(block, count), events };
+      state = read();
+      return { state, events };
     },
     hash() {
       return BigInt.asUintN(64, exports.sim_hash(handle)).toString(16).padStart(16, '0');
@@ -104,106 +106,5 @@ function wasmSession(exports: Exports): Session {
       exports.sim_free(evPtr, EVENTS_PER_DRAIN * 8);
       exports.sim_free(statePtr, STATE_LEN * 8);
     },
-  };
-}
-
-/**
- * TEMPORARY: removed when peer-sim's `sim_state` lands. Stands in so the scene and HUD can be
- * looked at before then. It always reports `kind: 'fake'` (the page shows a banner, `data-sim` says
- * so, the end-to-end test fails on it) and it fires no rules, so no score from it means anything.
- */
-export function createFakeSession(reason: string): Session {
-  return fakeSession(reason);
-}
-
-function fakeSession(reason: string): Session {
-  void reason;
-  const records: Uint8Array[] = [];
-  let tick = 0;
-  let x = -1 - 2.1;
-  let speed = 0;
-  let rpm = 850;
-  let engineOn = true;
-  let cranking = false;
-  let gear = 0;
-  let belt = false;
-  let signal: SimState['signal'] = 'off';
-  let handbrake = true;
-  let clutch = 1;
-  let throttle = 0;
-
-  return {
-    kind: 'fake',
-    step(input) {
-      records.push(input.slice());
-      tick += 1;
-      const flags = input[6];
-      belt = (flags & 1) !== 0;
-      signal = (flags & 2) !== 0 ? 'left' : (flags & 16) !== 0 ? 'right' : 'off';
-      handbrake = (flags & 8) !== 0;
-      const ignition = (flags & 32) !== 0;
-      const wire = new DataView(input.buffer, input.byteOffset, 8);
-      gear = wire.getInt8(5);
-      const steerRad = (wire.getInt16(0, true) / 32767) * 0.55;
-      clutch = input[4] / 255;
-      throttle = input[2] / 255;
-
-      if (!engineOn && ignition) cranking = true;
-      if (cranking && input[4] / 255 > 0.9) {
-        cranking = false;
-        engineOn = true;
-        rpm = 850;
-      }
-      // A crude mirror of the real car: revs follow throttle, the clutch bites and pulls, the
-      // handbrake holds. Enough to see the scene move; not a simulation to score on.
-      rpm = Math.max(600, Math.min(6000, rpm + (throttle * 3000 - (rpm - 850) * 0.5) * (1 / 60)));
-      const drive = gear !== 0 && clutch < 0.7 && !handbrake ? (0.7 - clutch) * 6 : 0;
-      speed = Math.max(0, speed + (drive - 0.6 * speed - (input[3] / 255) * 4) * (1 / 60));
-      if (handbrake && speed < 0.1) speed = 0;
-      x += speed * (1 / 60);
-      if (!engineOn) rpm = 0;
-
-      const frontBumperM = x + 2.1;
-      const phase: SimState['phase'] =
-        frontBumperM >= 10 ? 'done' : frontBumperM >= 0 ? 'past-line' : 'launched';
-
-      return {
-        events: [],
-        state: {
-          tick,
-          phase,
-          score: 100,
-          disqualified: false,
-          carX: x,
-          carY: 0,
-          heading: 0,
-          speedMps: speed,
-          rpm,
-          frontBumperM,
-          engineOn,
-          cranking,
-          steerRad,
-          throttle,
-          brake: input[3] / 255,
-          clutch,
-          gear,
-          handbrake,
-          belt,
-          signal,
-          engineLoad: throttle,
-        },
-      };
-    },
-    hash() {
-      // Stable but meaningless: a fake run must never be mistaken for a verified one.
-      return '000000000000f0f0';
-    },
-    trace() {
-      const out = new Uint8Array(8 + records.length * 8);
-      new DataView(out.buffer).setBigUint64(0, SEED, true);
-      records.forEach((r, i) => out.set(r.subarray(0, 8), 8 + i * 8));
-      return out;
-    },
-    dispose() {},
   };
 }

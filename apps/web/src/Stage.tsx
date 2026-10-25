@@ -11,8 +11,8 @@ import { HANDLED_CODES, KEY_LEGEND } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
 import Hud from './Hud.tsx';
 import type { Penalty, Ruleset } from './ruleset.ts';
-import { createRun, type Run, type SessionFactory } from './run.ts';
-import { openSession } from './sim/session.ts';
+import { createRun, type Run } from './run.ts';
+import { openSession, type Session } from './sim/session.ts';
 import { STEPS, stepDone } from './steps.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
@@ -21,8 +21,6 @@ const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: 
 export interface StageProps {
   ruleset: Ruleset;
   wasmUrl: string;
-  /** Set by the build when sim.wasm could not be placed; the page then says so and uses the fake. */
-  wasmProblem: string | null;
 }
 
 /** The window surface the end-to-end test uses to read the recorded run. */
@@ -31,7 +29,6 @@ declare global {
     __thi?: {
       trace(): string;
       hash(): string | null;
-      simKind(): string;
       restart(): void;
     };
   }
@@ -39,7 +36,7 @@ declare global {
 
 const NO_PENALTIES: readonly Penalty[] = [];
 
-export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
+export default function Stage({ ruleset, wasmUrl }: StageProps) {
   const root = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -57,9 +54,9 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
     let created: Run | null = null;
 
     const boot = async () => {
-      let factory: SessionFactory;
+      let open: () => Session;
       try {
-        factory = await makeFactory(wasmUrl, wasmProblem);
+        open = await loadCore(wasmUrl);
       } catch (error) {
         if (!cancelled) setBootProblem((error as Error).message);
         return;
@@ -67,10 +64,9 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
       if (cancelled) return;
       created = createRun({
         ruleset,
-        factory,
+        openSession: open,
         target: window,
         handledCodes: HANDLED_CODES,
-        idleRpm: ruleset.drivetrain.idle_target_rpm,
         onPenalty: (penalty) => setPenalties((prev) => [...prev, penalty]),
         onRestart: () => setPenalties(NO_PENALTIES),
       });
@@ -84,22 +80,14 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
       created?.dispose();
       runRef.current = null;
     };
-  }, [ruleset, wasmUrl, wasmProblem]);
+  }, [ruleset, wasmUrl]);
 
-  // One paint hook, replaced whenever an outside-world fact changes, so the run itself is never
-  // recreated by the HUD's state.
+  // Publish the numbers the test polls, every frame, on the one root element.
   useEffect(() => {
-    const created = runRef.current;
-    if (!created) return;
-    created.onFrame = () => {
-      const el = root.current;
-      if (el) paint(el, created, glOk, audio.state(), entered);
-    };
-    const el = root.current;
-    if (el) paint(el, created, glOk, audio.state(), entered);
-    return () => {
-      created.onFrame = undefined;
-    };
+    if (!run) return;
+    const write = () => root.current && paint(root.current, run, glOk, audio.state(), entered);
+    write();
+    return run.onFrame(write);
   }, [run, glOk, audio, entered]);
 
   useEffect(() => {
@@ -107,7 +95,6 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
     window.__thi = {
       trace: () => run.traceBase64(),
       hash: () => run.hash(),
-      simKind: () => run.simKind,
       restart: () => run.restart(),
     };
     return () => {
@@ -159,7 +146,6 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
       data-penalties=""
       data-gl-ok="yes"
       data-audio="idle"
-      data-sim="none"
       data-hash=""
       data-entered="no"
     >
@@ -218,7 +204,6 @@ export default function Stage({ ruleset, wasmUrl, wasmProblem }: StageProps) {
         </div>
       ) : null}
 
-      <p className="notice sim-fake">Mô hình tạm, chưa phải sim.wasm: điểm không có giá trị.</p>
       {bootProblem ? <p className="notice boot">{bootProblem}</p> : null}
       
     </div>
@@ -245,25 +230,16 @@ function paint(el: HTMLElement, run: Run, glOk: boolean, audio: AudioState, ente
   d.penalties = run.penalties.map((p) => p.id).join(' ');
   d.glOk = glOk ? 'yes' : 'no';
   d.audio = audio;
-  d.sim = run.simKind;
   d.hash = run.hash() ?? '';
   d.entered = entered ? 'yes' : 'no';
   for (const step of STEPS) d[`step_${step.id}`] = stepDone(step.id, s, run.ordered) ? 'yes' : 'no';
 }
 
-/**
- * Build the session factory. The bytes are fetched once. A fetch or instantiate failure is not
- * papered over with the fake: the page says so, and the end-to-end test fails on `data-sim="fake"`.
- */
-async function makeFactory(wasmUrl: string, problem: string | null): Promise<SessionFactory> {
-  if (problem) {
-    const { createFakeSession } = await import('./sim/session.ts');
-    return { open: () => createFakeSession(problem) };
-  }
+/** Fetch sim.wasm once. A module that will not instantiate fails here, not on the first key. */
+async function loadCore(wasmUrl: string): Promise<() => Session> {
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`Không nạp được ${wasmUrl}: HTTP ${response.status}`);
   const bytes = await response.arrayBuffer();
-  // Instantiate once up front, so a broken module fails here rather than on the order tick.
   openSession(bytes).dispose();
-  return { open: () => openSession(bytes) };
+  return () => openSession(bytes);
 }

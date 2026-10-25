@@ -12,20 +12,13 @@ import Stage from '../../src/Stage.tsx';
 import type { Ruleset } from '../../src/ruleset.ts';
 
 const RULESET_FILE = path.join(process.cwd(), '..', '..', 'content', 'rulesets', 'tt108-2026.json');
-const WASM_FILE = path.join(process.cwd(), 'public', 'sim.wasm');
 
 function readRuleset(): Ruleset {
   const text = fs.readFileSync(RULESET_FILE, 'utf8');
   return JSON.parse(text) as Ruleset;
 }
 
-/** sim.wasm is copied in by `task web:build`; if it is absent, say so instead of shipping a lie. */
-function wasmProblem(): string | null {
-  if (fs.existsSync(WASM_FILE)) return null;
-  return 'Thiếu sim.wasm: chạy `task web:build` để chép bản dựng vào apps/web/public.';
-}
-
 export default function Page() {
   const ruleset = readRuleset();
-  return <Stage ruleset={ruleset} wasmUrl="/sim.wasm" wasmProblem={wasmProblem()} />;
+  return <Stage ruleset={ruleset} wasmUrl="/sim.wasm" />;
 }

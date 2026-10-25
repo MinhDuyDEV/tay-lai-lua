@@ -43,7 +43,7 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
   const stepEls = useRef(new Map<string, HTMLLIElement>());
 
   useEffect(() => {
-    run.onFrame = () => {
+    const stop = run.onFrame(() => {
       const s = run.state;
       if (speed.current) speed.current.textContent = (s.speedMps * 3.6).toFixed(1);
       if (rpm.current) rpm.current.textContent = Math.round(s.rpm).toString();
@@ -72,10 +72,8 @@ export default function Hud({ run, ruleset, penalties, rpmLimit, audio, glOk }: 
         const done = stepDone(id as (typeof STEPS)[number]['id'], s, run.ordered);
         el.dataset.done = done ? 'yes' : 'no';
       }
-    };
-    return () => {
-      run.onFrame = undefined;
-    };
+    });
+    return stop;
   }, [run, ruleset, rpmLimit]);
 
   return (

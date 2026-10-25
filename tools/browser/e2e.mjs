@@ -8,7 +8,7 @@
 //    The only time limit is Playwright's own timeout on a state that never arrives, and then the
 //    failure prints the whole state.
 //  * Nothing is skipped. A browser or WebGL that cannot start is a failure.
-//  * The page must be running the real core: data-sim="wasm". The fake stand-in fails the run.
+//  * The page has no stand-in for the core: it loads build/sim.wasm or shows an error and no hash.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -65,6 +65,8 @@ async function drive(page, { belt, allowed }) {
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
 
+  // The engine starts cold: the learner starts it.
+  await key.press('KeyE');
   await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
   if (belt) {
     await key.press('KeyB');
@@ -73,8 +75,7 @@ async function drive(page, { belt, allowed }) {
 
   await key.press('Enter');
   await until(page, 'start order given', `d.ordered === 'yes'`, allowed);
-  const sim = (await readStage(page)).sim;
-  if (sim !== 'wasm') throw new Error(`the page is running sim kind "${sim}", not the real core`);
+  await until(page, 'a core hash on screen', `d.hash.length === 16`, allowed);
 
   await key.press('KeyQ');
   await until(page, 'left signal on', `d.signal === 'left'`, allowed);
