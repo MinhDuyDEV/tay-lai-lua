@@ -17,6 +17,15 @@ const SPEED: f64 = 15.0 / 3.6;
 
 // Snapshot indices (the list in `lib.rs`).
 const BUMPER: usize = 9;
+const CONTACT_FL: usize = 27;
+const CONTACT_FR: usize = 28;
+const CONTACT_RL: usize = 29;
+const CONTACT_RR: usize = 30;
+const PROGRESS: usize = 31;
+const COURSE_LEN: usize = 32;
+const LATERAL: usize = 33;
+const WHEEL_FL: usize = 38;
+const WHEEL_FR: usize = 40;
 const LIGHT: usize = 46;
 const LIGHT_LEFT_MS: usize = 47;
 const CLOCK_MS: usize = 48;
@@ -399,6 +408,61 @@ fn the_clock_is_armed_on_the_car_arrival_not_before() {
 // ---------------------------------------------------------------------------------------------
 // SH.05.SAI_VACH_KE — "Lái xe vi phạm vạch kẻ đường … bị đình chỉ sát hạch."
 // ---------------------------------------------------------------------------------------------
+
+/// The page watches a bài 5 run through the same figure fields the scorer uses: metres along the
+/// route, the signed offset from it, and what each wheel's patch is on. Without them the page can
+/// neither show a wheel reaching the line before the suspension nor cue the turn within the lane.
+#[test]
+fn the_figure_fields_are_live_while_driving_the_route() {
+    let seed = seed_in(3);
+    let mut s = Session::new(seed).unwrap();
+    let line = rules().junction.stop_line_m();
+    let mut saw_arc = false;
+    // Drive to the line, then hold a right lock: the car goes round the arc and on out to the
+    // right-hand boundary, which is where the run ends.
+    for t in 0..40 * TICKS_PER_S {
+        let snap = s.snapshot();
+        let at_arc = snap[BUMPER] > line + 4.0;
+        saw_arc |= at_arc;
+        s.step(TickInput {
+            steering: if at_arc { -32000 } else { 0 },
+            gear: 1,
+            clutch: 150,
+            throttle: 70,
+            flags: RIGHT | if t < 10 { HANDBRAKE } else { 0 },
+            ..Default::default()
+        });
+        if saw_arc {
+            let snap = s.snapshot();
+            assert!(snap[PROGRESS] > 0.0, "progress along the route, got {}", snap[PROGRESS]);
+            assert!(snap[COURSE_LEN] > 0.0, "the route has a length, got {}", snap[COURSE_LEN]);
+            assert!(snap[LATERAL].abs() > 0.0, "an offset from the centreline, got {}", snap[LATERAL]);
+            assert!(snap[WHEEL_FL] != 0.0 || snap[WHEEL_FR] != 0.0, "the wheel centres are reported");
+        }
+        if s.view().fired("SH.05.SAI_VACH_KE") > 0 {
+            let snap = s.snapshot();
+            let contacts = [snap[CONTACT_FL], snap[CONTACT_FR], snap[CONTACT_RL], snap[CONTACT_RR]];
+            assert!(
+                contacts.iter().any(|c| *c == 1.0),
+                "on the tick SAI_VACH_KE fires a wheel patch must read as on a line, got {contacts:?}"
+            );
+            assert!(s.view().disqualified, "and the run is suspended on that same tick");
+            // The contact is a *patch*, not the car's centre: crossing the turn at 28° puts the
+            // outer front corner over the edge while the centre is still inside the lane. That is
+            // exactly why the scorer measures wheels, and why the page needs these fields.
+            let half_lane = 0.5 * rules().road.lane_width_m;
+            assert!(
+                snap[LATERAL].abs() < half_lane,
+                "the centre is still inside the lane ({} < {half_lane}), so the corner is what crossed",
+                snap[LATERAL]
+            );
+            assert!(snap[LATERAL].abs() > 0.2, "and it is well off the centreline: {}", snap[LATERAL]);
+            return;
+        }
+    }
+    panic!("the run never reached the boundary line");
+}
+
 
 #[test]
 fn sai_vach_ke_triggers_when_a_wheel_touches_the_routes_boundary_line() {

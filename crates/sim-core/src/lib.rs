@@ -178,21 +178,27 @@ pub const SNAPSHOT_LEN: usize = 51;
 /// 25 elevation_m           road height under the car centre, metres above the flat; 0 in bài 1
 /// 26 grade                 road grade under the car centre (0.10 on bài 3's slope); 0 in bài 1
 /// 27 contact FL            what the front-left wheel's contact patch is on: 0 clear | 1 on a
-///                          limit line | 2 on a curb
+///                          limit line | 2 on a curb. bài 4, 5 and 6; 0 in bài 1, 2, 3, 9, 11
 /// 28 contact FR            as 27, front right
 /// 29 contact RL            as 27, rear left
 /// 30 contact RR            as 27, rear right
-/// 31 progress_m            bài 4/6: metres along the figure's centreline from its start; 0 else
-/// 32 course_length_m       bài 4/6: the centreline's length; 0 else
-/// 33 lateral_m             bài 4/6: signed offset from the centreline, + left of it; 0 else
-/// 34 heading_err_rad       bài 4/6: car heading minus the centreline's heading; 0 else
+/// 31 progress_m            metres along the figure's centreline from its start: the figure's own
+///                          path in bài 4 and bài 6, the right-turn route in bài 5; 0 elsewhere
+/// 32 course_length_m       the centreline's length, same three exercises; 0 elsewhere
+/// 33 lateral_m             signed offset from the centreline, + left of it; same three exercises
+/// 34 heading_err_rad       car heading minus the centreline's heading; same three exercises
 /// 35 segment               bài 4: 0 approach | 1 vệt | 2 straight | 3 first bend | 4 transverse
 ///                          leg | 5 second bend | 6 exit; bài 6: 0 entry | 1 first half |
-///                          2 second half | 3 exit; 0 else
-/// 36 clock_s               bài 4/6: seconds on the exercise clock, 0 until the entry gate; 0 else
-/// 37 longest_episode_s     bài 4/6: the longest contact episode running right now, seconds; 0 else
-/// 38..45 wheel_x, wheel_y  bài 4/6: the four wheel centres in the car's frame, FL RL RR, as
-///                          (x, y) pairs: 38/39 FL, 40/41 FR, 42/43 RL, 44/45 RR; 0 else
+///                          2 second half | 3 exit. bài 5 has no named parts: its place on the
+///                          scene is field 49 `zone`, which is the one home for that fact. 0 in
+///                          bài 5 and in every exercise without a figure
+/// 36 clock_s               bài 4/6: seconds on the exercise clock, 0 until the entry gate. bài 5's
+///                          clock is field 48 `clock_ms`; 0 in bài 5 and elsewhere
+/// 37 longest_episode_s     bài 4/6: the longest contact episode running right now, seconds.
+///                          bài 5 charges one act (SAI_VACH_KE), not an episode, so this is 0 there
+/// 38..45 wheel_x, wheel_y  the four wheel centres in the car's frame, FL FR RL RR, as (x, y)
+///                          pairs: 38/39 FL, 40/41 FR, 42/43 RL, 44/45 RR. bài 4, 5 and 6; 0
+///                          elsewhere
 /// 46 light_colour          bài 5: 0 none | 1 red | 2 yellow | 3 green. 0 in every other exercise,
 ///                          and 0 in bài 5 until the car first moves (the cycle starts there)
 /// 47 light_left_ms         bài 5: milliseconds left in the current light phase, counting the tick
@@ -365,8 +371,11 @@ impl Session {
         out[19] = f64::from(signal_code(s.signal));
         out[20] = s.car.engine_load(&self.rules.vehicle, &self.rules.drivetrain, c);
         out[24] = -1.0;
-        if s.exercise.is_sa_hinh() {
-            s.sa_hinh_snapshot(&self.rules, &mut out);
+        // Every exercise that runs on a generated figure reports its figure fields: bài 4 and bài 6,
+        // and bài 5, whose route is a figure too and whose SAI_VACH_KE is decided on it. Without
+        // this the page could not show a wheel reaching the line before the suspension.
+        if s.exercise.is_sa_hinh() || s.exercise == Exercise::Junction {
+            s.figure_snapshot(&self.rules, &mut out);
         }
         if s.exercise == Exercise::Hill {
             let h = &self.rules.hill;
