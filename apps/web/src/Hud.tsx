@@ -557,7 +557,7 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   parts.el.dataset.key = aid.key;
   parts.fill.style.width = `${fillPct}%`;
   parts.mark.style.left = `${markPct}%`;
-  parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Phanh';
+  parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Côn + phanh';
   parts.inn.textContent = aid.now ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 

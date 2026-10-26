@@ -25,7 +25,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createDriver, DT } from './driver.ts';
-import { flatRoad, stopAid, stopTravel, type StopAid, type StopRoad } from '../src/stopAid.ts';
+import { A_MID_M, flatRoad, stopAid, stopTravel, type StopAid, type StopRoad } from '../src/stopAid.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { openSession, seedWord, type SimState } from '../src/sim/session.ts';
 
@@ -120,8 +120,6 @@ function drive(opts: {
   road: StopRoad;
   /** Where the stop line is, metres of `frontBumperM`, when the world has no line of its own. */
   lineAt?: (start: SimState) => number;
-  /** Milliseconds before the planned press that the clutch goes down, for the brake road. */
-  clutchLeadMs?: number;
   pollMs: number;
   phaseMs: number;
   errorMs: number;
@@ -140,13 +138,16 @@ function drive(opts: {
   /** The state the page would publish: the core's own, with the stand-in line where one is needed. */
   const view = (state: SimState): SimState => (lineAt === null ? state : { ...state, lineGapM: lineAt - state.frontBumperM });
 
-  let nextReadMs = 0;
+  // A read every `every` ticks, the first `phaseMs` after the learner is ready, so a poll of 50 ms is
+  // tried at three alignments with the moment the page flips to "bấm ngay", not three times at one.
+  const every = Math.max(1, Math.round(opts.pollMs / (DT * 1000)));
+  const phaseTicks = Math.round(opts.phaseMs / (DT * 1000));
+  let readyTick = -1;
   let planMs = Infinity;
   /** A read has given the learner a plan to act on. */
   let havePlan = false;
   /** True once a read has seen the countdown at 0: from then on the plan is kept, never re-armed. */
   let due = false;
-  let clutchFromMs = Infinity;
   /** The literal learner's own clock: when the page first said "bấm ngay". */
   let nowAtMs = Infinity;
   let aidSeen = false;
@@ -169,8 +170,9 @@ function drive(opts: {
     const { keys, ready } = setUp(s);
     if (ready) {
       // The learner is ready; from here the countdown is the only thing that asks for anything.
-      if (ms >= nextReadMs) {
-        nextReadMs = ms + opts.pollMs;
+      if (readyTick < 0) readyTick = tick;
+      const sinceFirstRead = tick - readyTick - phaseTicks;
+      if (sinceFirstRead >= 0 && sinceFirstRead % every === 0) {
         const aid = stopAid(view(s), ruleset, opts.road);
         if (aid) aidSeen = true;
         const literal = opts.learner === 'literal';
@@ -189,15 +191,8 @@ function drive(opts: {
           }
           havePlan = true;
           if (aid.now) due = true;
-          // When this learner will actually press. The clutch goes down ahead of *that*, for both
-          // learners and for the same reason: the advice line asks for the clutch first, and a brake
-          // in gear stalls the engine. A learner with no plan yet cannot lead anything.
-          if (pressatMs() !== Infinity && opts.clutchLeadMs !== undefined) {
-            clutchFromMs = Math.min(clutchFromMs, pressatMs() - opts.clutchLeadMs);
-          }
         }
       }
-      if (ms >= clutchFromMs) keys.add('Space');
       if (havePlan && ms >= pressatMs()) {
         keys.add('Space');
         if (opts.road.key === 'brake') keys.add('ArrowDown');
@@ -235,7 +230,7 @@ function codeOf(before: SimState, after: SimState): number[] {
 /** Every poll period at three phases and every error, against one road. */
 function sweep(
   road: StopRoad,
-  extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number; learner?: 'plan' | 'literal' },
+  extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; learner?: 'plan' | 'literal' },
   maxErrorMs: number,
   /** The law's window, from the ruleset: A must land in 0..maxA. */
   maxA: number,
@@ -243,6 +238,8 @@ function sweep(
   polesMs: readonly number[] = POLES_MS,
 ) {
   const failures: string[] = [];
+  /** Every run's A, so a test can report the extent of the band it gates and not only its failures. */
+  const rows: Array<{ pollMs: number; errorMs: number; A: number }> = [];
   let runs = 0;
   let low = Infinity;
   let high = -Infinity;
@@ -251,6 +248,7 @@ function sweep(
       for (let errorMs = -maxErrorMs; errorMs <= maxErrorMs; errorMs += stepMs) {
         const r = drive({ ...extra, road, pollMs, phaseMs, errorMs });
         runs += 1;
+        rows.push({ pollMs, errorMs, A: r.A });
         low = Math.min(low, r.A);
         high = Math.max(high, r.A);
         const inside = r.A >= 0 && r.A <= maxA;
@@ -262,7 +260,7 @@ function sweep(
       }
     }
   }
-  return { failures, runs, low, high };
+  return { failures, runs, low, high, rows };
 }
 
 /**
@@ -270,10 +268,10 @@ function sweep(
  * it), and bài 2, bài 9 and bài 5's flat road (the brake does). bài 5 is driven on a red light so the
  * aid is there at all; its own stop line and its own window are the core's.
  */
-const PAGES: ReadonlyArray<{ name: string; road: StopRoad; seed: bigint; lesson: 2 | 3; maxA: number; clutchLeadMs?: number }> = [
+const PAGES: ReadonlyArray<{ name: string; road: StopRoad; seed: bigint; lesson: 2 | 3; maxA: number }> = [
   { name: 'bài 3', road: hillRoad, seed: seedWord(3), lesson: 3, maxA: MAX_A },
-  { name: 'bài 2', road: flatRoad('brake'), seed: seedWord(2), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
-  { name: 'bài 9', road: flatRoad('brake'), seed: seedWord(9), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
+  { name: 'bài 2', road: flatRoad('brake'), seed: seedWord(2), lesson: 2, maxA: ruleset.road!.max_a_m },
+  { name: 'bài 9', road: flatRoad('brake'), seed: seedWord(9), lesson: 2, maxA: ruleset.road!.max_a_m },
   // Seed 1 is the red arrival the page opens on, so the light asks for the stop.
   { name: 'bài 5 (red)', road: flatRoad('brake'), seed: seedWord(5, 1n), lesson: 2, maxA: ruleset.junction!.max_a_m },
 ];
@@ -283,13 +281,18 @@ const PAGES: ReadonlyArray<{ name: string; road: StopRoad; seed: bigint; lesson:
 // starts: before the car is moving, so the whole approach from rest is in the run.
 for (const page of PAGES) {
   test(`${page.name}: a learner polling 16 to 500 ms and pressing within 100 ms of the countdown stops inside A`, () => {
-    const { failures, runs, low, high } = sweep(
+    const { failures, runs, low, high, rows } = sweep(
       page.road,
-      { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'plan' },
+      { seed: page.seed, lesson: page.lesson, learner: 'plan' },
       E_GATE_MS,
       page.maxA,
     );
-    console.log(`     ${page.name}: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${page.maxA}`);
+    // Where a press exactly on the plan lands, against A_MID_M: the aid's own bias, per poll period.
+    const exact = POLES_MS.map((poll) => {
+      const a = rows.filter((r) => r.pollMs === poll && r.errorMs === 0).map((r) => r.A);
+      return `${poll}: ${Math.min(...a).toFixed(3)}..${Math.max(...a).toFixed(3)}`;
+    });
+    console.log(`     ${page.name}: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${page.maxA}; on the plan (aim ${A_MID_M}) by poll ${exact.join(', ')}`);
     assert.deepEqual(failures, []);
   });
 }
@@ -299,9 +302,9 @@ for (const page of PAGES) {
 // are gated rather than one standing in for the other.
 for (const page of PAGES) {
   test(`${page.name}: a learner who presses 150 to 350 ms after "bấm ngay" stops inside A`, () => {
-    const { failures, runs } = sweep(
+    const { failures, runs, rows } = sweep(
       page.road,
-      { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'literal' },
+      { seed: page.seed, lesson: page.lesson, learner: 'literal' },
       350,
       page.maxA,
       25,
@@ -314,10 +317,18 @@ for (const page of PAGES) {
       const m = /error (-?\d+) ms/.exec(line);
       return m !== null && Number(m[1]) >= 150 && Number(m[1]) <= 350;
     });
-    const abs = band.map((line) => Number(/A=(-?[0-9.]+)/.exec(line)![1]));
+    // The extent of the band, over every run in it: how much of the window the reaction band leaves.
+    const inBand = rows.filter((r) => r.errorMs >= 150 && r.errorMs <= 350);
+    const lo = Math.min(...inBand.map((r) => r.A));
+    const hi = Math.max(...inBand.map((r) => r.A));
+    const at = (poll: number, error: number) => {
+      const a = inBand.filter((r) => r.pollMs === poll && r.errorMs === error).map((r) => r.A);
+      return `${Math.min(...a).toFixed(3)}..${Math.max(...a).toFixed(3)}`;
+    };
     console.log(
-      `     ${page.name} (literal, band 150-350 ms): ${runs} runs, ${band.length} outside 0..${page.maxA} m` +
-        (abs.length ? `, band A ${Math.min(...abs).toFixed(3)} to ${Math.max(...abs).toFixed(3)}` : ''),
+      `     ${page.name} (literal, band 150-350 ms): ${runs} runs, ${band.length} outside 0..${page.maxA} m, ` +
+        `band A ${lo.toFixed(3)} to ${hi.toFixed(3)} (slack ${Math.round(lo * 1000)} mm short side, ${Math.round((page.maxA - hi) * 1000)} mm long side); ` +
+        `poll 16: 150->${at(16, 150)} 250->${at(16, 250)} 350->${at(16, 350)}; poll 50: 150->${at(50, 150)} 250->${at(50, 250)} 350->${at(50, 350)}`,
     );
     assert.deepEqual(band, [], `${band.length} of the reaction-band runs missed 0..${page.maxA} m`);
   });
@@ -384,16 +395,34 @@ test('the published countdown is smooth: no tick moves it by more than a frame a
 });
 
 test('stopTravel is the car: the measured stop is within 40 mm of what the aid predicts', () => {
-  // What the whole aid rests on, measured against the real core: press the clutch on bài 3's slope at
-  // a state, and the road the car covers to a standstill has to be the number the aid planned with.
-  const cases: Array<{ bumper: number }> = [{ bumper: 3.0 }, { bumper: 4.0 }, { bumper: 4.6 }, { bumper: 5.5 }];
+  // What the whole aid rests on, measured against the real core: press the critical key at a state —
+  // the clutch on bài 3's slope, clutch and brake together on bài 2's flat road, as the page asks — and
+  // the road the car covers to a standstill has to be the number the aid planned with.
+  const cases: Array<{ name: string; seed: bigint; lesson: 2 | 3; road: StopRoad; reached: (s: SimState) => boolean }> = [
+    ...[3.0, 4.0, 4.6, 5.5].map((bumper) => ({
+      name: `bài 3 at bumper ${bumper} m`,
+      seed: seedWord(3),
+      lesson: 3 as const,
+      road: hillRoad,
+      reached: (s: SimState) => s.frontBumperM >= bumper,
+    })),
+    ...[1.6, 1.3, 1.0, 0.8].map((gap) => ({
+      name: `bài 2 at ${gap} m from the line`,
+      seed: seedWord(2),
+      lesson: 2 as const,
+      road: flatRoad('brake'),
+      reached: (s: SimState) => s.lineGapM <= gap,
+    })),
+  ];
   for (const c of cases) {
-    const session = openSession(bytes(), seedWord(3));
+    const session = openSession(bytes(), c.seed);
     const driver = createDriver();
     let held = new Set<string>();
     let s: SimState = session.state;
-    for (let tick = 0; tick < 4000 && s.frontBumperM < c.bumper; tick += 1) {
-      const { keys } = setUpFor(3)(s);
+    const setUp = setUpFor(c.lesson);
+    for (let tick = 0; tick < 4000; tick += 1) {
+      const { keys, ready } = setUp(s);
+      if (ready && c.reached(s)) break;
       const pressed = [...keys].filter((code) => !held.has(code));
       held = keys;
       session.step(driver.step(keys, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
@@ -401,9 +430,10 @@ test('stopTravel is the car: the measured stop is within 40 mm of what the aid p
     }
     const v0 = s.speedMps;
     const x0 = s.frontBumperM;
-    assert.ok(v0 > 0.5, `the car never reached ${c.bumper} m at speed`);
+    const gap0 = s.lineGapM;
+    assert.ok(v0 > 0.5, `${c.name}: the car never reached it at speed`);
     for (let tick = 0; tick < 900; tick += 1) {
-      const keys = new Set(['Space']);
+      const keys = new Set(c.road.key === 'brake' ? ['Space', 'ArrowDown'] : ['Space']);
       const pressed = [...keys].filter((code) => !held.has(code));
       held = keys;
       session.step(driver.step(keys, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
@@ -411,9 +441,9 @@ test('stopTravel is the car: the measured stop is within 40 mm of what the aid p
       if (s.speedMps <= 0) break;
     }
     const measured = s.frontBumperM - x0;
-    const predicted = stopTravel(ruleset, v0, hillRoad, 'clutch', s.lineGapM, true).travelM;
+    const predicted = stopTravel(ruleset, v0, c.road, c.road.key, gap0).travelM;
     session.dispose();
-    assert.ok(Math.abs(measured - predicted) < 0.04, `at ${c.bumper} m, v ${v0.toFixed(2)}: measured ${measured.toFixed(3)} m, predicted ${predicted.toFixed(3)} m`);
+    assert.ok(Math.abs(measured - predicted) < 0.04, `${c.name}, v ${v0.toFixed(2)}: measured ${measured.toFixed(3)} m, predicted ${predicted.toFixed(3)} m`);
   }
 });
 
