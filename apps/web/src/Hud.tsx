@@ -5,13 +5,13 @@
 
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { legendFor } from '../input/driver.ts';
-import type { Exercise } from './exercise.ts';
+import type { Exercise, Lesson } from './exercise.ts';
 import type { Ruleset } from './ruleset.ts';
-import { hillOf, sourceLabel } from './ruleset.ts';
+import { hillOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
-import type { SimState } from './sim/session.ts';
+import { zoneName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
 export interface HudProps {
@@ -63,6 +63,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   /** The figure's centreline, read once from the core; the same polyline the scene draws. */
   const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run]);
   const bai3 = exercise.lesson === 3;
+  /** Bài 2, 9 and 11: one straight road, a stop line, and one thing past it. */
+  const road = exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11;
   const figure = exercise.lesson === 4 || exercise.lesson === 6;
   const figureEl = useRef<HTMLElement>(null);
 
@@ -82,7 +84,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       }
       if (gear.current) gear.current.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
       if (bumper.current) bumper.current.textContent = s.frontBumperM.toFixed(2);
-      if (hill) paintHill(hill, s, ruleset);
+      if (hill) paintHill(hill, s, ruleset, exercise.lesson);
       if (aidParts) {
         const aid = exercise.stop(s, ruleset);
         if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
@@ -146,8 +148,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         <p className="hint" ref={hint} />
       </section>
 
-      {bai3 ? (
-        <section className="hud-hill" aria-label="Dốc" ref={hillEl}>
+      {bai3 || road ? (
+        <section className="hud-hill" aria-label={bai3 ? 'Dốc' : 'Vạch dừng'} ref={hillEl}>
           <div className="cell" data-cell="a">
             <span className="name" data-part="label">
               Còn tới vạch
@@ -157,15 +159,17 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             </strong>
             <small data-part="limit" />
           </div>
-          <div className="cell" data-cell="rollback">
-            <span className="name">Tụt dốc</span>
-            <strong>
-              <span data-part="value">0</span> mm
-            </strong>
-            <small data-part="limit" />
-          </div>
+          {bai3 ? (
+            <div className="cell" data-cell="rollback">
+              <span className="name">Tụt dốc</span>
+              <strong>
+                <span data-part="value">0</span> mm
+              </strong>
+              <small data-part="limit" />
+            </div>
+          ) : null}
           <div className="cell" data-cell="clock">
-            <span className="name">Thời gian</span>
+            <span className="name">{road ? 'Vùng' : 'Thời gian'}</span>
             <strong>
               <span data-part="value">—</span>
             </strong>
@@ -375,7 +379,7 @@ interface HillCell {
 }
 
 /** The three cells of the slope card, looked up once so the 60 Hz paint touches no selector. */
-function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell> {
+function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell> & { hasRollback: boolean } {
   const cell = (name: string): HillCell => {
     const c = el.querySelector<HTMLElement>(`[data-cell="${name}"]`)!;
     return {
@@ -385,31 +389,76 @@ function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell
       limit: c.querySelector<HTMLElement>('[data-part="limit"]')!,
     };
   };
-  return { a: cell('a'), rollback: cell('rollback'), clock: cell('clock') };
+  const hasRollback = el.querySelector('[data-cell="rollback"]') !== null;
+  return { a: cell('a'), rollback: hasRollback ? cell('rollback') : (null as unknown as HillCell), clock: cell('clock'), hasRollback };
 }
 
-/** The slope card: A (live, then the recorded one), the rollback and the 30 s clock, in mm and s. */
-function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ruleset) {
-  const hill = hillOf(ruleset);
+/**
+ * The stop card: A (live, then the recorded one), and either the slope's rollback and 30 s clock
+ * (bài 3) or the band of the scene the bumper is in (the road lessons), plus the stop aid's bar where
+ * the exercise has one. Every number is the core's own field, so the card cannot invent a gap.
+ */
+function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ruleset, lesson: Lesson) {
+  const maxA = lesson === 3 ? hillOf(ruleset).max_a_m : roadOf(ruleset).max_a_m;
   const stopped = s.sinceStopTicks >= 0;
   const a = parts.a;
   const gap = stopped ? s.stopGapAM : s.lineGapM;
   if (a.label) a.label.textContent = stopped ? 'A lúc dừng' : s.lineGapM < 0 ? 'Quá vạch' : 'Còn tới vạch';
   a.value.textContent = mm(gap);
-  a.limit.textContent = `không quá ${mm(hill.max_a_m)} mm`;
-  a.cell.dataset.state = gap >= 0 && gap <= hill.max_a_m ? 'ok' : stopped ? 'bad' : 'neutral';
+  a.limit.textContent = `không quá ${mm(maxA)} mm`;
+  a.cell.dataset.state = gap >= 0 && gap <= maxA ? 'ok' : stopped ? 'bad' : 'neutral';
 
-  const r = parts.rollback;
-  r.value.textContent = mm(s.rollbackM);
-  r.limit.textContent = `không quá ${mm(hill.max_rollback_m)} mm`;
-  r.cell.dataset.state = s.rollbackM > hill.max_rollback_m ? 'bad' : s.rollbackM > 0 ? 'warn' : 'neutral';
+  if (parts.hasRollback) {
+    const maxRollback = hillOf(ruleset).max_rollback_m;
+    const r = parts.rollback;
+    r.value.textContent = mm(s.rollbackM);
+    r.limit.textContent = `không quá ${mm(maxRollback)} mm`;
+    r.cell.dataset.state = s.rollbackM > maxRollback ? 'bad' : s.rollbackM > 0 ? 'warn' : 'neutral';
+  }
 
-  const left = secondsLeft(s, ruleset);
   const t = parts.clock;
-  t.value.textContent = left === null ? '—' : `${Math.ceil(left)} s`;
-  t.limit.textContent = left === null ? 'tính từ lúc dừng xe' : 'để qua vạch';
-  t.cell.dataset.state = left === null ? 'neutral' : left < 10 ? 'warn' : 'ok';
+  if (lesson === 3) {
+    const left = secondsLeft(s, ruleset);
+    t.value.textContent = left === null ? '—' : `${Math.ceil(left)} s`;
+    t.limit.textContent = left === null ? 'tính từ lúc dừng xe' : 'để qua vạch';
+    t.cell.dataset.state = left === null ? 'neutral' : left < 10 ? 'warn' : 'ok';
+  } else {
+    // The road lessons: which band the bumper is in. This is the same code the page publishes as
+    // data-zone, so what the card says and what a script reads are one value.
+    const zone = zoneName(s.zone);
+    t.value.textContent = ZONE_LABEL[zone];
+    t.limit.textContent = ZONE_HINT[zone];
+    t.cell.dataset.state = s.zone === 3 || s.zone === 5 ? 'ok' : s.zone === 4 || s.zone === 2 ? 'warn' : 'neutral';
+  }
 }
+
+/**
+ * The zone names and what each one means for the learner, in the order of snapshot field 49. The
+ * short names are what a script reads as `data-zone`; these are the words on the card.
+ */
+const ZONE_LABEL: Record<ZoneName, string> = {
+  start: 'Xuất phát',
+  approach: 'Tới vạch',
+  'stop-zone': 'Vùng dừng',
+  'at-line': 'Đúng vạch',
+  'past-line': 'Qua vạch',
+  'at-crossing': 'Tới vạch qua đường',
+  'in-junction': 'Trong ngã tư',
+  'exit-lane': 'Ra khỏi ngã tư',
+  'past-finish': 'Qua vạch kết thúc',
+};
+
+const ZONE_HINT: Record<ZoneName, string> = {
+  start: 'còn xa vạch dừng',
+  approach: 'chưa tới vùng dừng',
+  'stop-zone': 'dừng được trong vùng này',
+  'at-line': 'dừng ngay đây',
+  'past-line': 'đã qua vạch dừng',
+  'at-crossing': 'vạch qua đường / đường sắt',
+  'in-junction': 'đang trong ngã tư',
+  'exit-lane': 'đang ra',
+  'past-finish': 'hết bài',
+};
 
 /** The aid bar's parts, looked up once so the 60 Hz paint touches no selector. */
 interface AidParts {
@@ -449,13 +498,13 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   parts.inn.textContent = aid.etaMs === 0 ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 
-function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3 | 4 | 6): string {
+function phaseLabel(phase: string, disqualified: boolean, lesson: Lesson): string {
   if (disqualified) return 'đình chỉ';
   switch (phase) {
     case 'waiting':
       return 'chờ lệnh';
     case 'launched':
-      return lesson === 3 ? 'lên dốc' : lesson === 4 || lesson === 6 ? 'trong hình' : 'đã có lệnh';
+      return lesson === 3 ? 'lên dốc' : lesson === 4 || lesson === 6 ? 'trong hình' : lesson === 2 || lesson === 9 || lesson === 11 ? 'tới vạch' : 'đã có lệnh';
     case 'stopped':
       return 'đã dừng';
     case 'past-line':

@@ -263,6 +263,95 @@ function HillCourse({ ruleset }: { ruleset: Ruleset }) {
  *
  * The sim's +y is lateral; here it maps to -z, as everywhere else in this file.
  */
+/**
+ * Bài 2, bài 9 and bài 11: the straight road, drawn from the core's own course records, so the line a
+ * learner aims at is the line the scorer measures against. Kind 6 is a transverse mark (`line_id` 1
+ * stop line, 2 finish line, 3 crosswalk stripe, 4 rail) and kind 7 the signal head; everything else
+ * (lane edges, curbs, centreline) is the same kind 1/2/5 the figures use.
+ *
+ * No dimension is re-derived here: the stripes' positions and widths are the core's, which is what
+ * makes the crosswalk in the picture exactly the crosswalk the exercise is named for.
+ */
+function RoadCourse({ run }: { run: Run }) {
+  const drawing = useMemo(() => {
+    const marks: { kind: number; id: number; a: readonly [number, number]; b: readonly [number, number]; width: number }[] = [];
+    const lines: { kind: number; points: readonly (readonly [number, number])[] }[] = [];
+    let signal: readonly [number, number] | null = null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const grow = (x: number, y: number) => {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    };
+    for (const record of run.course) {
+      if (record.kind === 6) {
+        const [a, b] = record.points;
+        // The band is as wide as the mark is thin: a stop/finish line is drawn along its own length
+        // and 0.2 m thick, a crosswalk stripe 0.5 m thick, a rail 0.08 m. The core gives the mark's
+        // centre line, so the thickness comes from the ruleset's own numbers via the exercise.
+        let width = 0.2;
+        if (record.lineId === 3) width = 0.5;
+        if (record.lineId === 4) width = 0.08;
+        marks.push({ kind: 6, id: record.lineId, a: a as [number, number], b: b as [number, number], width });
+        grow(a[0], a[1]); grow(b[0], b[1]);
+      } else if (record.kind === 7) {
+        signal = record.points[0] as [number, number];
+      } else {
+        lines.push({ kind: record.kind, points: record.points });
+        for (const [x, y] of record.points) grow(x, y);
+      }
+    }
+    return { marks, lines, signal, minX, maxX, minY, maxY };
+  }, [run.course]);
+
+  return (
+    <group>
+      <mesh position={[(drawing.minX + drawing.maxX) / 2, -0.02, -(drawing.minY + drawing.maxY) / 2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[Math.max(30, drawing.maxX - drawing.minX + 20), Math.max(10, drawing.maxY - drawing.minY + 8)]} />
+        <meshStandardMaterial color="#3b3f45" roughness={1} />
+      </mesh>
+      {drawing.lines.map((line, i) => (
+        <Polyline
+          key={`line-${i}`}
+          points={line.points}
+          colour={line.kind === 2 ? '#8a7a52' : line.kind === 3 ? '#f0c419' : '#e8e8e8'}
+          width={line.kind === 2 ? 0.15 : 0.1}
+          y={line.kind === 2 ? 0.06 : Y}
+        />
+      ))}
+      {drawing.marks.map((mark, i) => (
+        <Polyline
+          key={`mark-${i}`}
+          points={[mark.a, mark.b]}
+          colour={mark.id === 1 || mark.id === 2 ? '#ffffff' : mark.id === 4 ? '#6f6f6f' : '#f2f2f2'}
+          width={mark.width}
+          y={mark.id === 4 ? Y + 0.04 : Y}
+        />
+      ))}
+      {drawing.signal ? <SignalHead at={drawing.signal} /> : null}
+    </group>
+  );
+}
+
+/**
+ * The signal head of bài 2 and bài 9's figure: a post with a plate on it, at the position the core
+ * gives. Neither exercise is signalled — the plate is the scene's own furniture, as the figure draws
+ * it — so it carries no colour state.
+ */
+function SignalHead({ at }: { at: readonly [number, number] }) {
+  return (
+    <group position={[at[0], 0, -at[1]]}>
+      <mesh position={[0, 1.1, 0]}>
+        <cylinderGeometry args={[0.05, 0.05, 2.2, 6]} />
+        <meshStandardMaterial color="#9aa0a6" />
+      </mesh>
+      <mesh position={[0, 2.25, 0]}>
+        <boxGeometry args={[0.3, 0.8, 0.16]} />
+        <meshStandardMaterial color="#2b2f35" />
+      </mesh>
+    </group>
+  );
+}
+
 function FigureCourse({ run }: { run: Run }) {
   const drawing = useMemo(() => {
     const asphalt = new THREE.Shape();
@@ -510,6 +599,8 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
         <HillCourse ruleset={ruleset} />
       ) : exercise.lesson === 4 || exercise.lesson === 6 ? (
         <FigureCourse run={run} />
+      ) : exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11 ? (
+        <RoadCourse run={run} />
       ) : (
         <Course ruleset={ruleset} />
       )}

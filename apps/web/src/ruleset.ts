@@ -51,6 +51,49 @@ export interface Hill {
   no_stop_beyond_m: number;
 }
 
+/**
+ * The straight-road scene of bài 2, 9 and 11 (`content/rulesets/tt108-2026.json`'s `road` block): one
+ * lane, a stop line, and one thing past it — the crosswalk, the rails, or the finish line. Metres
+ * along the course axis; the line sits at `stop_line_m()`.
+ */
+export interface Road {
+  start_front_bumper_m: number;
+  lane_width_m: number;
+  stop_line_width_m: number;
+  /** How far before the line a stop is still "at the line" in this exercise. */
+  stop_zone_length_m: number;
+  /** Largest A the law allows. */
+  max_a_m: number;
+  /** A stop this far past the line has missed it. */
+  no_stop_beyond_m: number;
+  /** How far past the line the car goes before the exercise is over. */
+  end_past_line_m: number;
+  /** The exercise cannot outlast its own scene: done this far past the line whatever happened. */
+  run_end_past_line_m: number;
+  /** The crosswalk's near edge, past the line (bài 2). */
+  crosswalk_offset_m: number;
+  crosswalk_width_m: number;
+  crosswalk_stripe_width_m: number;
+  crosswalk_stripe_gap_m: number;
+  /** The rail's near edge, past the line (bài 9). */
+  rail_offset_m: number;
+  rail_gauge_m: number;
+  rail_width_m: number;
+  /** The finish line, past the stop line (bài 11). */
+  finish_offset_m: number;
+  /** Longest a car may stay in the end zone, seconds? (bài 11's end zone, metres). */
+  end_zone_m: number;
+}
+
+/** The stop line's position on the course axis: the car starts the exercise `start_front_bumper_m` short of it. */
+export const stopLineM = (road: Road): number => -road.start_front_bumper_m;
+/** Bài 2's crosswalk, its near edge. */
+export const crosswalkM = (road: Road): number => stopLineM(road) + road.crosswalk_offset_m;
+/** Bài 9's rails, the near rail. */
+export const railM = (road: Road): number => stopLineM(road) + road.rail_offset_m;
+/** Bài 11's finish line. */
+export const finishM = (road: Road): number => stopLineM(road) + road.finish_offset_m;
+
 /** Bài 4 and bài 6's figure numbers (`content/rulesets/tt108-2026.json`'s `sa_hinh` block). */
 export interface SaHinh {
   line_width_m: number;
@@ -113,6 +156,8 @@ export interface Ruleset {
   hill?: Hill;
   /** Bài 4 and bài 6's figure numbers. */
   sa_hinh?: SaHinh;
+  /** Bài 2, 9 and 11's straight-road scene. */
+  road?: Road;
   steer: SteerFeel;
   rules: Rule[];
 }
@@ -141,6 +186,17 @@ export function creepSpeedMps(ruleset: Ruleset): number {
   const { idle_target_rpm: idle, final_drive: final, gears } = ruleset.drivetrain;
   const wheel = ruleset.vehicle.wheel_radius_m;
   return ((idle / gears['1']) / final) * 2 * Math.PI * wheel / 60;
+}
+
+/**
+ * The road lessons' numbers, or a clear error: the page was built against a ruleset that has no road.
+ * Bài 3 measured distances against its `hill` block and bài 4/6 against `sa_hinh`; these three are the
+ * straight-road scene, and a page that gets the wrong ruleset must say so rather than draw a line
+ * where the scorer does not have one.
+ */
+export function roadOf(ruleset: Ruleset): Road {
+  if (!ruleset.road) throw new Error(`${ruleset.id} has no "road" block: bài 2, 9 and 11 need it`);
+  return ruleset.road;
 }
 
 /** Bài 3's numbers, or a clear error: the page was built against a ruleset that has no slope. */

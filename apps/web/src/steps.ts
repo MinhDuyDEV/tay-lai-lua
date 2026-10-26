@@ -4,7 +4,7 @@
 // One list per exercise; `exercise.ts` picks which one a page uses.
 
 import { DT } from '../input/driver.ts';
-import { coastDecel, hillOf, type Ruleset } from './ruleset.ts';
+import { coastDecel, hillOf, roadOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
 export type StepId =
@@ -23,7 +23,12 @@ export type StepId =
   // bài 4 / bài 6
   | 'entry'
   | 'vet'
-  | 'finish';
+  | 'finish'
+  // bài 2 / bài 9 / bài 11
+  | 'approach'
+  | 'yield'
+  | 'through'
+  | 'end';
 
 export interface Step {
   id: StepId;
@@ -217,4 +222,79 @@ export function adviceBai3(s: SimState, ruleset: Ruleset): string {
   }
   if (s.speedMps < 0.2) return `Xe chỉ được giữ bằng phanh chân. Kéo phanh tay P, rồi khởi hành.${clock}`;
   return `Đang khởi hành. Giữ ga ↑ nhẹ, nhả côn dần.${clock}`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bài 2 (dừng xe nhường đường cho người đi bộ), bài 9 (tạm dừng ở chỗ có đường sắt) and bài 11
+// (kết thúc): one straight road, a stop line, and one thing past it.
+//
+// The checklist is the same manoeuvre in all three — come up at the car's own pace, stop inside A at
+// the line, then go on past it — and bài 11 adds the right signal for the finish line. The wording of
+// each step is the exercise's own, because "nhường người đi bộ" and "đường sắt" are different things
+// to look at even when the keys are the same.
+
+/** A road exercise's three or four steps. `yieldLabel` is what is past the line, in the learner's words. */
+export function roadSteps(lesson: 2 | 9 | 11): readonly Step[] {
+  const steps: Step[] = [
+    { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
+    { id: 'free', label: 'Nhả phanh tay, để xe tự bò', key: 'P' },
+    { id: 'approach', label: 'Tới vạch dừng, giữ tốc độ chậm', key: '↑' },
+    { id: 'stop', label: 'Dừng, A không quá 500 mm', key: '↓' },
+  ];
+  if (lesson === 2) steps.push({ id: 'yield', label: 'Nhường đường cho người đi bộ qua vạch', key: '—' });
+  if (lesson === 9) steps.push({ id: 'yield', label: 'Tạm dừng, quan sát đường sắt rồi mới qua', key: '—' });
+  if (lesson === 11) steps.push({ id: 'signal', label: 'Bật xi nhan phải trước vạch kết thúc', key: 'W' });
+  steps.push({ id: 'line', label: lesson === 11 ? 'Qua vạch kết thúc rồi dừng' : 'Qua vạch, chạy tiếp', key: '↑' });
+  return steps;
+}
+
+/**
+ * Mark the road exercise's steps from the state. The stop is the core's own verdict (`stopGapAM`
+ * recorded on the stop tick, `sinceStopTicks` from there), so the checklist and the scorer cannot
+ * disagree about whether the car stopped inside A.
+ */
+export function markRoad(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+  const road = roadOf(ruleset);
+  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (done.has('gear') && !state.handbrake) done.add('free');
+  if (state.sinceStopTicks < 0 && state.lineGapM < 2) done.add('approach');
+  if (state.sinceStopTicks >= 0 && state.stopGapAM >= 0 && state.stopGapAM <= road.max_a_m) done.add('stop');
+  if (state.sinceStopTicks >= 0 && state.signal === 'right') done.add('signal');
+  // "Qua vạch": the bumper is past the line with the exercise still running.
+  if (state.frontBumperM > 0) done.add('line');
+}
+
+/**
+ * The road exercises' advice: a short sentence for the next thing, read from the same state the
+ * scorer reads. `what` names the thing past the line so the words fit the lesson.
+ */
+export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11): string {
+  const road = roadOf(ruleset);
+  const mm = (m: number) => `${Math.round(m * 1000)} mm`;
+  if (state.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
+  if (state.phase === 'done') return 'Hết bài. Bấm Esc để làm lại.';
+  if (!state.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (state.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  if (state.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, xe sẽ tự bò tới vạch.';
+
+  if (state.sinceStopTicks < 0) {
+    if (state.speedMps > 2.6) return 'Chậm lại: nhả ga, để xe tự bò tới vạch dừng.';
+    if (state.lineGapM < 0) return 'Đã qua vạch mà chưa dừng.';
+    const aid = state.lineGapM > 0 && state.lineGapM < 2 ? ' Bám thanh đếm ngược cạnh số A.' : '';
+    return `Còn ${mm(state.lineGapM)} tới vạch dừng; phanh khi thanh đếm ngược báo.${aid}`;
+  }
+
+  // Stopped at the line.
+  const a = state.stopGapAM;
+  if (a < 0 || a > road.max_a_m) {
+    return a < 0
+      ? `Đã dừng quá vạch ${mm(-a)}. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`
+      : `Đã dừng khi còn ${mm(a)} tới vạch, quá xa. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`;
+  }
+  if (lesson === 11) {
+    if (state.speedMps <= 0.05 && state.signal !== 'right') return 'Bật xi nhan phải (W) trước khi qua vạch kết thúc.';
+    return 'Qua vạch kết thúc rồi dừng hẳn.';
+  }
+  const what = lesson === 2 ? 'người đi bộ' : 'đường sắt';
+  return `Dừng đúng vạch. Qua vạch rồi chạy tiếp, chú ý ${what}.`;
 }

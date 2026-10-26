@@ -127,6 +127,20 @@ export interface SimState {
   headingErrRad: number;
   /** Index of the named part of the figure; see `figureSegment`. */
   segment: number;
+  /** Bài 5: the traffic light, 0 none | 1 red | 2 yellow | 3 green (0 until the car first moves). */
+  lightColour: LightColour;
+  /** Bài 5: milliseconds left in the current light phase; 0 when the light is dark. */
+  lightLeftMs: number;
+  /** Bài 5: milliseconds on the 20 s / 30 s clock, 0 until it is armed. */
+  clockMs: number;
+  /**
+   * Which part of the scene the bumper is in: 0 start | 1 approach | 2 stop zone | 3 at the line |
+   * 4 past the stop line | 5 at the crosswalk/railway | 6 in the junction | 7 exit lane |
+   * 8 past the finish line. 0 in bài 1 and bài 3.
+   */
+  zone: ZoneCode;
+  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure. */
+  route: RouteCode;
   clockS: number;
   contactEpisodeS: number;
   /** Wheel centres FL FR RL RR in the same frame as `carX`/`carY`. */
@@ -144,8 +158,44 @@ const CONTACT_NAMES = ['clear', 'line', 'curb'] as const;
 export type ContactName = (typeof CONTACT_NAMES)[number];
 export const contactName = (code: ContactCode): ContactName => CONTACT_NAMES[code];
 
+/** The traffic light of bài 5, as snapshot field 46: 0 dark, 1 red, 2 yellow, 3 green. */
+export type LightColour = 0 | 1 | 2 | 3;
+export const LIGHT_NAMES = ['none', 'red', 'yellow', 'green'] as const;
+export type LightName = (typeof LIGHT_NAMES)[number];
+export const lightName = (code: LightColour): LightName => LIGHT_NAMES[code];
+
+/** Snapshot field 49: which band of the scene the front bumper is in. `ZONE_NAMES` labels them. */
+export type ZoneCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export const ZONE_NAMES = [
+  'start',
+  'approach',
+  'stop-zone',
+  'at-line',
+  'past-line',
+  'at-crossing',
+  'in-junction',
+  'exit-lane',
+  'past-finish',
+] as const;
+export type ZoneName = (typeof ZONE_NAMES)[number];
+export const zoneName = (code: ZoneCode): ZoneName => ZONE_NAMES[code];
+
+/** Snapshot field 50: which route the session drives. */
+export type RouteCode = 0 | 1 | 2 | 3;
+export const ROUTE_NAMES = ['none', 'road', 'junction', 'figure'] as const;
+export type RouteName = (typeof ROUTE_NAMES)[number];
+export const routeName = (code: RouteCode): RouteName => ROUTE_NAMES[code];
+
 const PHASE_NAMES: readonly PhaseName[] = ['waiting', 'launched', 'past-line', 'done', 'stopped'];
 const SIGNAL_NAMES: readonly SignalName[] = ['off', 'left', 'right'];
+
+/** A zone, route or light code outside its list is a contract drift, not a value to guess at. */
+function coded<T extends number>(names: readonly string[], value: number, what: string): T {
+  if (!Number.isInteger(value) || value < 0 || value >= names.length) {
+    throw new Error(`sim_state ${what} ${value} is not in the contract`);
+  }
+  return value as T;
+}
 
 /** A contact code outside 0..2 is a contract drift, not a value to guess at. */
 function contact(v: number): ContactCode {
@@ -201,6 +251,11 @@ export function readState(block: Float64Array, count: number): SimState {
     segment: block[F.segment],
     clockS: block[F.clock],
     contactEpisodeS: block[F.contactEpisode],
+    lightColour: coded(LIGHT_NAMES, block[F.lightColour], 'light colour'),
+    lightLeftMs: block[F.lightLeftMs],
+    clockMs: block[F.clockMs],
+    zone: coded(ZONE_NAMES, block[F.zone], 'zone'),
+    route: coded(ROUTE_NAMES, block[F.route], 'route'),
     wheels: [
       [block[F.wheels], block[F.wheels + 1]],
       [block[F.wheels + 2], block[F.wheels + 3]],

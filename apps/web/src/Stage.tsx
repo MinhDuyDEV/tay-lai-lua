@@ -13,7 +13,7 @@ import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
-import { openSession, type Session } from './sim/session.ts';
+import { openSession, zoneName, type Session, type SimState } from './sim/session.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -158,6 +158,11 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-aid-eta-ms=""
       data-aid-gap-mm=""
       data-aid-mark-mm=""
+      data-zone=""
+      data-zone-label=""
+      data-last-penalty=""
+      data-last-penalty-points=""
+      data-last-penalty-quote=""
       data-since-stop="-1"
       data-elevation="0.000"
       data-rpm="850"
@@ -261,6 +266,7 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   paintAid(d, exercise.stop(s, ruleset));
+  paintScene(d, s, run);
   d.entered = entered ? 'yes' : 'no';
   // Figure runs: everything the advice line reasons about, so a test (and the Supervisor) reads the
   // same numbers the page used.
@@ -304,3 +310,39 @@ function paintAid(d: DOMStringMap, aid: ReturnType<Exercise['stop']>) {
   d.aidGapMm = String(Math.round(aid.gapM * 1000));
   d.aidMarkMm = String(Math.round(aid.markM * 1000));
 }
+
+/**
+ * What a polling script needs to follow a road lesson without parsing the HUD's words: which band of
+ * the scene the bumper is in, and the last rule that fired with its own points and its verbatim
+ * quote. The quote is the ruleset's, not a paraphrase, so a script reading it sees exactly what the
+ * learner sees in the penalty panel.
+ *
+ * A run with no penalty publishes empty strings for all three, so "no penalty yet" is not a code.
+ */
+function paintScene(d: DOMStringMap, s: SimState, run: Run) {
+  d.zone = s.route === 0 ? '' : zoneName(s.zone);
+  d.zoneLabel = d.zone === '' ? '' : ZONE_TEXT[zoneName(s.zone)];
+  const last = run.penalties.at(-1);
+  if (!last) {
+    d.lastPenalty = '';
+    d.lastPenaltyPoints = '';
+    d.lastPenaltyQuote = '';
+    return;
+  }
+  d.lastPenalty = last.id;
+  d.lastPenaltyPoints = last.disqualify ? 'DISQUALIFY' : String(last.points);
+  d.lastPenaltyQuote = last.source.quote;
+}
+
+/** The bands of the scene, in words a learner reads rather than the short names scripts use. */
+const ZONE_TEXT: Record<ReturnType<typeof zoneName>, string> = {
+  start: 'Điểm xuất phát',
+  approach: 'Trên đường tới vạch',
+  'stop-zone': 'Trong vùng dừng xe',
+  'at-line': 'Ngay vạch dừng',
+  'past-line': 'Đã qua vạch dừng',
+  'at-crossing': 'Tới vạch qua đường / đường sắt',
+  'in-junction': 'Trong ngã tư',
+  'exit-lane': 'Đang ra khỏi ngã tư',
+  'past-finish': 'Đã qua vạch kết thúc',
+};

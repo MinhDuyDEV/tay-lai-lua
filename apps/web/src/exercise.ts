@@ -2,12 +2,15 @@
 // the checklist and the line that tells the learner what to do next. Stage, Hud, Scene and the run
 // loop take one of these instead of carrying bài 1 constants.
 
-import { stopAid, type StopAid, type StopRoad } from './stopAid.ts';
+import { flatRoad, stopAid, type StopAid, type StopRoad } from './stopAid.ts';
 import { seedWord } from './sim/session.ts';
 import { adviceFigure, cueFigure, type Centreline } from './figures.ts';
 import {
   adviceBai3,
+  adviceRoad,
   cueBai3,
+  markRoad,
+  roadSteps,
   FIGURE_STEPS,
   markBai1,
   markBai3,
@@ -20,14 +23,27 @@ import {
 import { hillOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
-export type Lesson = 1 | 3 | 4 | 6;
+export type Lesson = 1 | 2 | 3 | 4 | 6 | 9 | 11;
 
-/** Which lessons show the signal keys: bài 1 today, and bài 5 and 11 when their pages land. */
-const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1]);
+/**
+ * The straight-road lessons: a lane, a stop line, and one thing past it. They share the road scene
+ * and the stop aid, and differ in the checklist, the advice and the codes the core charges.
+ */
+export type RoadLesson = 2 | 9 | 11;
+const isRoadLesson = (lesson: Lesson): lesson is RoadLesson => lesson === 2 || lesson === 9 || lesson === 11;
+
+/**
+ * Which lessons show the signal keys: bài 1 (left signal at the start), bài 11 (right signal across
+ * the finish line), and bài 5 when its page lands. Bài 2 and bài 9 score no signal, so their legend
+ * does not offer one.
+ */
+const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1, 11]);
 
 export interface Exercise {
   lesson: Lesson;
   title: string;
+  /** The page's meta description: one line, for a search result or a link preview. */
+  description: string;
   /** `sim_create`'s word; the recorded trace starts with the same 8 bytes. */
   seed: bigint;
   steps: readonly Step[];
@@ -53,6 +69,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   1: {
     lesson: 1,
     title: 'Bài 1 — Xuất phát',
+    description: 'Bài 1 xuất phát: nổ máy, thắt dây, xi nhan trái, vào số 1 và qua vạch xuất phát, bằng bàn phím.',
     seed: seedWord(0),
     steps: BAI1_STEPS,
     mark: markBai1,
@@ -66,6 +83,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   3: {
     lesson: 3,
     title: 'Bài 3 — Dừng và khởi hành xe trên dốc',
+    description: 'Tập bài dừng và khởi hành xe trên dốc, sa hình hạng B, bằng bàn phím.',
     seed: seedWord(3),
     steps: BAI3_STEPS,
     mark: markBai3,
@@ -79,6 +97,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   4: {
     lesson: 4,
     title: 'Bài 4 — Qua vệt bánh xe và đường vòng vuông góc',
+    description: 'Tập bài qua vệt bánh xe và đường vòng vuông góc, sa hình hạng B, bằng bàn phím.',
     seed: seedWord(4),
     steps: FIGURE_STEPS,
     mark: markFigure,
@@ -92,6 +111,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   6: {
     lesson: 6,
     title: 'Bài 6 — Qua đường vòng quanh co',
+    description: 'Tập bài qua đường vòng quanh co, sa hình hạng B, bằng bàn phím.',
     seed: seedWord(6),
     steps: FIGURE_STEPS,
     mark: markFigure,
@@ -102,6 +122,9 @@ const EXERCISES: Record<Lesson, Exercise> = {
     stops: false,
     introKeys: 5,
   },
+  2: road(2, 'Bài 2 — Dừng xe nhường đường cho người đi bộ', 'Dừng đúng vạch cho người đi bộ qua, rồi đi tiếp, bằng bàn phím.'),
+  9: road(9, 'Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua', 'Tạm dừng đúng vạch trước đường sắt, quan sát rồi đi tiếp, bằng bàn phím.'),
+  11: road(11, 'Bài 11 — Kết thúc', 'Qua vạch kết thúc với xi nhan phải rồi dừng, bằng bàn phím.'),
 };
 
 export const exerciseFor = (lesson: Lesson): Exercise => EXERCISES[lesson];
@@ -121,4 +144,27 @@ function stopBai3(state: SimState, ruleset: Ruleset): StopAid | null {
     key: 'clutch',
   };
   return stopAid(state, ruleset, road);
+}
+
+/**
+ * A straight-road exercise: the same stop aid as bài 3, on the flat, timing the brake — a coasting car
+ * on the level sheds only ~0.12 m/s², so the clutch alone would never stop it in time, and the brake is
+ * the only key that decides whether A lands inside 500 mm. Bài 11's stop is at the finish line, which
+ * charges no distance A, so it gets no countdown: what it times is the right signal, not the gap.
+ */
+function road(lesson: RoadLesson, title: string, description: string): Exercise {
+  return {
+    lesson,
+    title,
+    description,
+    seed: seedWord(lesson),
+    steps: roadSteps(lesson),
+    mark: markRoad,
+    advice: (state, ruleset) => adviceRoad(state, ruleset, lesson),
+    cue: () => null,
+    stop: lesson === 11 ? () => null : (state, ruleset) => stopAid(state, ruleset, flatRoad('brake')),
+    signals: SIGNAL_LESSONS.has(lesson),
+    stops: lesson !== 11,
+    introKeys: 5,
+  };
 }

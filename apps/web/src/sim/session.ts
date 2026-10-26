@@ -3,6 +3,7 @@
 
 import { STATE_LEN, readState, type SimState } from './contract.ts';
 export type { SimState };
+export { zoneName, ZONE_NAMES, type ZoneName, type ZoneCode } from './contract.ts';
 
 /** One drained scoring event, as the core packs it: `[0..4] tick | [4..6] code | [6..8] points`. */
 export interface SimEvent {
@@ -17,9 +18,10 @@ export interface StepResult {
   events: SimEvent[];
 }
 
-/** One painted thing on the figure, as `sim_course` writes it. */
+/** One painted thing on the course, as `sim_course` writes it. */
 export interface CourseRecord {
-  /** 1 limit line, 2 curb band, 3 vệt line, 4 gate, 5 lane centreline. */
+  /** 1 limit line, 2 curb band, 3 vệt line, 4 gate, 5 lane centreline, 6 transverse mark,
+   * 7 signal head. */
   kind: CourseKind;
   /** Which line within its kind; for a gate, 1 entry, 2 exit, 3 vệt start, 4 vệt end. */
   lineId: number;
@@ -27,7 +29,16 @@ export interface CourseRecord {
   points: readonly (readonly [number, number])[];
 }
 
-export type CourseKind = 1 | 2 | 3 | 4 | 5;
+export type CourseKind = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+/** What a kind 6 transverse marking is, by its `line_id` (crates/sim-core/src/abi.rs). */
+export type MarkKind = 'stop' | 'finish' | 'crosswalk' | 'rail';
+const MARK_KINDS: readonly MarkKind[] = ['stop', 'finish', 'crosswalk', 'rail'];
+export const markKind = (lineId: number): MarkKind => {
+  const kind = MARK_KINDS[lineId - 1];
+  if (kind === undefined) throw new Error(`sim_course mark line_id ${lineId} is not in the contract`);
+  return kind;
+};
 
 export interface Session {
   /** The core's state now: before any tick it is the car parked and waiting for the order. */
@@ -92,7 +103,7 @@ function readCourse(exports: Exports, handle: number): readonly CourseRecord[] {
 
 /**
  * `[kind, line_id, npoints, x0, y0, x1, y1, ...]` records, in order. A record that runs past the
- * block, or a kind outside 1..5, is a contract drift rather than a value to draw.
+ * block, or a kind outside 1..7, is a contract drift rather than a value to draw.
  */
 export function parseCourse(block: Float64Array, count: number): readonly CourseRecord[] {
   const out: CourseRecord[] = [];
@@ -100,8 +111,12 @@ export function parseCourse(block: Float64Array, count: number): readonly Course
   while (i < count) {
     if (i + 3 > count) throw new Error(`sim_course record at ${i} runs past ${count} values`);
     const kind = block[i];
-    if (kind !== 1 && kind !== 2 && kind !== 3 && kind !== 4 && kind !== 5) {
+    if (kind !== 1 && kind !== 2 && kind !== 3 && kind !== 4 && kind !== 5 && kind !== 6 && kind !== 7) {
       throw new Error(`sim_course kind ${kind} at ${i} is not in the contract`);
+    }
+    // A signal head is a single point, so its record is the one the point count is not used for.
+    if (kind === 7 && block[i + 2] !== 1) {
+      throw new Error(`sim_course signal-head record at ${i} has ${block[i + 2]} points, not 1`);
     }
     const npoints = block[i + 2];
     const end = i + 3 + npoints * 2;
