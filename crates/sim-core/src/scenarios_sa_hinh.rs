@@ -251,8 +251,14 @@ fn the_two_figures_are_built_and_no_other_exercise_has_one() {
     assert!(!curve.course_block().is_empty(), "bài 6 has a figure");
     assert_eq!(Session::new(1).unwrap().course_block(), Vec::<f64>::new(), "bài 1 has no figure");
     assert!(Session::new(3 << 56).unwrap().course_block().is_empty(), "bài 3 has no figure");
-    assert!(Session::new(2 << 56).is_none(), "bài 2 stays refused");
-    assert!(Session::new(5 << 56).is_none(), "bài 5 stays refused");
+    // Bài 2, 5, 9 and 11 run on the straight-road scene, which is a figure too (its markings are
+    // what the page draws); bài 5's is the right-turn route.
+    for id in [2u64, 9, 11] {
+        let s = Session::new(id << 56).expect("a road exercise runs");
+        assert!(!s.course_block().is_empty(), "bài {id} has a scene to draw");
+    }
+    let junction = Session::new(5 << 56).expect("bài 5 runs");
+    assert!(!junction.course_block().is_empty(), "bài 5 draws its right-turn route");
 }
 
 #[test]

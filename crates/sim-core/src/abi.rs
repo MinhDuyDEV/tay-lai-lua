@@ -26,12 +26,21 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
     drop(unsafe { Vec::from_raw_parts(ptr, 0, len.max(1)) });
 }
 
-/// The seed carries two things. Bits 56..63 (the top byte) are the exercise id: 0 and 1 are bài 1
-/// (Xuất phát; 0 so that a plain seed is a bài 1 seed, 1 because it is bài 1's own number and the
-/// messy golden's seed starts with it), 3 is bài 3 (Dừng và khởi hành xe trên dốc), 4 is bài 4
-/// (Qua vệt bánh xe và đường vòng vuông góc) and 6 is bài 6 (Qua đường vòng quanh co). Bits 0..55
-/// are the seed proper. Any other exercise id is refused: this returns a null handle, and the
-/// caller must not use it, rather than quietly running bài 1.
+/// The seed carries two things. Bits 56..63 (the top byte) are the exercise id:
+/// * 0 and 1 — bài 1 (Xuất phát; 0 so that a plain seed is a bài 1 seed, 1 because it is bài 1's own
+///   number and the messy golden's seed starts with it);
+/// * 2 — bài 2 (Dừng xe nhường đường cho người đi bộ);
+/// * 3 — bài 3 (Dừng và khởi hành xe trên dốc);
+/// * 4 — bài 4 (Qua vệt bánh xe và đường vòng vuông góc);
+/// * 5 — bài 5 (Qua ngã tư có tín hiệu điều khiển giao thông);
+/// * 6 — bài 6 (Qua đường vòng quanh co);
+/// * 9 — bài 9 (Tạm dừng ở chỗ có đường sắt chạy qua);
+/// * 11 — bài 11 (Kết thúc).
+///
+/// Bits 0..55 are the seed proper. For bài 5 they also pick the light's phase: the offset into the
+/// cycle is that number reduced modulo the cycle length, so the same trace always meets the same
+/// light and a different attempt meets red, green or yellow. Any other exercise id is refused: this
+/// returns a null handle, and the caller must not use it, rather than quietly running bài 1.
 #[unsafe(no_mangle)]
 pub extern "C" fn sim_create(seed: u64) -> *mut Session {
     match Session::new(seed) {
@@ -103,7 +112,14 @@ pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) 
 /// * kind 2 — a curb (bó vỉa), a band of its own outside the limit line;
 /// * kind 3 — a vệt bánh xe line (bài 4 only), a limit line the learner must drive through;
 /// * kind 4 — a gate: entry, exit, vệt start, vệt end (`line_id` = 1, 2, 3, 4), npoints = 2;
-/// * kind 5 — the lane centreline, for arrow and cue drawing.
+/// * kind 5 — the lane centreline, for arrow and cue drawing;
+/// * kind 6 — a transverse marking (bài 2, 5, 9, 11), npoints = 2, `line_id` 1 stop line /
+///   2 finish or end line / 3 crosswalk stripe / 4 rail;
+/// * kind 7 — the signal head's position (bài 2, 5, 9), one point.
+///
+/// Records arrive in that order: lines, gates, centreline, markings, signal. The four exercises that
+/// existed before the road scene write exactly the records they always wrote, in the order they
+/// always wrote them, so their blocks are unchanged.
 ///
 /// Coordinates are metres in the same frame as the snapshot's `x_m`/`y_m`.
 ///

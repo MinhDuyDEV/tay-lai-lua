@@ -19,8 +19,119 @@ pub struct Ruleset {
     pub hill: Hill,
     /// Bài 4 and bài 6: the figures, generated from the formulas and the car's own dimensions.
     pub sa_hinh: SaHinh,
+    /// Bài 2, 5, 9 and 11: the straight-road scene and, for bài 5, the junction and its light.
+    pub road: Road,
+    pub junction: Junction,
     pub rules: Vec<Rule>,
 }
+
+/// Bài 2, bài 9 and bài 11: the numbers of a straight-road exercise. Every position the scoring
+/// code reads is here, so a layout change is a ruleset change.
+///
+/// `start_line_x_m` is the one axis of the scene: the start line is at 0, the stop line at
+/// `stop_line_m()`, the crosswalk 1,0 m past it (bài 2), the outer rail 5,0 m past it (bài 9), the
+/// finish line `finish_offset_m` past it (bài 11).
+#[derive(Deserialize)]
+pub struct Road {
+    /// Where the car's front bumper starts, metres from the start line (negative = short of it).
+    pub start_front_bumper_m: f64,
+    pub lane_width_m: f64,
+    pub stop_line_width_m: f64,
+    /// How far before the stop line a stop still counts as a stop of the exercise.
+    pub stop_zone_length_m: f64,
+    /// Distance A the law allows, 0,5 m.
+    pub max_a_m: f64,
+    /// After a stop, the bumper reaching this far past the line ends the exercise (bài 2, bài 9).
+    pub end_past_line_m: f64,
+    /// Passing this far past the line without a stop is KHONG_DUNG.
+    pub no_stop_beyond_m: f64,
+    /// Where the exercise ends if the car never stops at all.
+    pub run_end_past_line_m: f64,
+    pub crosswalk_offset_m: f64,
+    pub crosswalk_width_m: f64,
+    pub crosswalk_stripe_width_m: f64,
+    pub crosswalk_stripe_gap_m: f64,
+    /// Outer rail this far past the stop line (bài 9).
+    pub rail_offset_m: f64,
+    pub rail_gauge_m: f64,
+    pub rail_width_m: f64,
+    /// Finish line this far past the stop line (bài 11).
+    pub finish_offset_m: f64,
+    /// Half-width of the band across the finish line that reads as "at the line".
+    pub end_zone_m: f64,
+    /// The exercise's signal head sits here along the lane (bài 2: the crossing; bài 9: the rail).
+    pub signal_tick: u32,
+}
+
+impl Road {
+    /// The stop line, on the scene's single axis.
+    pub fn stop_line_m(&self) -> f64 {
+        -self.start_front_bumper_m
+    }
+
+    pub fn crosswalk_m(&self) -> f64 {
+        self.stop_line_m() + self.crosswalk_offset_m
+    }
+
+    pub fn rail_m(&self) -> f64 {
+        self.stop_line_m() + self.rail_offset_m
+    }
+
+    pub fn finish_m(&self) -> f64 {
+        self.stop_line_m() + self.finish_offset_m
+    }
+}
+
+/// Bài 5: the junction figure and its light cycle. The route itself is built by `course.rs` from
+/// these numbers, so the figure that is drawn and the figure that is scored are one figure.
+#[derive(Deserialize)]
+pub struct Junction {
+    pub approach_length_m: f64,
+    pub stop_zone_length_m: f64,
+    pub max_a_m: f64,
+    pub end_past_line_m: f64,
+    pub no_stop_beyond_m: f64,
+    pub crosswalk_offset_m: f64,
+    pub crosswalk_width_m: f64,
+    /// Depth of the junction from the stop line; the bumper in it is "đi qua ngã tư".
+    pub junction_depth_m: f64,
+    /// Half the width of the drawn junction, so the arms reach past the lane.
+    pub extent_m: f64,
+    /// Radius of the right-turn arc; 0 means "derive it from the car" (1,5 × its tightest turn).
+    pub arc_radius_m: f64,
+    pub red_ticks: u32,
+    pub green_ticks: u32,
+    pub yellow_ticks: u32,
+}
+
+impl Junction {
+    /// The stop line's place on the approach axis. The scene's origin is the start line at 0, so
+    /// the stop line is where `approach_length_m` puts it.
+    pub fn stop_line_m(&self) -> f64 {
+        self.approach_length_m
+    }
+
+    pub fn cycle_ticks(&self) -> u32 {
+        self.red_ticks + self.green_ticks + self.yellow_ticks
+    }
+
+    /// The colour at `t` ticks into the cycle from the start of red: 1 red, 2 yellow, 3 green.
+    pub fn light_at(&self, t: u32) -> u8 {
+        let cycle = self.cycle_ticks();
+        if cycle == 0 {
+            return 3;
+        }
+        let t = t % cycle;
+        if t < self.red_ticks {
+            1
+        } else if t < self.red_ticks + self.green_ticks {
+            3
+        } else {
+            2
+        }
+    }
+}
+
 
 /// The figures of bài 4 and bài 6 (QCVN 15 mục 2.1.15.4 and 2.1.15.6). Only the inputs live here;
 /// the geometry itself is generated in `course.rs`, so a figure and what is scored on it cannot
@@ -230,6 +341,9 @@ pub struct Thresholds {
     pub hill_timeout_ticks: u32,
     /// Bài 4 and bài 6: seconds one contact episode must last before DE_VACH_KEO_DAI charges.
     pub de_vach_keo_dai_ticks: u32,
+    /// Bài 5: the 20 s and 30 s marks, counted from the light clock's arming.
+    pub junction_20_ticks: u32,
+    pub junction_30_ticks: u32,
 }
 
 impl SaHinh {
@@ -329,6 +443,8 @@ impl Ruleset {
             timeout_30_ticks: seconds_to_ticks(self.rule("SH.01.QUA_30S").params.seconds),
             hill_timeout_ticks: seconds_to_ticks(self.rule("SH.03.QUA_30S").params.seconds),
             de_vach_keo_dai_ticks: seconds_to_ticks(self.rule("SH.04.DE_VACH_KEO_DAI").params.seconds),
+            junction_20_ticks: seconds_to_ticks(self.rule("SH.05.QUA_20S").params.seconds),
+            junction_30_ticks: seconds_to_ticks(self.rule("SH.05.QUA_30S").params.seconds),
         }
     }
 }
