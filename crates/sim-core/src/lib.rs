@@ -567,6 +567,7 @@ impl Session {
             h.f64(s.clock_seconds());
             h.bool(s.clock_running());
             h.u32(s.park_charges());
+            h.u32(s.park_clock_ticks());
             h.u8(s.park_wheels());
             for ep in s.episode_table() {
                 h.bool(ep.touching);
