@@ -279,8 +279,64 @@ async function driveFigure(page, { allowed, throttle = false }) {
   await until(page, 'end of the figure', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
 }
 
+
+/**
+ * Bài 7 / bài 8 from the keyboard, reading only the advice line: `data-cue` (the arrow), `data-pedal`
+ * (the pedal word) and `data-gear-wanted` (the gear to put in). Nothing is pressed that the line did not
+ * ask for. The learner polls every 50 ms and, when the reading changed, waits PARK_REACTION_MS and then
+ * acts on *that* reading even if the line has moved on: a cue that comes late fails here.
+ *   creep  — feet off both pedals (the clutch is up and the car moves on its own)
+ *   brake / wheel / clutch / hold — Space and ↓ together; `wheel` and the arrow together set the lock
+ *   park   — P once (handbrake); enter — Enter (the finish); data-gear-wanted — 1 or R with the pedal down
+ */
+const PARK_REACTION_MS = 300;
+async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'done' || d.disqualified === 'yes'`, maxMs = 240_000 }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  await key.press('KeyE');
+  await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
+  const held = new Set();
+  const hold = async (want) => {
+    for (const k of [...held]) if (!want.has(k)) { await key.up(k); held.delete(k); }
+    for (const k of want) if (!held.has(k)) { await key.down(k); held.add(k); }
+  };
+  const read = () => page.$eval('.advice', (el) => ({ cue: el.dataset.cue ?? '', pedal: el.dataset.pedal ?? '', gear: el.dataset.gearWanted ?? '', text: el.textContent ?? '' }));
+  let seen = '';
+  let lastP = -Infinity;
+  const end = Date.now() + maxMs;
+  while (Date.now() < end) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} at progress ${d.progress}\nstate: ${JSON.stringify(d)}`);
+    if (await page.evaluate((c) => new Function('d', `return (${c});`)(document.querySelector('#stage').dataset), stopWhen)) break;
+    const r = await read();
+    const sig = `${r.cue}|${r.pedal}|${r.gear}`;
+    if (sig !== seen) {
+      seen = sig;
+      console.log(`     the line says [${sig}]: ${r.text.trim().slice(0, 110)}`);
+      await page.waitForTimeout(PARK_REACTION_MS);
+      const want = new Set();
+      if (r.cue === 'left') want.add('ArrowLeft');
+      if (r.cue === 'right') want.add('ArrowRight');
+      if (r.pedal !== 'creep') { want.add('Space'); want.add('ArrowDown'); }
+      await hold(want);
+      if (r.pedal === 'enter') await key.press('Enter');
+    }
+    // Repeated each poll: a press the core ignored (clutch not yet down) is asked for again by the same line.
+    if (r.pedal === 'park' && Date.now() - lastP > 1500) { await key.press('KeyP'); lastP = Date.now(); }
+    if (r.gear && d.gear !== r.gear && Number(d.clutch) > 0.97) await key.press(r.gear === '1' ? 'Digit1' : 'KeyR');
+    await page.waitForTimeout(50);
+  }
+  await hold(new Set());
+  await until(page, 'the run to end', stopWhen, allowed);
+}
+
 let failures = 0;
 const check = async (name, fn) => {
+  // `--only bài 7` runs the checks whose name contains the text, e.g. on a machine without audio.
+  if (args.get('only') && !name.includes(args.get('only'))) return;
   try {
     await fn();
     console.log(`ok   ${name}`);
@@ -864,6 +920,57 @@ let junctionRed = null;
       if (problems.length) throw new Error(problems.join('\n'));
       await page.close();
     });
+  }
+
+  // Bài 7 and bài 8 are driven only when asked (`--park yes`): they need the reverse speed to be settled
+  // before a clean keyboard run is a fair thing to require.
+  if (args.get('park') === 'yes') {
+    for (const lesson of [7, 8]) {
+      const figure = `bài ${lesson}`;
+      await check(`${figure} clean run from the advice line alone: score 100 and the finish signal`, async () => {
+        const { page, problems } = await fresh(`/thi/${lesson}`);
+        await driveParkPage(page, { allowed: [] });
+        const d = await readStage(page);
+        const listed = await page.$$eval('[data-penalty]', (els) => els.map((e) => e.dataset.penalty));
+        if (d.phase !== 'done' || d.score !== '100' || d.penalties !== '' || listed.length) {
+          throw new Error(`not a clean finish: ${JSON.stringify(d)} listed=${listed}`);
+        }
+        if (problems.length) throw new Error(problems.join('\n'));
+        await page.close();
+      });
+
+      await check(`${figure} with the wheel never turned: the core's own rule named with its quote (and points)`, async () => {
+        const { page, problems } = await fresh(`/thi/${lesson}`);
+        const key = page.keyboard;
+        await pageReady(page);
+        await key.press('KeyX');
+        await until(page, 'enter the car', `d.entered === 'yes'`, []);
+        await key.press('KeyE');
+        await until(page, 'engine on', `d.engineOn === 'yes'`, []);
+        const tick = Number((await readStage(page)).tick);
+        await key.down('Space');
+        await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, []);
+        await key.press('Digit1');
+        await until(page, 'gear 1', `d.gear === '1'`, []);
+        await key.press('KeyP');
+        await until(page, 'handbrake released', `d.handbrake === 'no'`, []);
+        // Feet off: the car creeps on its own, straight on, which is where the line says to turn.
+        await key.up('Space');
+        // Bài 7's lane runs on past the area's far line (paint, 5 points); bài 8's leaves the area (disqualified).
+        const code = lesson === 7 ? 'SH.GHEP.DE_VACH' : 'SH.GHEP.SAI_HINH';
+        await until(page, `${figure}: a wheel on the paint`, `d.penalties.includes('${code}')`, [code, 'SH.GHEP.DE_VACH_KEO_DAI', 'SH.X.VIA_HE']);
+        const rule = ruleset.rules.find((r) => r.id === code);
+        const shown = await page.$eval(`[data-penalty="${code}"] blockquote`, (e) => e.textContent);
+        if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+        if (rule.penalty.kind === 'POINTS') {
+          const shownPoints = await page.$eval(`[data-penalty="${code}"] .points`, (e) => e.textContent);
+          const want = `−${rule.penalty.points} điểm`;
+          if (shownPoints !== want) throw new Error(`the HUD says "${shownPoints}", the ruleset says ${want}`);
+        }
+        if (problems.length) throw new Error(problems.join('\n'));
+        await page.close();
+      });
+    }
   }
 
 } finally {

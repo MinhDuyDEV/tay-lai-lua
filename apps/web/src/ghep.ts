@@ -398,15 +398,23 @@ export function setSliceWork(n: number | null): void {
   sliceWork = n;
 }
 
+/** When the page last spent its planning slice: the HUD asks for the cue several times a frame. */
+let lastSliceAt = -Infinity;
+
 /** Give a job one frame's share of work. Returns its result once it is finished, otherwise null. */
 function advance<T>(job: Job<T>): { value: T } | null {
   const t0 = performance.now();
+  // A second ask within the same frame (the HUD reads the cue for the arrow, the pedal and the sentence)
+  // must not spend a second slice.
+  if (sliceWork === null && t0 - lastSliceAt < SLICE_MS) return null;
   const w0 = work;
   for (;;) {
     const r = job.next();
     if (r.done) return { value: r.value };
-    if (sliceWork !== null ? work - w0 >= sliceWork : performance.now() - t0 >= SLICE_MS) return null;
+    if (sliceWork !== null ? work - w0 >= sliceWork : performance.now() - t0 >= SLICE_MS) break;
   }
+  lastSliceAt = performance.now();
+  return null;
 }
 
 /** The plan being worked out for a stop, and the stop it is for. */
