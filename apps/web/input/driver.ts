@@ -94,8 +94,8 @@ export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: 
   { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
 ];
 
-/** The legend for one lesson: bài 3 has no belt, start order or signal. */
-export const legendFor = (lesson: 1 | 3) => KEY_LEGEND.filter((entry) => lesson === 1 || !entry.bai1Only);
+/** The legend for one lesson: bài 3, 4 and 6 have no belt, start order or signal. */
+export const legendFor = (lesson: 1 | 3 | 4 | 6) => KEY_LEGEND.filter((entry) => lesson === 1 || !entry.bai1Only);
 
 /** What the driver needs to know about the car; read from the sim state of the previous tick. */
 export interface DriveView {

@@ -257,6 +257,18 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, glOk: boolean, aud
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   d.entered = entered ? 'yes' : 'no';
+  // Figure runs: everything the advice line reasons about, so a test (and the Supervisor) reads the
+  // same numbers the page used.
+  if (exercise.lesson === 4 || exercise.lesson === 6) {
+    d.progress = s.progressM.toFixed(3);
+    d.courseLen = s.courseLengthM.toFixed(3);
+    d.lateral = s.lateralM.toFixed(3);
+    d.headingErr = s.headingErrRad.toFixed(3);
+    d.segment = String(s.segment);
+    d.clock = s.clockS.toFixed(2);
+    d.contactEpisode = s.contactEpisodeS.toFixed(2);
+    d.contact = s.contact.join('');
+  }
   for (const step of exercise.steps) d[`step_${step.id}`] = run.stepsDone.has(step.id) ? 'yes' : 'no';
 }
 

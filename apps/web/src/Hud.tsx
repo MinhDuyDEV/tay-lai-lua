@@ -3,13 +3,14 @@
 // 60 Hz loop never causes a React render. Only two rare things are React state — the penalty feed
 // and the result overlay — because they change a handful of times per run.
 
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { legendFor } from '../input/driver.ts';
 import type { Exercise } from './exercise.ts';
 import type { Ruleset } from './ruleset.ts';
 import { hillOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
+import Inset from './Inset.tsx';
 import type { SimState } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
@@ -52,10 +53,15 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const audioEl = useRef<HTMLParagraphElement>(null);
   const hillEl = useRef<HTMLElement>(null);
   const advice = useRef<HTMLParagraphElement>(null);
+  /** The figure's centreline, read once from the core; the same polyline the scene draws. */
+  const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run]);
   const bai3 = exercise.lesson === 3;
+  const figure = exercise.lesson === 4 || exercise.lesson === 6;
+  const figureEl = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const hill = hillEl.current ? hillParts(hillEl.current) : null;
+    const fig = figureEl.current ? figureParts(figureEl.current) : null;
     const stop = run.onFrame(() => {
       const s = run.state;
       if (speed.current) speed.current.textContent = (s.speedMps * 3.6).toFixed(1);
@@ -67,6 +73,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (gear.current) gear.current.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
       if (bumper.current) bumper.current.textContent = s.frontBumperM.toFixed(2);
       if (hill) paintHill(hill, s, ruleset);
+      if (fig) paintFigure(fig, s);
       if (score.current) score.current.textContent = s.disqualified ? 'ĐÌNH CHỈ' : String(s.score);
       if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified, exercise.lesson);
       if (throttle.current) throttle.current.style.height = bar(s.throttle);
@@ -83,9 +90,9 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         if (hint.current.textContent !== text) hint.current.textContent = text;
       }
       if (advice.current) {
-        const text = exercise.advice(s, ruleset) ?? '';
+        const text = exercise.advice(s, ruleset, centre) ?? '';
         if (advice.current.textContent !== text) advice.current.textContent = text;
-        advice.current.dataset.cue = exercise.cue(s, ruleset) ?? '';
+        advice.current.dataset.cue = exercise.cue(s, ruleset, centre) ?? '';
       }
       if (audioEl.current) {
         const now = audio();
@@ -99,7 +106,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       }
     });
     return stop;
-  }, [run, exercise, ruleset, rpmLimit, audio]);
+  }, [run, exercise, ruleset, rpmLimit, audio, centre]);
 
   return (
     <div className="hud">
@@ -139,6 +146,35 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             <span className="name">Tụt dốc</span>
             <strong>
               <span data-part="value">0</span> mm
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="clock">
+            <span className="name">Thời gian</span>
+            <strong>
+              <span data-part="value">—</span>
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <p className="advice" ref={advice} />
+        </section>
+      ) : null}
+
+      {figure ? <Inset run={run} /> : null}
+
+      {figure ? (
+        <section className="hud-hill hud-figure" aria-label="Hình" ref={figureEl}>
+          <div className="cell" data-cell="progress">
+            <span className="name">Đã đi</span>
+            <strong>
+              <span data-part="value">0</span> m
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="lateral">
+            <span className="name">Lệch tim đường</span>
+            <strong>
+              <span data-part="value">0</span> m
             </strong>
             <small data-part="limit" />
           </div>
@@ -272,6 +308,38 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
 
 const mm = (m: number) => String(Math.round(m * 1000));
 
+interface FigureCell {
+  value: HTMLElement;
+  limit: HTMLElement;
+  cell: HTMLElement;
+}
+
+/** The figure card's three cells, looked up once so the 60 Hz paint touches no selector. */
+function figureParts(el: HTMLElement): Record<'progress' | 'lateral' | 'clock', FigureCell> {
+  const cell = (name: string): FigureCell => {
+    const c = el.querySelector<HTMLElement>(`[data-cell="${name}"]`)!;
+    return { cell: c, value: c.querySelector<HTMLElement>('[data-part="value"]')!, limit: c.querySelector<HTMLElement>('[data-part="limit"]')! };
+  };
+  return { progress: cell('progress'), lateral: cell('lateral'), clock: cell('clock') };
+}
+
+/** Progress, lateral offset and the clock, and the four wheels' worst contact state. */
+function paintFigure(parts: ReturnType<typeof figureParts>, s: SimState) {
+  const p = parts.progress;
+  p.value.textContent = s.progressM.toFixed(1);
+  p.limit.textContent = `trên ${s.courseLengthM.toFixed(1)} m`;
+
+  const l = parts.lateral;
+  l.value.textContent = s.lateralM.toFixed(2);
+  l.limit.textContent = 'dương = lệch trái';
+  l.cell.dataset.state = Math.abs(s.lateralM) > 0.45 ? 'bad' : Math.abs(s.lateralM) > 0.25 ? 'warn' : 'ok';
+
+  const t = parts.clock;
+  t.value.textContent = s.clockS === 0 ? '—' : `${s.clockS.toFixed(1)} s`;
+  t.limit.textContent = s.clockS === 0 ? 'tính từ vạch vào hình' : s.contact.some((c) => c === 2) ? 'đã chạm bó vỉa' : s.contact.some((c) => c === 1) ? 'có bánh đè vạch' : 'chưa đè vạch';
+  t.cell.dataset.state = s.contact.some((c) => c === 2) ? 'bad' : s.contact.some((c) => c === 1) ? 'warn' : 'ok';
+}
+
 interface HillCell {
   cell: HTMLElement;
   label: HTMLElement | null;
@@ -316,13 +384,13 @@ function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ru
   t.cell.dataset.state = left === null ? 'neutral' : left < 10 ? 'warn' : 'ok';
 }
 
-function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3): string {
+function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3 | 4 | 6): string {
   if (disqualified) return 'đình chỉ';
   switch (phase) {
     case 'waiting':
       return 'chờ lệnh';
     case 'launched':
-      return lesson === 3 ? 'lên dốc' : 'đã có lệnh';
+      return lesson === 3 ? 'lên dốc' : lesson === 4 || lesson === 6 ? 'trong hình' : 'đã có lệnh';
     case 'stopped':
       return 'đã dừng';
     case 'past-line':

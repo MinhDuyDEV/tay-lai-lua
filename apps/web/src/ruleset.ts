@@ -51,6 +51,20 @@ export interface Hill {
   no_stop_beyond_m: number;
 }
 
+/** Bài 4 and bài 6's figure numbers (`content/rulesets/tt108-2026.json`'s `sa_hinh` block). */
+export interface SaHinh {
+  line_width_m: number;
+  tyre_width_m: number;
+  track_m: number;
+  patch_length_m: number;
+  lead_m: number;
+  max_segment_m: number;
+  time_limit_s: number;
+  outside_margin_m: number;
+  reverse_limit_m: number;
+  vet_entry_tolerance_m: number;
+}
+
 export interface Drivetrain {
   idle_target_rpm: number;
   crank_ticks: number;
@@ -68,6 +82,17 @@ export interface Vehicle {
   mass_kg: number;
 }
 
+/**
+ * The keyboard's steering model (`input/driver.ts` FEEL.steer), mirrored into the ruleset so the
+ * advice line can work out the fastest speed a bend can be held at. Copied here rather than imported
+ * to keep `ruleset.ts` free of the run loop; `test` asserts the two agree.
+ */
+export interface SteerFeel {
+  /** `lock(v) = max(minLock, 1 / (1 + (v / speedScaleMps)^2))` of full lock. */
+  speedScaleMps: number;
+  minLock: number;
+}
+
 export interface Ruleset {
   id: string;
   title: string;
@@ -77,6 +102,9 @@ export interface Ruleset {
   drivetrain: Drivetrain;
   /** Present once the ruleset carries bài 3. */
   hill?: Hill;
+  /** Bài 4 and bài 6's figure numbers. */
+  sa_hinh?: SaHinh;
+  steer: SteerFeel;
   rules: Rule[];
 }
 

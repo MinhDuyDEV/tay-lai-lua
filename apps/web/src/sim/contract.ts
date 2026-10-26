@@ -39,10 +39,31 @@ export const F = {
   /** Road height under the car centre, metres. */
   elevation: 25,
   grade: 26,
+  /** Bài 4/6: what each wheel's patch is on, FL FR RL RR. 0 clear, 1 on a line, 2 on a curb. */
+  contactFL: 27,
+  contactFR: 28,
+  contactRL: 29,
+  contactRR: 30,
+  /** Bài 4/6: metres along the figure's centreline from its start. */
+  progress: 31,
+  /** Bài 4/6: the centreline's length. */
+  courseLength: 32,
+  /** Bài 4/6: signed offset from the centreline, + left of it. */
+  lateral: 33,
+  /** Bài 4/6: car heading minus the centreline's heading. */
+  headingErr: 34,
+  /** Bài 4/6: which named part of the figure the car is on. */
+  segment: 35,
+  /** Bài 4/6: seconds on the exercise clock, 0 until the entry gate. */
+  clock: 36,
+  /** Bài 4/6: the longest contact episode running now, seconds. */
+  contactEpisode: 37,
+  /** Bài 4/6: the four wheel centres, FL FR RL RR, as (x, y) pairs. */
+  wheels: 38,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 27;
+export const STATE_LEN = 46;
 
 /**
  * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses
@@ -83,10 +104,40 @@ export interface SimState {
   sinceStopTicks: number;
   elevationM: number;
   grade: number;
+  /** Bài 4/6 only; 0 in bài 1/3. One entry per wheel, FL FR RL RR. */
+  contact: readonly [ContactCode, ContactCode, ContactCode, ContactCode];
+  progressM: number;
+  courseLengthM: number;
+  /** Positive is left of the centreline. */
+  lateralM: number;
+  headingErrRad: number;
+  /** Index of the named part of the figure; see `figureSegment`. */
+  segment: number;
+  clockS: number;
+  contactEpisodeS: number;
+  /** Wheel centres FL FR RL RR in the same frame as `carX`/`carY`. */
+  wheels: readonly [
+    readonly [number, number],
+    readonly [number, number],
+    readonly [number, number],
+    readonly [number, number],
+  ];
 }
+
+/** What a wheel's contact patch is on. */
+export type ContactCode = 0 | 1 | 2;
+const CONTACT_NAMES = ['clear', 'line', 'curb'] as const;
+export type ContactName = (typeof CONTACT_NAMES)[number];
+export const contactName = (code: ContactCode): ContactName => CONTACT_NAMES[code];
 
 const PHASE_NAMES: readonly PhaseName[] = ['waiting', 'launched', 'past-line', 'done', 'stopped'];
 const SIGNAL_NAMES: readonly SignalName[] = ['off', 'left', 'right'];
+
+/** A contact code outside 0..2 is a contract drift, not a value to guess at. */
+function contact(v: number): ContactCode {
+  if (v !== 0 && v !== 1 && v !== 2) throw new Error(`sim_state contact code ${v} is not in the contract`);
+  return v;
+}
 
 /**
  * Read one state block. `count` is what `sim_state` returned; anything but STATE_LEN is a contract
@@ -128,5 +179,19 @@ export function readState(block: Float64Array, count: number): SimState {
     sinceStopTicks: block[F.sinceStopTicks],
     elevationM: block[F.elevation],
     grade: block[F.grade],
+    contact: [contact(block[F.contactFL]), contact(block[F.contactFR]), contact(block[F.contactRL]), contact(block[F.contactRR])],
+    progressM: block[F.progress],
+    courseLengthM: block[F.courseLength],
+    lateralM: block[F.lateral],
+    headingErrRad: block[F.headingErr],
+    segment: block[F.segment],
+    clockS: block[F.clock],
+    contactEpisodeS: block[F.contactEpisode],
+    wheels: [
+      [block[F.wheels], block[F.wheels + 1]],
+      [block[F.wheels + 2], block[F.wheels + 3]],
+      [block[F.wheels + 4], block[F.wheels + 5]],
+      [block[F.wheels + 6], block[F.wheels + 7]],
+    ],
   };
 }

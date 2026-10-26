@@ -17,9 +17,26 @@ export interface StepResult {
   events: SimEvent[];
 }
 
+/** One painted thing on the figure, as `sim_course` writes it. */
+export interface CourseRecord {
+  /** 1 limit line, 2 curb band, 3 vệt line, 4 gate, 5 lane centreline. */
+  kind: CourseKind;
+  /** Which line within its kind; for a gate, 1 entry, 2 exit, 3 vệt start, 4 vệt end. */
+  lineId: number;
+  /** The polyline, metres, in the same frame as `SimState.carX`/`carY`. */
+  points: readonly (readonly [number, number])[];
+}
+
+export type CourseKind = 1 | 2 | 3 | 4 | 5;
+
 export interface Session {
   /** The core's state now: before any tick it is the car parked and waiting for the order. */
   readonly state: SimState;
+  /**
+   * The figure this exercise is drawn on, read once from the core so the picture and the scoring
+   * share one set of polylines. Empty for bài 1 and bài 3.
+   */
+  readonly course: readonly CourseRecord[];
   /** Advance exactly one 1/60 s tick with these 8 TickInput bytes. */
   step(input: Uint8Array): StepResult;
   /** The core's state hash: 16 lowercase hex digits. */
@@ -39,6 +56,7 @@ interface Exports {
   sim_hash(handle: number): bigint;
   sim_drain_events(handle: number, outPtr: number, cap: number): number;
   sim_state(handle: number, outPtr: number, cap: number): number;
+  sim_course(handle: number, outPtr: number, cap: number): number;
 }
 
 /** What `sim_create` takes: the exercise id in bits 56..63, the seed below it. */
@@ -51,6 +69,49 @@ export function openSession(wasmBytes: ArrayBuffer, seed: bigint): Session {
   const exports = instance.exports as unknown as Exports;
   if (typeof exports.sim_state !== 'function') throw new Error('sim.wasm has no sim_state: wrong build');
   return wasmSession(exports, seed);
+}
+
+/**
+ * Read the whole figure in one call. `sim_course` writes nothing and returns the count it needs when
+ * the capacity is short, so a first call with no room sizes the buffer.
+ */
+function readCourse(exports: Exports, handle: number): readonly CourseRecord[] {
+  if (typeof exports.sim_course !== 'function') return [];
+  const needed = exports.sim_course(handle, 0, 0);
+  if (needed === 0) return [];
+  const ptr = exports.sim_alloc(needed * 8);
+  try {
+    const count = exports.sim_course(handle, ptr, needed);
+    if (count !== needed) throw new Error(`sim_course asked for ${needed} values but wrote ${count}`);
+    const block = new Float64Array(exports.memory.buffer, ptr, count);
+    return parseCourse(block, count);
+  } finally {
+    exports.sim_free(ptr, needed * 8);
+  }
+}
+
+/**
+ * `[kind, line_id, npoints, x0, y0, x1, y1, ...]` records, in order. A record that runs past the
+ * block, or a kind outside 1..5, is a contract drift rather than a value to draw.
+ */
+export function parseCourse(block: Float64Array, count: number): readonly CourseRecord[] {
+  const out: CourseRecord[] = [];
+  let i = 0;
+  while (i < count) {
+    if (i + 3 > count) throw new Error(`sim_course record at ${i} runs past ${count} values`);
+    const kind = block[i];
+    if (kind !== 1 && kind !== 2 && kind !== 3 && kind !== 4 && kind !== 5) {
+      throw new Error(`sim_course kind ${kind} at ${i} is not in the contract`);
+    }
+    const npoints = block[i + 2];
+    const end = i + 3 + npoints * 2;
+    if (end > count) throw new Error(`sim_course record at ${i} wants ${end} values, block has ${count}`);
+    const points: [number, number][] = [];
+    for (let p = 0; p < npoints; p += 1) points.push([block[i + 3 + p * 2], block[i + 4 + p * 2]]);
+    out.push({ kind, lineId: block[i + 1], points });
+    i = end;
+  }
+  return out;
 }
 
 function wasmSession(exports: Exports, seed: bigint): Session {
@@ -78,12 +139,14 @@ function wasmSession(exports: Exports, seed: bigint): Session {
     const count = exports.sim_state(handle, statePtr, STATE_LEN);
     return readState(new Float64Array(exports.memory.buffer, statePtr, STATE_LEN), count);
   };
+  const course = readCourse(exports, handle);
   let state = read();
 
   return {
     get state() {
       return state;
     },
+    course,
     step(input) {
       const copy = input.slice();
       records.push(copy);

@@ -256,6 +256,108 @@ function HillCourse({ ruleset }: { ruleset: Ruleset }) {
   );
 }
 
+/**
+ * Bài 4 and bài 6: the figure, drawn from the core's own polylines (`sim_course`). Nothing here
+ * recomputes the QCVN formulas — the picture is the same set of points the scoring walks, so the
+ * line a learner sees and the line that charges DE_VACH are one object.
+ *
+ * The sim's +y is lateral; here it maps to -z, as everywhere else in this file.
+ */
+function FigureCourse({ run }: { run: Run }) {
+  const drawing = useMemo(() => {
+    const asphalt = new THREE.Shape();
+    const belts: { kind: number; points: readonly (readonly [number, number])[] }[] = [];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const record of run.course) {
+      for (const [x, y] of record.points) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      }
+      if (record.kind === 1) belts.push({ kind: 1, points: record.points });
+      else if (record.kind === 2) belts.push({ kind: 2, points: record.points });
+      else if (record.kind === 3) belts.push({ kind: 3, points: record.points });
+    }
+    // The asphalt: the outer limit line's own outline, padded, so the road reads as one surface
+    // without re-deriving the lane from the ruleset.
+    const pad = 1.6;
+    asphalt.moveTo(minX - pad, -(minY - pad));
+    asphalt.lineTo(maxX + pad, -(minY - pad));
+    asphalt.lineTo(maxX + pad, -(maxY + pad));
+    asphalt.lineTo(minX - pad, -(maxY + pad));
+    asphalt.closePath();
+    return { asphalt, belts, minX, maxX, minY, maxY };
+  }, [run.course]);
+
+  return (
+    <group>
+      <mesh position={[(drawing.minX + drawing.maxX) / 2, -0.02, -(drawing.minY + drawing.maxY) / 2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[drawing.maxX - drawing.minX + 8, drawing.maxY - drawing.minY + 8]} />
+        <meshStandardMaterial color="#3b3f45" roughness={1} />
+      </mesh>
+      {drawing.belts.map((belt, i) => (
+        <Polyline
+          key={i}
+          points={belt.points}
+          colour={belt.kind === 2 ? '#8a7a52' : belt.kind === 3 ? '#f0c419' : '#e8e8e8'}
+          width={belt.kind === 2 ? 0.15 : 0.1}
+          y={belt.kind === 2 ? 0.06 : Y}
+        />
+      ))}
+      {run.course
+        .filter((r) => r.kind === 4)
+        .map((gate, i) => (
+          <Polyline key={`gate-${i}`} points={gate.points} colour="#5fd18a" width={0.12} y={Y} />
+        ))}
+    </group>
+  );
+}
+
+/** A painted polyline as a flat ribbon on the road: one geometry for the whole run of points. */
+function Polyline({
+  points,
+  colour,
+  width,
+  y = Y,
+}: {
+  points: readonly (readonly [number, number])[];
+  colour: string;
+  width: number;
+  y?: number;
+}) {
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const half = width / 2;
+    for (let i = 1; i < points.length; i += 1) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const len = Math.hypot(dx, dy) || 1;
+      // Perpendicular in the sim's plane; three's z is -y.
+      const nx = (-dy / len) * half;
+      const ny = (dx / len) * half;
+      const quad = [
+        [x0 + nx, -(y0 + ny)],
+        [x1 + nx, -(y1 + ny)],
+        [x1 - nx, -(y1 - ny)],
+        [x0 - nx, -(y0 - ny)],
+      ];
+      for (const [a, b, c] of [[0, 1, 2], [0, 2, 3]]) {
+        for (const k of [a, b, c]) positions.push(quad[k][0], 0, quad[k][1]);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.computeVertexNormals();
+    return g;
+  }, [points, width]);
+  return (
+    <mesh geometry={geometry} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <meshBasicMaterial color={colour} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
 /** A small tick across the lane used to mark a metre on the course. */
 function SliceMark({ x, z, colour, tall = false }: { x: number; z: number; colour: string; tall?: boolean }) {
   return <Strip x={x} z={z} width={tall ? 0.5 : 0.24} length={tall ? 0.16 : 0.1} colour={colour} />;
@@ -403,7 +505,13 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
       <ambientLight intensity={0.85} />
       <directionalLight position={[8, 14, 6]} intensity={1.6} />
       <ChaseCamera run={run} toWorld={toWorld} />
-      {exercise.lesson === 3 ? <HillCourse ruleset={ruleset} /> : <Course ruleset={ruleset} />}
+      {exercise.lesson === 3 ? (
+        <HillCourse ruleset={ruleset} />
+      ) : exercise.lesson === 4 || exercise.lesson === 6 ? (
+        <FigureCourse run={run} />
+      ) : (
+        <Course ruleset={ruleset} />
+      )}
       <Car run={run} ruleset={ruleset} toWorld={toWorld} />
     </>
   );

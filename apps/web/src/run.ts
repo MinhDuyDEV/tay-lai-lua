@@ -15,7 +15,7 @@ import type { Penalty, Ruleset } from './ruleset.ts';
 import { toPenalty } from './ruleset.ts';
 import type { Exercise } from './exercise.ts';
 import type { StepId } from './steps.ts';
-import type { Session, SimState } from './sim/session.ts';
+import type { CourseRecord, Session, SimState } from './sim/session.ts';
 
 /** One frame may run at most this many ticks; beyond that the run drops time rather than spiral. */
 export const CATCHUP = 6;
@@ -28,6 +28,8 @@ export interface Run {
   readonly driver: Driver;
   /** Last state of the core. */
   readonly state: SimState;
+  /** The figure's painted lines and gates, read once from the core; empty for bài 1 and bài 3. */
+  readonly course: readonly CourseRecord[];
   /** The state one tick earlier, for interpolating the picture between the last two ticks. */
   readonly previous: SimState;
   /** 0..1, how far the last rendered frame sits between `previous` and `state`. */
@@ -69,6 +71,7 @@ export function createRun(options: RunOptions): Run {
   let driver = createDriver();
   let session = options.openSession();
   let state = session.state;
+  let course = session.course;
   let previous = state;
   let alpha = 1;
   let accumulator = 0;
@@ -84,6 +87,7 @@ export function createRun(options: RunOptions): Run {
     driver = createDriver();
     session = options.openSession();
     state = session.state;
+    course = session.course;
     previous = state;
     penalties.length = 0;
     stepsDone.clear();
@@ -154,6 +158,9 @@ export function createRun(options: RunOptions): Run {
     },
     get state() {
       return state;
+    },
+    get course() {
+      return course;
     },
     get previous() {
       return previous;

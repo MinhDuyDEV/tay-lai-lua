@@ -19,7 +19,11 @@ export type StepId =
   | 'free'
   | 'stop'
   | 'start'
-  | 'line';
+  | 'line'
+  // bài 4 / bài 6
+  | 'start-line'
+  | 'vet'
+  | 'finish';
 
 export interface Step {
   id: StepId;
@@ -74,6 +78,21 @@ export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset): 
   // A stop closer to the line than AWAY_M has less road than that to pull away on: the line ends the run.
   if (stopped(state) && state.lineGapM <= Math.max(state.stopGapAM - AWAY_M, 0)) done.add('start');
   if (stopped(state) && state.lineGapM < 0 && !state.disqualified) done.add('line');
+}
+
+/** Bài 4/6 checklist: pass the entry gate, keep the wheels off the painted lines, pass the exit. */
+export const FIGURE_STEPS: readonly Step[] = [
+  { id: 'gear', label: 'Côn + số 1, nhả phanh tay', key: 'Space, 1, P' },
+  { id: 'start-line', label: 'Qua vạch vào hình', key: '↑' },
+  { id: 'line', label: 'Giữ bánh xe trong làn, không đè vạch', key: '← →' },
+  { id: 'finish', label: 'Qua vạch kết thúc', key: '↑' },
+];
+
+export function markFigure(done: Set<StepId>, state: SimState): void {
+  if (state.gear === 1 && state.clutch < 0.1) done.add('gear');
+  if (state.clockS > 0) done.add('start-line');
+  if (state.progressM > 0 && state.contact.every((c) => c === 0)) done.add('line');
+  if (state.phase === 'done' && !state.disqualified) done.add('finish');
 }
 
 /** Seconds left of the 30 s since the stop, or null before the stop. */
