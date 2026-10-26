@@ -35,6 +35,92 @@
     "start_front_bumper_m": -1.0,
     "start_position_assumption": "‘dừng xe trước vạch xuất phát’ không kèm khoảng cách; đặt thanh cản trước cách vạch 1,0 m."
   },
+  "road": {
+    "start_front_bumper_m": -1.0,
+    "lane_width_m": 3.5,
+    "lane_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.7 / tr.5",
+      "quote": "Làn đường trong sân sát hạch có chiều rộng tối thiểu 3,5 m;"
+    },
+    "stop_line_width_m": 0.2,
+    "stop_line_width_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.13.5 / tr.8",
+      "quote": "Các vạch xuất phát, kết thúc và các vạch dừng xe: được sơn màu trắng rộng 0,2 m kéo dài hết lòng đường."
+    },
+    "stop_zone_length_m": 12.0,
+    "max_a_m": 0.5,
+    "max_a": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài 2 — yêu cầu",
+      "quote": "khoảng cách A không quá 500mm"
+    },
+    "end_past_line_m": 1.0,
+    "no_stop_beyond_m": 1.0,
+    "run_end_past_line_m": 20.0,
+    "crosswalk_offset_m": 1.0,
+    "crosswalk_width_m": 3.0,
+    "crosswalk_stripe_width_m": 0.5,
+    "crosswalk_stripe_gap_m": 0.4,
+    "crosswalk_stripe_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.13.5 / tr.8",
+      "quote": "Vạch giả định dành cho người đi bộ qua đường: được sơn màu trắng có chiều dài 0,5 m, rộng 0,2 m, cách nhau 0,4 m."
+    },
+    "crosswalk_width_source": {
+      "doc": "QCVN 41:2024/TT-BGTVT",
+      "loc": "Phụ lục G, mục G2.5 — vạch 7.3",
+      "quote": "Chiều rộng nhỏ nhất dành cho bố trí vạch đi bộ qua đường không được nhỏ hơn 3 m"
+    },
+    "rail_offset_m": 5.0,
+    "rail_offset_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.10 / tr.15",
+      "quote": "cách ray ngoài cùng của đường sắt tối thiểu 5,0 m kẻ vạch “Vạch dừng xe”"
+    },
+    "rail_gauge_m": 1.0,
+    "rail_gauge_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "qcvn-15-2026-hinh-ve.md, Hình 5",
+      "quote": "1 m giữa hai ray; 2 m tới vạch dừng"
+    },
+    "rail_width_m": 0.1,
+    "rail_width_source": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.13.5 / tr.9",
+      "quote": "Hai thanh ray và các thanh tà vẹt đường sắt tạo tình huống giả định: được làm bằng chất liệu sơn màu trắng có chiều rộng 0,1 m."
+    },
+    "finish_offset_m": 20.0,
+    "end_zone_m": 2.0,
+    "signal_tick": 120
+  },
+  "junction": {
+    "approach_length_m": 14.0,
+    "stop_zone_length_m": 12.0,
+    "max_a_m": 0.5,
+    "max_a_source": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài 5 — cột “Các bước”",
+      "quote": "khoảng cách A không quá 500mm"
+    },
+    "a_reading_note": "Cột “Yêu cầu” của cùng bài ghi “Dừng xe cách vạch dừng quy định không quá 1000mm”, cột “Các bước” ghi 500 mm. Chọn 500 mm để luyện an toàn, đúng đề xuất ở docs/legal/tt-108-2026-phu-luc-iii-oto.md mục ‘Mâu thuẫn và chưa rõ’ số 2 và docs/architecture.md §14 #2. Đọc 1000 mm là đổi đúng một số ở đây.",
+    "end_past_line_m": 1.0,
+    "no_stop_beyond_m": 1.0,
+    "crosswalk_offset_m": 1.0,
+    "crosswalk_width_m": 3.0,
+    "junction_depth_m": 4.0,
+    "extent_m": 30.0,
+    "arc_radius_m": 0.0,
+    "red_ticks": 900,
+    "green_ticks": 1560,
+    "yellow_ticks": 180,
+    "light_source": {
+      "doc": "QCVN 41:2024/TT-BGTVT",
+      "loc": "Phụ lục A, mục A.1 — các dạng đèn",
+      "quote": "Dạng 1 (3 đèn tròn xanh–vàng–đỏ, có kiểu bổ sung mũi tên)"
+    }
+  },
   "measure_point": {
     "what": "front_bumper_centre",
     "assumption": "‘05 mét sau vạch xuất phát’ không nói đo từ điểm nào. Chọn hình chiếu thanh cản trước (tim xe) — cùng quy ước với bài 2, nơi văn bản nói rõ ‘hình chiếu thanh cản phía trước’. Chủ dự án chọn tạm ngày 2026-10-25, chờ trung tâm sát hạch xác nhận.",
@@ -536,6 +622,247 @@
         "loc": "Phụ lục III, B.2.2.4 — Các lỗi lặp lại ở hầu hết các bài, bảng lỗi",
         "quote": "Lái xe lên vỉa hè bị đình chỉ sát hạch."
       }
+    },
+    {
+      "id": "SH.02.KHONG_DUNG",
+      "code": 24,
+      "exercise": "sa_hinh.dung_xe_nhuong_duong_nguoi_di_bo",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 2 — Dừng xe nhường đường cho người đi bộ, bảng lỗi",
+        "quote": "Không dừng xe ở vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.02.CHUA_DEN_VACH",
+      "code": 25,
+      "exercise": "sa_hinh.dung_xe_nhuong_duong_nguoi_di_bo",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 2 — Dừng xe nhường đường cho người đi bộ, bảng lỗi",
+        "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.02.QUA_VACH",
+      "code": 26,
+      "exercise": "sa_hinh.dung_xe_nhuong_duong_nguoi_di_bo",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 2 — Dừng xe nhường đường cho người đi bộ, bảng lỗi",
+        "quote": "Dừng xe quá vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.DS.KHONG_DUNG",
+      "code": 27,
+      "exercise": "sa_hinh.tam_dung_duong_sat",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài tạm dừng ở chỗ có đường sắt chạy qua (B: bài 9), bảng lỗi",
+        "quote": "Không dừng xe ở vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.DS.CHUA_DEN_VACH",
+      "code": 28,
+      "exercise": "sa_hinh.tam_dung_duong_sat",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài tạm dừng ở chỗ có đường sắt chạy qua (B: bài 9), bảng lỗi",
+        "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.DS.QUA_VACH",
+      "code": 29,
+      "exercise": "sa_hinh.tam_dung_duong_sat",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài tạm dừng ở chỗ có đường sắt chạy qua (B: bài 9), bảng lỗi",
+        "quote": "Dừng xe quá vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.KT.KHONG_QUA_VACH",
+      "code": 30,
+      "exercise": "sa_hinh.ket_thuc",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài kết thúc (B: bài 11), bảng lỗi",
+        "quote": "Không qua vạch kết thúc, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.KT.KHONG_XI_NHAN_PHAI",
+      "code": 31,
+      "exercise": "sa_hinh.ket_thuc",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài kết thúc (B: bài 11), bảng lỗi",
+        "quote": "Khi xe qua vạch kết thúc: a) Không bật đèn xi nhan phải, trừ 05 điểm"
+      }
+    },
+    {
+      "id": "SH.05.VUOT_DEN_DO",
+      "code": 32,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 10
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Vi phạm tín hiệu đèn điều khiển giao thông (đi qua ngã tư khi đèn tín hiệu màu đỏ), trừ 10 điểm."
+      }
+    },
+    {
+      "id": "SH.05.QUA_VACH",
+      "code": 33,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Dừng xe quá vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.05.CHUA_DEN_VACH",
+      "code": 34,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Dừng xe chưa đến vạch dừng quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.05.KHONG_XI_NHAN",
+      "code": 35,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Không bật đèn xi nhan khi rẽ trái hoặc rẽ phải, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.05.QUA_20S",
+      "code": 36,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {
+        "seconds": 20.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Quá 20 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.05.QUA_30S",
+      "code": 37,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {
+        "seconds": 30.0
+      },
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Quá 30 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.05.SAI_VACH_KE",
+      "code": 38,
+      "exercise": "sa_hinh.qua_nga_tu_co_tin_hieu",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
+        "quote": "Lái xe vi phạm vạch kẻ đường để thiết bị báo không thực hiện đúng trình tự bài sát hạch, bị đình chỉ sát hạch."
+      }
     }
   ],
   "assumptions": [
@@ -731,6 +1058,117 @@
       "value": "Rqv = 4,841 m for this car, against the legal minimum of 4,9 m for an exam car: 59 mm tighter turning, so the figures are marginally easier than they would be with a real car",
       "why": "Mô hình có Rqv = 4,841 m (bánh trước ngoài, mép vệt lốp) còn văn bản chỉ cho xe sát hạch ‘từ 4,9 m trở lên’. Chênh 0,059 m, tức xe mô phỏng quay vòng hơi chặt hơn xe thật mức tối thiểu, nên Rn = Rqv + 1,2 nhỏ hơn một chút và hình dễ hơn thật một chút. Đây là hướng sai đã biết và có tên, không phải số bịa: đổi max_steer_rad hoặc track_m là hình đổi theo. Nếu cần hình khó đúng bằng xe thật thì thay Rqv bằng 4,9 m, và khi đó bài 6 phải qua lại được — biên hiện tại còn dư (bài 6: 0,268 m; bài 4: 0,349 m).",
       "quote": "bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên"
+    },
+    {
+      "field": "exercise_from_the_seed",
+      "value": "exercise id = seed bits 56..63: 0/1 bài 1, 2 bài 2, 3 bài 3, 4 bài 4, 5 bài 5, 6 bài 6, 9 bài 9, 11 bài 11; bits 0..55 are the seed proper. Any other id is refused.",
+      "why": "Văn bản không nói gì về cách chọn bài. Một seed phải dựng lại được đúng bài đã chạy, nên bài được chọn bằng một byte của seed chứ không bằng đồng hồ hay ngẫu nhiên. Bài 5 lấy thêm pha đèn từ chính 56 bit thấp đó, rút gọn theo độ dài chu kỳ, nên cùng một trace luôn gặp đèn y như nhau, còn các lần chạy khác nhau thì gặp đèn đỏ, xanh hay vàng khác nhau.",
+      "quote": "người điều khiển phương tiện tham gia giao thông đường bộ phải giảm tốc độ hoặc dừng lại nhường đường cho người đi bộ"
+    },
+    {
+      "field": "road_exercise_scene",
+      "value": "bài 2, 5, 9, 11 run on one straight-road scene: a 3,5 m lane, the car 1,0 m short of the stop line at the start, engine idling, neutral, handbrake on, scored from tick 1 (no start order, exactly like bài 3, 4 and 6). Every position-like number comes from course.road / course.junction.",
+      "why": "Văn bản chỉ cho ‘khoảng cách A’ và thời gian, không cho mặt bằng. Làn 3,5 m là bề rộng làn trong sân tối thiểu ở mục 2.1.7, giống bài 1. Các bài này không có lệnh xuất phát: lệnh thuộc bài 1 (“chờ hiệu lệnh”), còn bài 2, 5, 9 là bài nối tiếp, nên chấm điểm từ bước đầu như bài 3."
+    },
+    {
+      "field": "stop_detector",
+      "value": "one detector for bài 2, 3, 5, 9. It returns withinA / short / past / neverStopped for the first stop after the car has moved; each exercise maps the verdict to its own codes. bài 3 calls the same code with the same numbers, so its eight golden hashes do not move.",
+      "why": "‘Dừng xe’ không được định nghĩa trong văn bản, mà bài 2, 3, 5 và 9 đều hỏi cùng một câu: xe có dừng đúng vạch không. Một bộ dò chung thì bốn bài không thể lệch nhau về định nghĩa ‘đã dừng’. Khác nhau chỉ ở mã lỗi, và ở chỗ bài 5 chỉ tính khi dừng trên đèn đỏ hoặc vàng.",
+      "quote": "Dừng xe để khoảng cách từ hình chiếu thanh cản phía trước của xe xuống mặt đường đến vạch dừng (khoảng cách A) không quá 500mm."
+    },
+    {
+      "field": "stop_zone",
+      "value": "the stop zone of bài 2, 5 and 9 is the last 12,0 m before the stop line; a stop before the zone is not an act of the exercise and is charged nothing. Bài 3 keeps its own zone (hill.foot_x_m upward).",
+      "why": "Văn bản chỉ nói ‘dừng ở vạch dừng quy định’ mà không nói xe được dừng sớm bao xa. Không có vùng thì một cú dừng chờ ở đầu đường cũng bị chấm là ‘dừng chưa đến vạch’. 12 m là quãng đủ để một xe đang bò 1,4 m/s dừng lại, và là con số duy nhất phải chỉnh nếu trung tâm sát hạch cho biết vùng cảm biến thật.",
+      "quote": "Không dừng xe ở vạch dừng quy định, trừ 05 điểm."
+    },
+    {
+      "field": "khong_dung_window",
+      "value": "bài 2 and bài 9: KHONG_DUNG is charged when the bumper passes the stop line + 1,0 m after the car has moved, with no stop recorded in the zone. 1,0 m is the same number bài 3 uses (hill.no_stop_beyond_m).",
+      "why": "‘Không dừng xe ở vạch dừng quy định’ không có ngưỡng. Dùng đúng 1,0 m mà bài 3 dùng để ‘không dừng’ nghĩa giống nhau ở cả ba bài, và để một xe đi qua vạch mà không dừng không bị tính hai lần cùng một lúc với ‘dừng quá vạch’.",
+      "quote": "Không dừng xe ở vạch dừng quy định, trừ 05 điểm."
+    },
+    {
+      "field": "road_run_is_done",
+      "value": "bài 2 and bài 9: Done when the bumper is end_past_line_m = 1,0 m past the stop line after a stop (or after KHONG_DUNG). Bài 11: Done when the car stops after crossing the finish line. Bài 5: Done when the bumper crosses the end line (vạch kết thúc ngã tư).",
+      "why": "Văn bản không nói bài kết thúc ở đâu. Bài 2 và bài 9 là ‘dừng rồi đi tiếp’, nên mốc 1,0 m sau vạch là cùng con số bài 3 dùng cho ‘đã qua vạch’, giữ một thước cho cả ba bài. Bài 11: ‘Lái xe qua vạch kết thúc và dừng xe.’"
+    },
+    {
+      "field": "bai_2_layout",
+      "value": "bài 2: stop line across the lane, then the crosswalk 1,0 m past it: 3,0 m deep, zebra stripes 0,5 m wide with 0,4 m gaps across the 3,5 m lane. Nothing on the crosswalk moves.",
+      "why": "Hình 8 chỉ nói ‘vạch dừng nằm ngay trước dải vạch người đi bộ (8 vạch)’ mà không ghi kích thước (xem qcvn-15-2026-hinh-ve.md, Hình 7, 8, 11: ‘không ghi kích thước. Vị trí vạch phải tra theo QCVN về báo hiệu đường bộ’). Lấy 1,0 m khoảng hở sau vạch dừng làm quãng xe đứng chờ không đè lên vạch người đi bộ, và lấy quy cách vạch đi bộ giả định 0,5 × 0,2 m bước 0,4 m của mục 2.1.13.5 vì đó là quy cách duy nhất văn bản cho cho vạch đi bộ trong sân.",
+      "quote": "Vạch dừng nằm ngay trước dải vạch người đi bộ (8 vạch)"
+    },
+    {
+      "field": "bai_9_layout",
+      "value": "bài 9: the stop line, then the outermost rail 5,0 m past it, two rails 1,0 m apart, each painted 0,1 m wide, crossing the lane square.",
+      "why": "Văn bản: ‘cách ray ngoài cùng của đường sắt tối thiểu 5,0 m kẻ vạch “Vạch dừng xe”’. Lấy đúng mức tối thiểu 5,0 m, đo từ vạch tới ray gần nhất. Khổ ray 1,0 m và bề rộng ray 0,1 m lấy theo Hình 5 và mục 2.1.13.5.",
+      "quote": "Trên mặt đường bố trí 02 thanh ray đường sắt, tạo tình huống giả định có đường bộ giao nhau với đường sắt không có rào chắn, không có người điều khiển giao thông; cách ray ngoài cùng của đường sắt tối thiểu 5,0 m kẻ vạch “Vạch dừng xe”"
+    },
+    {
+      "field": "bai_11_layout",
+      "value": "bài 11: a straight lane and the finish line (vạch kết thúc) 20,0 m past the stop line; the exercise ends when the car stops after crossing it.",
+      "why": "Bài cuối của sa hình chỉ có ‘vạch kết thúc’ (Hình 7), không có kích thước. 20 m là quãng đủ để tăng lên số 2 rồi dừng lại sau vạch, và là một số của ruleset chứ không phải của code.",
+      "quote": "Trên mặt đường kẻ một vạch ngang vuông góc với trục dọc của đường theo quy cách “Vạch dừng xe”, phía trước vạch có kẻ chữ: “XUẤT PHÁT” hoặc “KẾT THÚC”."
+    },
+    {
+      "field": "ket_thuc_stop_rule",
+      "value": "bài 11: KHONG_XI_NHAN_PHAI fires once, on the tick the bumper crosses the finish line, if the right signal is off on that tick. KHONG_QUA_VACH (đình chỉ) fires once the engine is on and the car has come to a stop after having moved, short of the finish line; a stall is not a stop.",
+      "why": "‘Khi xe qua vạch kết thúc: a) Không bật đèn xi nhan phải’ chấm đúng lúc qua vạch, nên chỉ đọc tín hiệu ở bước thanh cản qua vạch, một lần. ‘Không qua vạch kết thúc, bị đình chỉ sát hạch’ là một hành vi dừng hẳn lại trước vạch; một lần chết máy không phải là dừng xe, nên đòi hỏi máy còn nổ.",
+      "quote": "Khi xe qua vạch kết thúc: a) Không bật đèn xi nhan phải, trừ 05 điểm"
+    },
+    {
+      "field": "bai_5_layout",
+      "value": "bài 5, right turn only: straight approach 14,0 m, stop line, crosswalk 1,0 m past the line and 3,0 m deep, then the junction. The right-turn arc leaves the approach lane at the stop line + 1,0 m and is followed by the exit lane, whose end line (vạch kết thúc ngã tư) is the end of the exercise. The route is a figure on the same `course` module as bài 4 and bài 6, so the lane lines and the wheel contact model are the same code.",
+      "why": "Hình 11 không ghi một kích thước nào (‘Hình 7, 8, 11 không ghi kích thước’). Ba mươi mét bề rộng nút giao và bốn mét chiều sâu của nó chỉ để vẽ. Cung rẽ phải tự tính: 1,5 × bán kính quay vòng nhỏ nhất của chính xe mô phỏng, làm tròn xuống từng cm — cùng quy tắc với đường vòng vuông góc của bài 4, nên cung luôn nằm trong khả năng lái của xe.",
+      "quote": "Tại nơi giao nhau giữa hai đường hai chiều cùng cấp, lắp hệ thống đèn tín hiệu giao thông"
+    },
+    {
+      "field": "bai_5_sai_vach_ke",
+      "value": "bài 5: SH.05.SAI_VACH_KE (đình chỉ) fires when any of the four wheel patches touches the route's boundary line. The lane is 3,5 m wide, so the painted limit line either side of the centreline is reachable only by leaving the lane.",
+      "why": "Văn bản không nói ‘vi phạm vạch kẻ đường’ là vạch nào. Chọn vạch giới hạn của hình, và chấm theo vùng tiếp xúc bánh xe như bài 4 và bài 6 chấm DE_VACH, để cùng một hành vi không bị hai cách đo khác nhau ở hai bài. Chỉ có vạch giới hạn của tuyến; vạch dừng, vạch người đi bộ và vạch kết thúc là vạch của bài, không phải vạch giới hạn.",
+      "quote": "Lái xe vi phạm vạch kẻ đường để thiết bị báo không thực hiện đúng trình tự bài sát hạch, bị đình chỉ sát hạch."
+    },
+    {
+      "field": "bai_5_signal",
+      "value": "bài 5: SH.05.KHONG_XI_NHAN fires once, on the tick the bumper reaches the start of the right-turn arc, if the right signal is off on that tick.",
+      "why": "‘Không bật đèn xi nhan khi rẽ trái hoặc rẽ phải’ không nói đọc tín hiệu ở đâu. Đọc đúng lúc xe bắt đầu rẽ, một lần — đầu cung rẽ phải — giống cách bài 1 đọc xi nhan trái ở bước xe bắt đầu chuyển bánh.",
+      "quote": "Không bật đèn xi nhan khi rẽ trái hoặc rẽ phải, trừ 05 điểm"
+    },
+    {
+      "field": "bai_5_stop_verdict",
+      "value": "bài 5: the stop verdict (QUA_VACH / CHUA_DEN_VACH, A <= 500 mm) is charged only for a stop made on red or yellow, and only inside the stop zone before the line. Stopping 0–4 m past the line on red is QUA_VACH only, never VUOT_DEN_DO as well.",
+      "why": "Văn bản chỉ nói ‘Đèn tín hiệu màu đỏ phải dừng lại’ và cho hai lỗi dừng sai vạch, nên chỉ cú dừng vì đèn mới là cú dừng của bài. Một cú dừng giữa đường xanh không phải lỗi của bài này, và không có dòng lỗi nào để chấm nó.",
+      "quote": "Đèn tín hiệu màu đỏ phải dừng lại; Đèn tín hiệu màu xanh hoặc vàng được phép đi. Đèn tín hiệu màu vàng nếu đã đi quá vạch dừng thì được phép đi, nếu chưa đến vạch dừng phải dừng lại."
+    },
+    {
+      "field": "bai_5_vuot_den_do",
+      "value": "bài 5: SH.05.VUOT_DEN_DO (−10) fires once, when the bumper enters the junction (stop line + 4,0 m) while the light is red, or while it is yellow and that yellow began when the bumper was still short of the stop line. A yellow that began at or after the line is allowed through.",
+      "why": "Văn bản: ‘đi qua ngã tư khi đèn tín hiệu màu đỏ’ và ‘Đèn tín hiệu màu vàng nếu đã đi quá vạch dừng thì được phép đi, nếu chưa đến vạch dừng phải dừng lại’. Nên chỗ đo là lúc xe vào hẳn nút giao, và màu vàng được xét theo chỗ xe đứng lúc đèn vàng bật — đúng câu của văn bản. Bốn mét là chiều sâu nút giao của tuyến (course.junction.junction_depth_m).",
+      "quote": "Vi phạm tín hiệu đèn điều khiển giao thông (đi qua ngã tư khi đèn tín hiệu màu đỏ), trừ 10 điểm."
+    },
+    {
+      "field": "bai_5_light_cycle",
+      "value": "bài 5: one deterministic light cycle in ticks — red 15 s, green 26 s, yellow 3 s, repeating (900 / 1560 / 180 ticks at 1/60 s), all from course.junction. The cycle clock starts on the car's first movement, not at tick 0. The phase offset is the low 56 seed bits reduced modulo the cycle, so the same trace always meets the same light and different attempts meet red, green or yellow.",
+      "why": "QCVN 41 không quy định chu kỳ đèn; thời gian đèn vàng là câu hỏi mở số 8 của docs/architecture.md, nên nó là một số của ruleset để chỉnh được. Đồng hồ đèn chạy từ lúc xe chuyển bánh để một người học đề máy lâu không bị đèn đỏ ‘ăn’ mất phần lớn chu kỳ trước khi họ kịp tới vạch. Đèn là phần tử duy nhất của bài phụ thuộc thời gian, nên nó chỉ được là một hàm của số bước đã đi — băm lại được, phát lại được.",
+      "quote": "Đèn tín hiệu màu đỏ phải dừng lại; Đèn tín hiệu màu xanh hoặc vàng được phép đi."
+    },
+    {
+      "field": "bai_5_clock_20_30",
+      "value": "bài 5: the 20 s / 30 s clock starts at the later of two events — the onset of the first green at or after the car's arrival in the stop zone (or the green already running when it arrives), and the tick the bumper enters the stop zone. It stops when the bumper passes the end line. QUA_20S and QUA_30S are charged off that clock; 30 s is the disqualification, so only the later charge matters.",
+      "why": "Văn bản: ‘Quá 20 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư’. Đọc theo nghĩa đen thì người tới muộn trong một đèn xanh dài đã bị trừ điểm cho phần đèn xanh trôi qua trước khi họ tới — không phải điều văn bản muốn nói. Nên đồng hồ đếm từ đèn xanh mà người học thực sự có, và không sớm hơn lúc họ vào bài. Đây là cách đọc của chúng tôi: phần mềm của sân thật không kiểm chứng được, và nó có thể ‘nạp’ đồng hồ ngay khi xe vào vùng cảm biến.",
+      "quote": "Quá 20 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư, trừ 05 điểm."
+    },
+    {
+      "field": "bai_5_a_note",
+      "value": "bài 5: A = 500 mm, the reading of the “Các bước” column. The same bài's “Yêu cầu” column says 1000 mm; that column is quoted on the row that shows it and the note about the contradiction is carried in course.junction.a_reading_note, so the page can show it to the learner.",
+      "why": "Hai cột của cùng một bài nói khác nhau, và bản Công báo cũng in như vậy — đây là nội dung của văn bản gốc, không phải lỗi chép (docs/legal/tt-108-2026-phu-luc-iii-oto.md, ‘Mâu thuẫn và chưa rõ’ số 2). Đề xuất trong tài liệu luật là dùng 500 mm để luyện an toàn và hiện chú thích.",
+      "quote": "Dừng xe cách vạch dừng quy định không quá **1000mm**"
+    },
+    {
+      "field": "latch_width",
+      "value": "the per-rule latch is u64 inside the core. The hash of bài 1, 3, 4, 6 writes the same 32 bits it always wrote (the low half), and only the new exercises' own hash block covers the high half.",
+      "why": "Mỗi dòng luật một bit: 23 dòng hôm nay, 38 sau khi thêm bài 2, 5, 9, 11, nên u32 không còn chỗ. Băm vẫn phải giữ nguyên 32 bit cũ cho các bài đã có hash vàng, nếu không hash của các bài cũ sẽ đổi vì một lý do không liên quan gì tới chúng."
     }
   ]
 }

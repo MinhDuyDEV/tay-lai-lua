@@ -681,7 +681,7 @@ mod tests {
 
         let snap = s.snapshot();
         let v = s.view();
-        assert_eq!(snap.len(), 46, "the snapshot is the 46 documented values");
+        assert_eq!(snap.len(), crate::SNAPSHOT_LEN, "the snapshot is the documented values");
         assert_eq!(snap[0], f64::from(v.tick));
         assert_eq!(
             snap[1],

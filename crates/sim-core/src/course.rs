@@ -38,6 +38,24 @@ pub enum Figure {
     Vet,
     /// Bài 6 — qua đường vòng quanh co.
     Curve,
+    /// Bài 2 — a straight lane with the stop line and the crosswalk.
+    Crosswalk,
+    /// Bài 9 — a straight lane with the stop line and the two rails.
+    Rail,
+    /// Bài 11 — a straight lane with the finish line.
+    Finish,
+    /// Bài 5 — the right-turn route through the signalled junction.
+    Junction,
+}
+
+/// A transverse marking: a painted band across the lane, or (for a crosswalk stripe) along it.
+/// `sim_course` writes one `[kind = 6, line_id, 2, ax, ay, bx, by]` record per mark.
+#[derive(Clone, Copy, Debug)]
+pub struct Mark {
+    /// 1 stop line | 2 finish/end line | 3 crosswalk stripe | 4 rail.
+    pub line_id: u8,
+    pub a: (f64, f64),
+    pub b: (f64, f64),
 }
 
 /// One straight piece of a polyline, in the frame of the car's `x_m`/`y_m`.
@@ -119,6 +137,14 @@ pub struct Course {
     centre_cum: Vec<f64>,
     pub lines: Vec<Line>,
     pub gates: Vec<GateLine>,
+    /// Transverse markings: the stop line, the crosswalk stripes, the rails, the finish line. Not
+    /// part of the contact model — they are the picture of the exercise, not its boundaries.
+    pub marks: Vec<Mark>,
+    /// Where the exercise's signal head stands, if it has one (bài 2, bài 5, bài 9).
+    pub signal: Option<(f64, f64)>,
+    /// Bài 5: metres along the approach axis where the right-turn arc begins. The turn signal is
+    /// judged when the bumper reaches it.
+    pub arc_start_m: Option<f64>,
     /// Named parts of the figure as `[from_m, to_m)` in progress. The snapshot reports the index.
     pub parts: Vec<(f64, f64)>,
     pub length_m: f64,
@@ -185,6 +211,8 @@ impl Course {
         match figure {
             Figure::Vet => vet_figure(rs),
             Figure::Curve => curve_figure(rs),
+            Figure::Crosswalk | Figure::Rail | Figure::Finish => road_figure(rs, figure),
+            Figure::Junction => junction_figure(rs),
         }
     }
 
@@ -308,6 +336,32 @@ impl Course {
             push(4.0, gate.kind as u8 as f64, &[gate.a, gate.b]);
         }
         push(5.0, 0.0, &self.centre);
+        // Additions for the road exercises, appended so the four older goldens' blocks keep the
+        // records they always had, in the order they always had.
+        for m in &self.marks {
+            push(6.0, f64::from(m.line_id), &[m.a, m.b]);
+        }
+        if let Some(p) = self.signal {
+            push(7.0, 0.0, &[p]);
+        }
+    }
+
+    /// Whether any wheel's contact patch reaches a limit line (kind 1) of the figure. This is what
+    /// bài 5's SAI_VACH_KE is judged on: the same patch test bài 4 and bài 6 charge DE_VACH with,
+    /// restricted to the route's own boundary lines.
+    pub fn boundary_touch(&self, rs: &Ruleset, x: f64, y: f64, heading: f64) -> bool {
+        let mut boundary = 0u64;
+        for (i, line) in self.lines.iter().enumerate() {
+            if line.kind == 1 {
+                boundary |= 1u64 << i;
+            }
+        }
+        for w in self.wheel_centres(rs, x, y, heading) {
+            if self.contact(rs, w, heading).mask & boundary != 0 {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -511,6 +565,9 @@ fn course_from(rs: &Ruleset, figure: Figure, centre: Vec<(f64, f64)>, lines: Vec
         centre_cum,
         lines,
         gates,
+        marks: Vec::new(),
+        signal: None,
+        arc_start_m: None,
         parts,
         length_m,
         half_lane_m: extra.half_lane_m,
@@ -692,6 +749,236 @@ fn vet_figure(rs: &Ruleset) -> Option<Course> {
 
 fn centre_length_of(centre: &[(f64, f64)]) -> f64 {
     segments_of(centre).1
+}
+
+// ---------------------------------------------------------------------------------------------
+// The straight-road scene of bài 2, 9 and 11, and bài 5's junction route.
+//
+// These are figures like the two above — one centreline, its limit lines, a few markings — so the
+// lane drawing and the wheel contact model are reused rather than reinvented. The difference from
+// bài 4 and bài 6 is what the exercise asks: nothing here is about touching a line (except bài 5's
+// SAI_VACH_KE), so the markings are records to draw, not boundaries to score against.
+// ---------------------------------------------------------------------------------------------
+
+/// A band across the lane, centred on `x`, `width_m` deep, `reach` metres either side of the
+/// centreline.
+fn across(a: (f64, f64), b: (f64, f64), x: f64, width_m: f64, reach: f64, line_id: u8) -> Vec<Mark> {
+    let (dx, dy) = ((b.0 - a.0), (b.1 - a.1));
+    let len = sqrt(dx * dx + dy * dy);
+    if len == 0.0 {
+        return Vec::new();
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (nx, ny) = (-uy, ux);
+    let p = (a.0 + ux * x, a.1 + uy * x);
+    let half = 0.5 * width_m;
+    let (p0, p1) = ((p.0 - ux * half, p.1 - uy * half), (p.0 + ux * half, p.1 + uy * half));
+    vec![Mark {
+        line_id,
+        a: (p0.0 - nx * reach, p0.1 - ny * reach),
+        b: (p1.0 + nx * reach, p1.1 + ny * reach),
+    }]
+}
+
+/// A zebra crossing at `x` past the scene origin: stripes run across the lane, the crossing itself
+/// is `width_m` deep along it.
+fn crosswalk(
+    a: (f64, f64),
+    b: (f64, f64),
+    x: f64,
+    width_m: f64,
+    stripe_m: f64,
+    gap_m: f64,
+    road: &crate::rules::Road,
+) -> Vec<Mark> {
+    let (dx, dy) = ((b.0 - a.0), (b.1 - a.1));
+    let len = sqrt(dx * dx + dy * dy);
+    if len == 0.0 {
+        return Vec::new();
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (nx, ny) = (-uy, ux);
+    let p = (a.0 + ux * x, a.1 + uy * x);
+    let half_w = 0.5 * road.lane_width_m;
+    let mut out = Vec::new();
+    let mut across_m = -half_w;
+    while across_m + stripe_m <= half_w + 1e-9 {
+        let (q0, q1) = (across_m, across_m + stripe_m);
+        out.push(Mark {
+            line_id: 3,
+            a: (p.0 + nx * q0 - ux * 0.5 * width_m, p.1 + ny * q0 - uy * 0.5 * width_m),
+            b: (p.0 + nx * q1 + ux * 0.5 * width_m, p.1 + ny * q1 + uy * 0.5 * width_m),
+        });
+        across_m += stripe_m + gap_m;
+    }
+    out
+}
+
+/// Bài 2, bài 9 and bài 11: one straight lane, the stop line at 0, and one thing past it.
+///
+/// The car starts on the lane's centreline, pointing along it. The second gate of the figure is the
+/// exercise's own end line, so `sim_course` can draw where the run stops.
+fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
+    let r = &rs.road;
+    let sh = &rs.sa_hinh;
+    let half = 0.5 * r.lane_width_m;
+    let half_line = 0.5 * r.stop_line_width_m;
+    // The scene runs from the start to past the last marking, so nothing is drawn off it.
+    let end_m = match figure {
+        Figure::Crosswalk => r.crosswalk_m() + r.crosswalk_width_m + r.run_end_past_line_m,
+        Figure::Rail => r.rail_m() + r.rail_gauge_m + r.rail_offset_m,
+        _ => r.finish_m() + r.run_end_past_line_m,
+    };
+
+    let mut p = Path::new((0.0, 0.0));
+    p.line_to((end_m, 0.0));
+    let centre = p.points;
+
+    let mut lines = vec![
+        painted(1, 0.5 * sh.line_width_m, vec![(0.0, half), (end_m, half)]),
+        painted(1, 0.5 * sh.line_width_m, vec![(0.0, -half), (end_m, -half)]),
+    ];
+    lines.extend(curbs(&centre, half, sh));
+
+    let mut marks = Vec::new();
+    let a = (0.0, 0.0);
+    let b = (end_m, 0.0);
+    marks.extend(across(a, b, r.stop_line_m(), r.stop_line_width_m, half, 1));
+    let mut signal = None;
+    match figure {
+        Figure::Crosswalk => {
+            marks.extend(crosswalk(
+                a,
+                b,
+                r.crosswalk_m(),
+                r.crosswalk_width_m,
+                r.crosswalk_stripe_width_m,
+                r.crosswalk_stripe_gap_m,
+                r,
+            ));
+            // The sign leans over the right-hand limit line, as on Hình 8.
+            signal = Some((r.crosswalk_m(), -half - 0.5));
+        }
+        Figure::Rail => {
+            let rail0 = r.rail_m();
+            for k in 0..2 {
+                let x = rail0 + f64::from(k) * r.rail_gauge_m;
+                marks.extend(across(a, b, x, r.rail_width_m, half, 4));
+            }
+            signal = Some((rail0, -half - 0.5));
+        }
+        _ => {}
+    }
+    if figure == Figure::Finish {
+        marks.extend(across(a, b, r.finish_m(), r.stop_line_width_m, half, 2));
+    }
+
+    let mut built = course_from(
+        rs,
+        figure,
+        centre,
+        lines,
+        Vec::new(),
+        Vec::new(),
+        None,
+        StartPose {
+            x: 0.0,
+            y: 0.0,
+            heading: 0.0,
+            half_lane_m: half,
+            entry_m: 0.0,
+            exit_m: end_m,
+        },
+    );
+    built.marks = marks;
+    built.signal = signal;
+    let _ = half_line;
+    Some(built)
+}
+
+/// Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông (Hình 11), right turn only.
+///
+/// Straight approach, stop line, crosswalk, then the turn: a quarter arc to the right out of the
+/// approach lane, followed by the exit lane. The arc's radius comes from the car's own tightest
+/// turn (`SaHinh::corner_radius_m`, the same rule as bài 4's bends), so the route is always
+/// drivable; `course.junction.arc_radius_m` overrides it when a real yard's radius is known.
+fn junction_figure(rs: &Ruleset) -> Option<Course> {
+    let j = &rs.junction;
+    let r = &rs.road;
+    let v = &rs.vehicle;
+    let sh = &rs.sa_hinh;
+    let half = 0.5 * r.lane_width_m;
+    let half_line = 0.5 * sh.line_width_m;
+    let line_x = j.stop_line_m();
+    // The arc leaves the approach lane where the crosswalk ends, so a car stopped at the line is
+    // never already turning.
+    let arc_x = line_x + j.crosswalk_offset_m + j.crosswalk_width_m;
+    let radius = if j.arc_radius_m > 0.0 {
+        j.arc_radius_m
+    } else {
+        sh.corner_radius_m(v, 2.0 * (j.extent_m - half))
+    };
+    let c = (arc_x, -radius);
+    let exit_y = -radius;
+    let exit_end = arc_x + radius + j.extent_m;
+    let half_pi = 0.5 * core::f64::consts::PI;
+
+    let mut p = Path::new((0.0, 0.0));
+    p.line_to((arc_x, 0.0));
+    p.arc(c, radius, half_pi, -half_pi, sh.max_segment_m);
+    p.line_to((exit_end, exit_y));
+    let centre = p.points;
+
+    let mut lines = vec![
+        painted(1, half_line, offset_path(&centre, half)),
+        painted(1, half_line, offset_path(&centre, -half)),
+    ];
+    lines.extend(curbs(&centre, half, sh));
+
+    // The junction's other three arms, so the picture reads as a crossroads and not a bend: the
+    // opposite approach lane ends at the far side of the junction, and the left/right arms run
+    // across it. They are boundary lines like the route's own, so a wheel on them is SAI_VACH_KE.
+    let far = -(j.junction_depth_m + r.lane_width_m);
+    lines.push(painted(1, half_line, vec![(line_x, far), (arc_x + j.extent_m, far)]));
+    lines.push(painted(1, half_line, vec![(line_x, far + r.lane_width_m), (arc_x + j.extent_m, far + r.lane_width_m)]));
+    lines.push(painted(1, half_line, vec![(-j.extent_m, far), (-j.extent_m, far + r.lane_width_m)]));
+
+    let mut marks: Vec<Mark> = Vec::new();
+    marks.extend(across((0.0, 0.0), (arc_x, 0.0), line_x, r.stop_line_width_m, half, 1));
+    marks.extend(crosswalk(
+        (0.0, 0.0),
+        (arc_x, 0.0),
+        line_x + j.crosswalk_offset_m + 0.5 * j.crosswalk_width_m,
+        j.crosswalk_width_m,
+        r.crosswalk_stripe_width_m,
+        r.crosswalk_stripe_gap_m,
+        r,
+    ));
+    // "Vạch kết thúc ngã tư": the end of the exercise, across the exit lane.
+    marks.extend(across((0.0, exit_y), (1.0, exit_y), exit_end - 2.0, r.stop_line_width_m, half, 2));
+
+    let total = centre_length_of(&centre);
+    let mut built = course_from(
+        rs,
+        Figure::Junction,
+        centre,
+        lines,
+        Vec::new(),
+        Vec::new(),
+        None,
+        StartPose {
+            x: 0.0,
+            y: 0.0,
+            heading: 0.0,
+            half_lane_m: half,
+            entry_m: line_x,
+            exit_m: total,
+        },
+    );
+    built.marks = marks;
+    built.signal = Some((line_x, -half - 0.5));
+    built.arc_start_m = Some(arc_x);
+    Some(built)
 }
 
 /// Bài 6 — Qua đường vòng quanh co (Hình 12).

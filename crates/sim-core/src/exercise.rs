@@ -29,6 +29,7 @@
 
 use crate::course::{Course, Figure};
 use crate::rules::{Penalty, Repeat, Ruleset, Thresholds};
+use crate::stop::{StopAt, StopLine, Verdict};
 use crate::vehicle::{Car, Controls, StepOutcome};
 
 /// Fixed step. `step` never receives a `dt`.
@@ -39,18 +40,54 @@ pub const DT: f64 = 1.0 / 60.0;
 pub enum Exercise {
     /// Bài 1 — Xuất phát.
     Start,
+    /// Bài 2 — Dừng xe nhường đường cho người đi bộ.
+    Crosswalk,
     /// Bài 3 — Dừng và khởi hành xe trên dốc.
     Hill,
     /// Bài 4 — Qua vệt bánh xe và đường vòng vuông góc.
     Vet,
+    /// Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông.
+    Junction,
     /// Bài 6 — Qua đường vòng quanh co.
     Curve,
+    /// Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua.
+    Rail,
+    /// Bài 11 — Kết thúc.
+    Finish,
 }
 
 impl Exercise {
     /// The two exercises that are scored against a generated figure.
     pub fn is_sa_hinh(self) -> bool {
         matches!(self, Exercise::Vet | Exercise::Curve)
+    }
+
+    /// The exercises that run on the straight road scene of `course::road`.
+    pub fn is_road(self) -> bool {
+        matches!(self, Exercise::Crosswalk | Exercise::Junction | Exercise::Rail | Exercise::Finish)
+    }
+
+    /// `
+    fn id(self, name: &str) -> &'static str {
+        match (self, name) {
+            (Exercise::Crosswalk, "KHONG_DUNG") => "SH.02.KHONG_DUNG",
+            (Exercise::Crosswalk, "CHUA_DEN_VACH") => "SH.02.CHUA_DEN_VACH",
+            (Exercise::Crosswalk, "QUA_VACH") => "SH.02.QUA_VACH",
+            (Exercise::Rail, "KHONG_DUNG") => "SH.DS.KHONG_DUNG",
+            (Exercise::Rail, "CHUA_DEN_VACH") => "SH.DS.CHUA_DEN_VACH",
+            (Exercise::Rail, "QUA_VACH") => "SH.DS.QUA_VACH",
+            (Exercise::Junction, "KHONG_DUNG") => "SH.05.KHONG_DUNG",
+            (Exercise::Junction, "CHUA_DEN_VACH") => "SH.05.CHUA_DEN_VACH",
+            (Exercise::Junction, "QUA_VACH") => "SH.05.QUA_VACH",
+            (Exercise::Junction, "KHONG_XI_NHAN") => "SH.05.KHONG_XI_NHAN",
+            (Exercise::Junction, "VUOT_DEN_DO") => "SH.05.VUOT_DEN_DO",
+            (Exercise::Junction, "QUA_20S") => "SH.05.QUA_20S",
+            (Exercise::Junction, "QUA_30S") => "SH.05.QUA_30S",
+            (Exercise::Junction, "SAI_VACH_KE") => "SH.05.SAI_VACH_KE",
+            (Exercise::Finish, "KHONG_QUA_VACH") => "SH.KT.KHONG_QUA_VACH",
+            (Exercise::Finish, "KHONG_XI_NHAN_PHAI") => "SH.KT.KHONG_XI_NHAN_PHAI",
+            _ => "",
+        }
     }
 }
 
@@ -83,6 +120,40 @@ pub struct FiredRule {
     pub points: i16,
 }
 
+/// The stop a run recorded, for every exercise that has a stop line. The first stop the detector
+/// accepts is the only one: a learner who rolls forward and stops again has already been judged.
+#[derive(Clone, Copy, Debug)]
+pub struct Stop {
+    pub tick: u32,
+    /// Front-bumper centre at the stop, on the approach axis.
+    pub front_bumper_m: f64,
+    /// The detector's verdict and distance A at that stop.
+    pub at: StopAt,
+}
+
+/// The light of bài 5, as the snapshot and the hash read it. `None` until the car first moves: the
+/// cycle is not running while the learner is still at the line with the handbrake on.
+#[derive(Clone, Copy, Debug)]
+pub struct Light {
+    /// Ticks since the first movement, plus the seed's offset: where in the cycle we are.
+    pub clock: u32,
+    /// 1 red, 2 yellow, 3 green on this tick.
+    pub colour: u8,
+    /// Ticks left in the current colour, counting this one.
+    pub left: u32,
+    /// The light clock's arming tick: the later of the arrival in the zone and the first green at or
+    /// after it. The 20 s / 30 s clock counts from here.
+    pub armed_at: Option<u32>,
+    /// The car has been in the stop zone since `armed_at`.
+    pub arrived: bool,
+}
+
+impl Light {
+    fn dark() -> Self {
+        Self { clock: 0, colour: 0, left: 0, armed_at: None, arrived: false }
+    }
+}
+
 /// One line's contact episode (bài 4 and bài 6): a maximal interval in which some wheel touches
 /// that line. `elapsed_s` counts while it lasts; `next_keo_dai_s` is the next 5-second mark that
 /// DE_VACH_KEO_DAI charges at.
@@ -91,14 +162,6 @@ pub struct Episode {
     pub touching: bool,
     pub elapsed_s: f64,
     pub next_keo_dai_s: f64,
-}
-
-/// Bài 3: where and when the car stopped. The first stop in the exercise zone is the only one.
-#[derive(Clone, Copy, Debug)]
-pub struct Stop {
-    pub tick: u32,
-    /// Front-bumper centre at the stop, on the course axis.
-    pub front_bumper_m: f64,
 }
 
 pub struct State {
@@ -121,6 +184,16 @@ pub struct State {
     pub stop: Option<Stop>,
     /// Bài 4 and bài 6: the figure this run is on, generated once from the ruleset.
     pub course: Option<Course>,
+    /// Bài 5: the light cycle and the 20 s / 30 s clock that hangs off it. Dark in every other
+    /// exercise.
+    pub light: Light,
+    /// Bài 5: where the route's right-turn arc starts, on the approach axis — the tick the bumper
+    /// reaches it is where the turn signal is judged. `None` in every other exercise.
+    pub arc_start_m: Option<f64>,
+    /// Bài 11: whether the right signal was on the tick the bumper crossed the finish line.
+    pub finish_signal: Option<Signal>,
+    /// Bài 11: the car has stopped after crossing the finish line; the run is over.
+    pub finished: bool,
     /// Bài 4 and bài 6: one contact episode per painted line, indexed like `course.lines`.
     episodes: Vec<Episode>,
     /// Bài 4 and bài 6: metres along the centreline of the furthest point reached, for the
@@ -135,15 +208,19 @@ pub struct State {
     /// bit 1 = rear right; both set is "the car's right side has been through the vệt".
     vet_reached: u8,
     moved: bool,
-    /// Bit per ruleset row index: charged, and (for `EACH`) not yet re-armed.
-    latched: u32,
+    /// Bit per ruleset row index: charged, and (for `EACH`) not yet re-armed. 64 bits because the
+    /// ruleset has 38 rows now; the hash writes the low 32 for the exercises that existed before
+    /// the road exercises, so their golden hashes do not move.
+    latched: u64,
 }
 
 impl State {
-    pub fn new(rs: &Ruleset, exercise: Exercise) -> Self {
+    /// `seed` is read for bài 5's light phase only; every other exercise ignores it.
+    pub fn new(rs: &Ruleset, exercise: Exercise, seed: u64) -> Self {
         let c = &rs.course;
         let mut car = Car::new();
         let mut course = None;
+        let mut arc_start_m = None;
         let phase = match exercise {
             Exercise::Start => {
                 // `start_front_bumper_m` is the bumper's signed position relative to the line
@@ -172,10 +249,49 @@ impl State {
                 course = Some(built);
                 Phase::Launched
             }
+            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => {
+                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
+                // 1 — the same opening state as bài 3. It has a figure too (the lane, the stop
+                // line, the crosswalk or the rails or the finish line), so the page draws the
+                // same numbers the scoring reads.
+                let figure = match exercise {
+                    Exercise::Crosswalk => Figure::Crosswalk,
+                    Exercise::Rail => Figure::Rail,
+                    _ => Figure::Finish,
+                };
+                let built = Course::new(figure, rs).expect("the ruleset gives a drawable scene");
+                car.x_m = rs.road.start_front_bumper_m - 0.5 * rs.vehicle.length_m;
+                car.y_m = built.start_y_m;
+                car.heading_rad = built.start_heading_rad;
+                car.engine_on = true;
+                car.rpm = rs.drivetrain.idle_target_rpm;
+                course = Some(built);
+                Phase::Launched
+            }
+            Exercise::Junction => {
+                // Bài 5 turns right out of the approach lane, so it runs on a figure too: the
+                // route's own lines are what SAI_VACH_KE is judged on.
+                let built = Course::new(Figure::Junction, rs).expect("the ruleset gives a drawable figure");
+                car.x_m = built.start_x_m;
+                car.y_m = built.start_y_m;
+                car.heading_rad = built.start_heading_rad;
+                car.engine_on = true;
+                car.rpm = rs.drivetrain.idle_target_rpm;
+                arc_start_m = built.arc_start_m;
+                course = Some(built);
+                Phase::Launched
+            }
         };
         let episodes = match &course {
-            Some(course) => vec![Episode::default(); course.lines.len()],
-            None => Vec::new(),
+            Some(course) if exercise.is_sa_hinh() => vec![Episode::default(); course.lines.len()],
+            _ => Vec::new(),
+        };
+        // Bài 5: the cycle's phase offset is the seed proper, so the same trace always meets the
+        // same light and a different attempt meets a different one.
+        let light = if exercise == Exercise::Junction {
+            Light { clock: phase_offset(seed, &rs.junction), ..Light::dark() }
+        } else {
+            Light::dark()
         };
 
         Self {
@@ -191,6 +307,10 @@ impl State {
             signal_off_at_m: None,
             stop: None,
             course,
+            light,
+            arc_start_m,
+            finish_signal: None,
+            finished: false,
             episodes,
             furthest_m: 0.0,
             clock_s: 0.0,
@@ -209,7 +329,7 @@ impl State {
 
     /// Rules charged and not yet re-armed. Future behaviour depends on these, so the hash covers
     /// them too.
-    pub fn latched(&self) -> u32 {
+    pub fn latched(&self) -> u64 {
         self.latched
     }
 
@@ -233,6 +353,9 @@ impl State {
             Exercise::Start => self.step_start(rs, t, controls, signal, order, fired),
             Exercise::Hill => self.step_hill(rs, t, controls, signal, fired),
             Exercise::Vet | Exercise::Curve => self.step_sa_hinh(rs, t, controls, signal, fired),
+            Exercise::Crosswalk | Exercise::Rail => self.step_road_stop(rs, t, controls, signal, fired),
+            Exercise::Junction => self.step_junction(rs, t, controls, signal, fired),
+            Exercise::Finish => self.step_finish(rs, t, controls, signal, fired),
         }
     }
 
@@ -376,7 +499,7 @@ impl State {
         let Some(index) = rs.index_of(id) else {
             return false;
         };
-        let bit = 1u32 << index;
+        let bit = 1u64 << index;
         if self.latched & bit != 0 {
             return false;
         }
@@ -427,7 +550,7 @@ impl State {
             return;
         }
         if let Some(index) = rs.index_of(id) {
-            self.latched &= !(1u32 << index);
+            self.latched &= !(1u64 << index);
         }
     }
 }
@@ -472,18 +595,30 @@ impl State {
     /// "Dừng xe" is the first tick, after the car has moved forward, on which forward speed is
     /// not positive. It counts only once the bumper is past the foot of the slope; a stall or a
     /// hesitation on the approach is not a stop and costs nothing here.
+    ///
+    /// The definition and distance A come from the shared detector (`crate::stop`), which bài 2,
+    /// 5 and 9 use too; this function only says what the answers cost in bài 3.
     fn check_stop(&mut self, rs: &Ruleset, bumper: f64, fired: &mut Vec<FiredRule>) {
         let h = &rs.hill;
-        let a = h.stop_line_x_m() - bumper;
+        let line = StopLine { line_m: h.stop_line_x_m(), max_a_m: h.max_a_m };
         if self.moved && self.car.speed_mps <= 0.0 && bumper >= h.foot_x_m {
-            self.stop = Some(Stop { tick: self.tick, front_bumper_m: bumper });
+            let verdict = line.verdict(bumper, true);
+            self.stop = Some(Stop {
+                tick: self.tick,
+                front_bumper_m: bumper,
+                at: StopAt { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper), verdict },
+            });
             self.phase = Phase::Stopped;
-            if a < 0.0 {
-                self.charge(rs, "SH.03.QUA_VACH", fired);
-            } else if a > h.max_a_m {
-                self.charge(rs, "SH.03.CHUA_DEN_VACH", fired);
+            match verdict {
+                Verdict::Past { .. } => {
+                    self.charge(rs, "SH.03.QUA_VACH", fired);
+                }
+                Verdict::Short { .. } => {
+                    self.charge(rs, "SH.03.CHUA_DEN_VACH", fired);
+                }
+                Verdict::WithinA | Verdict::NotInZone => {}
             }
-        } else if -a >= h.no_stop_beyond_m {
+        } else if -line.a_m(bumper) >= h.no_stop_beyond_m {
             self.charge(rs, "SH.03.KHONG_DUNG", fired);
         }
     }
@@ -829,6 +964,14 @@ impl State {
     }
 }
 
+/// Bài 5's phase offset: the seed proper (the low 56 bits), reduced modulo the cycle, so two
+/// attempts with different seeds meet the light at different points and the same seed always meets
+/// it the same way. No division by the PRNG, no clock.
+fn phase_offset(seed: u64, j: &crate::rules::Junction) -> u32 {
+    let cycle = u64::from(j.cycle_ticks().max(1));
+    (seed % cycle) as u32
+}
+
 fn wrap_to_pi(a: f64) -> f64 {
     let pi = core::f64::consts::PI;
     let mut x = a;
@@ -839,4 +982,256 @@ fn wrap_to_pi(a: f64) -> f64 {
         x += 2.0 * pi;
     }
     x
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bài 2 — Dừng xe nhường đường cho người đi bộ, bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua and
+// bài 11 — Kết thúc.
+//
+// The three share one straight-road scene (`rules::Road`): a lane, a stop line, and one thing past
+// it — the crosswalk (bài 2), the rail (bài 9), the finish line (bài 11). The engine idles, the
+// handbrake is on and scoring is live from tick 1, as in bài 3.
+//
+// Bài 2 and bài 9 are the same exercise with a different picture and different code prefixes, so
+// they run one loop: stop at the line, then go on. The stop itself is the shared detector; this
+// section only prices its answers.
+//
+// bài 2:  SH.02.KHONG_DUNG / CHUA_DEN_VACH / QUA_VACH
+// bài 9:  SH.DS.KHONG_DUNG / CHUA_DEN_VACH / QUA_VACH
+// bài 11: SH.KT.KHONG_XI_NHAN_PHAI on the tick the bumper crosses the finish line, and
+//         SH.KT.KHONG_QUA_VACH (đình chỉ) if the car stops short of it with the engine running.
+// ---------------------------------------------------------------------------------------------
+
+impl State {
+    /// Bài 2 and bài 9: stop at the line, then go on. Done when the bumper is `end_past_line_m`
+    /// past the line after the stop.
+    fn step_road_stop(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        if self.disqualified {
+            return;
+        }
+        self.note_movement();
+
+        let r = &rs.road;
+        let bumper = self.front_bumper_x(rs);
+        let line = StopLine { line_m: r.stop_line_m(), max_a_m: r.max_a_m };
+        if self.stop.is_none() {
+            let in_zone = bumper >= line.line_m - r.stop_zone_length_m;
+            self.check_stop_at_line(rs, line, bumper, in_zone, fired);
+            // "Không dừng xe ở vạch dừng quy định": the car went through the line and on past the
+            // no-stop mark without ever stopping for it.
+            if self.stop.is_none() && -line.a_m(bumper) >= r.no_stop_beyond_m {
+                self.charge(rs, self.exercise.id("KHONG_DUNG"), fired);
+            }
+        }
+        if !self.disqualified && bumper >= line.line_m + r.end_past_line_m {
+            self.phase = Phase::Done;
+        }
+        if !self.disqualified && bumper >= line.line_m + r.run_end_past_line_m {
+            // The car drove off down the road; the exercise cannot outlast its own scene.
+            self.phase = Phase::Done;
+        }
+    }
+
+    /// Bài 11: cross the finish line with the right signal on, then stop.
+    fn step_finish(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        if self.disqualified || self.finished {
+            return;
+        }
+        self.note_movement();
+
+        let r = &rs.road;
+        let bumper = self.front_bumper_x(rs);
+        let finish = r.finish_m();
+
+        // "Khi xe qua vạch kết thúc": judged once, on the tick the bumper crosses the line.
+        if self.finish_signal.is_none() {
+            if bumper >= finish {
+                self.finish_signal = Some(self.signal);
+                if self.signal != Signal::Right {
+                    self.charge(rs, "SH.KT.KHONG_XI_NHAN_PHAI", fired);
+                }
+            } else if self.moved && self.car.speed_mps <= 0.0 && self.car.engine_on {
+                // "Không qua vạch kết thúc, bị đình chỉ sát hạch": a real stop short of the line,
+                // not a stall — the engine has to be running for this to be a stop the learner
+                // chose. `next_tick_does_not_change_this` in the tests pins the pairing with
+                // bài 11's clean run, where the car stops just after the line.
+                self.charge(rs, "SH.KT.KHONG_QUA_VACH", fired);
+            }
+        } else if self.moved && self.car.speed_mps <= 0.0 {
+            // "Lái xe qua vạch kết thúc và dừng xe": the run is over.
+            self.finished = true;
+            self.phase = Phase::Done;
+        }
+        if !self.disqualified && bumper >= finish + r.run_end_past_line_m {
+            self.phase = Phase::Done;
+        }
+    }
+
+    /// The shared stop, priced in the running exercise's own codes. `in_zone` is the exercise's
+    /// answer to "is this stop one of mine?" — bài 3's slope foot, the road's stop zone.
+    fn check_stop_at_line(
+        &mut self,
+        rs: &Ruleset,
+        line: StopLine,
+        bumper: f64,
+        in_zone: bool,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        if !self.moved || self.car.speed_mps > 0.0 {
+            return;
+        }
+        let verdict = line.verdict(bumper, in_zone);
+        if verdict == Verdict::NotInZone {
+            return;
+        }
+        self.stop = Some(Stop {
+            tick: self.tick,
+            front_bumper_m: bumper,
+            at: StopAt { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper), verdict },
+        });
+        self.phase = Phase::Stopped;
+        match verdict {
+            Verdict::WithinA | Verdict::NotInZone => {}
+            Verdict::Short { .. } => {
+                self.charge(rs, self.exercise.id("CHUA_DEN_VACH"), fired);
+            }
+            Verdict::Past { .. } => {
+                self.charge(rs, self.exercise.id("QUA_VACH"), fired);
+            }
+        }
+    }
+
+    /// First movement under the car's own power, the same 0,1 m/s as bài 1 and bài 3.
+    fn note_movement(&mut self) {
+        if !self.moved && self.car.speed_mps > 0.1 {
+            self.moved = true;
+        }
+    }
+
+    /// The light cycle of bài 5, advanced one step. It starts at the car's first movement, not at
+    /// tick 0: a learner who spends a minute cranking the engine should not find the light already
+    /// most of the way through its cycle when they finally reach the line.
+    fn tick_light(&mut self, rs: &Ruleset) {
+        if self.light.colour == 0 {
+            if self.moved {
+                self.light.colour = rs.junction.light_at(self.light.clock);
+            } else {
+                return;
+            }
+        }
+        let j = &rs.junction;
+        self.light.clock = self.light.clock.wrapping_add(1);
+        self.light.colour = j.light_at(self.light.clock);
+        let into = self.light.clock % j.cycle_ticks().max(1);
+        self.light.left = match self.light.colour {
+            1 => j.red_ticks - into,
+            3 => j.red_ticks + j.green_ticks - into,
+            _ => j.cycle_ticks() - into,
+        };
+    }
+
+    /// Bài 5: one right turn through a signalled junction.
+    ///
+    /// The stop is judged only when the light asked for it (red, or a yellow still short of the
+    /// line), because the law's two stop-distance errors are about stopping *for the signal*.
+    /// Passing the junction on red — or on a yellow that began while the car was short of the line
+    /// — is VUOT_DEN_DO, at the tick the bumper enters the junction; a stop that ends 0–4 m past
+    /// the line only on red is therefore QUA_VACH alone, never both.
+    fn step_junction(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        let Some(course) = self.course.take() else { return };
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        if self.disqualified {
+            self.course = Some(course);
+            return;
+        }
+        self.note_movement();
+        self.tick_light(rs);
+
+        let j = &rs.junction;
+        let bumper = self.front_bumper_x(rs);
+        let line = StopLine { line_m: j.stop_line_m(), max_a_m: j.max_a_m };
+        let in_zone = bumper >= line.line_m - j.stop_zone_length_m;
+
+        // Arm the 20 s / 30 s clock: the later of the arrival in the zone and the green the car
+        // actually has (the one running as it arrives, or the next one at/after the arrival).
+        if in_zone {
+            self.light.arrived = true;
+        }
+        if self.light.arrived && self.light.armed_at.is_none() && self.light.colour == 3 {
+            self.light.armed_at = Some(self.tick);
+        }
+
+        // The turn signal, read where the turn begins.
+        if let Some(arc) = self.arc_start_m {
+            if bumper >= arc && self.signal != Signal::Right {
+                self.charge(rs, "SH.05.KHONG_XI_NHAN", fired);
+            }
+        }
+
+        // A stop the light asked for.
+        if self.stop.is_none() && in_zone && self.car.speed_mps <= 0.0 && self.moved {
+            let light_asks = self.light.colour == 1 || self.light.colour == 2;
+            if light_asks {
+                self.check_stop_at_line(rs, line, bumper, in_zone, fired);
+            }
+        }
+
+        // Through the junction: the tick the bumper enters it, on a colour that forbids it.
+        if bumper >= line.line_m + j.junction_depth_m {
+            let red = self.light.colour == 1;
+            self.charge(rs, "SH.05.SAI_VACH_KE", fired);
+            let _ = red;
+        }
+
+        // The route's own lines: a wheel patch on a boundary line is SAI_VACH_KE (đình chỉ).
+        if !self.disqualified {
+            let walls = course.boundary_touch(rs, self.car.x_m, self.car.y_m, self.car.heading_rad);
+            if walls {
+                self.charge(rs, "SH.05.SAI_VACH_KE", fired);
+            }
+        }
+
+        if !self.disqualified && bumper >= line.line_m + j.end_past_line_m + j.extent_m {
+            self.phase = Phase::Done;
+        }
+        self.course = Some(course);
+    }
 }

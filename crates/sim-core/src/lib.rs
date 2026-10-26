@@ -15,6 +15,7 @@ mod exercise;
 pub mod golden;
 mod hash;
 mod rules;
+mod stop;
 mod vehicle;
 
 #[cfg(test)]
@@ -130,7 +131,7 @@ impl Prng {
 const EXERCISE_SHIFT: u32 = 56;
 
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 46;
+pub const SNAPSHOT_LEN: usize = 51;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -162,12 +163,14 @@ pub const SNAPSHOT_LEN: usize = 46;
 /// 19 signal                0 off | 1 left | 2 right
 /// 20 engine_load_nm        Nm the clutch drags the engine down with; negative when the wheels
 ///                          drive the engine. The audio tells lugging from a free rev by it.
-/// 21 line_gap_m            bài 3: stop line minus front bumper, positive while short; 0 in bài 1
-/// 22 stop_gap_a_m          bài 3: distance A recorded at the stop (negative = past the line); 0
-///                          before the stop
+/// 21 line_gap_m            the approach exercises: stop line minus front bumper, positive while
+///                          short. bài 3, and bài 2, 5, 9 on the road scene; 0 in bài 1
+/// 22 stop_gap_a_m          distance A recorded at the stop (negative = past the line); 0 before the
+///                          stop. bài 3, and bài 2, 5, 9
 /// 23 rollback_m            bài 3: metres the front bumper is behind where the car stopped, >= 0;
-///                          0 before the stop
-/// 24 since_stop_ticks      bài 3: steps since the stop, 0 on the stop step; -1 before it (and in bài 1)
+///                          0 before the stop, and 0 in every other exercise
+/// 24 since_stop_ticks      steps since the stop, 0 on the stop step; -1 before it. bài 3, and
+///                          bài 2, 5, 9
 /// 25 elevation_m           road height under the car centre, metres above the flat; 0 in bài 1
 /// 26 grade                 road grade under the car centre (0.10 on bài 3's slope); 0 in bài 1
 /// 27 contact FL            what the front-left wheel's contact patch is on: 0 clear | 1 on a
@@ -184,8 +187,19 @@ pub const SNAPSHOT_LEN: usize = 46;
 ///                          2 second half | 3 exit; 0 else
 /// 36 clock_s               bài 4/6: seconds on the exercise clock, 0 until the entry gate; 0 else
 /// 37 longest_episode_s     bài 4/6: the longest contact episode running right now, seconds; 0 else
-/// 38..45 wheel_x, wheel_y  bài 4/6: the four wheel centres in the car's frame, FL FR RL RR, as
+/// 38..45 wheel_x, wheel_y  bài 4/6: the four wheel centres in the car's frame, FL RL RR, as
 ///                          (x, y) pairs: 38/39 FL, 40/41 FR, 42/43 RL, 44/45 RR; 0 else
+/// 46 light_colour          bài 5: 0 none | 1 red | 2 yellow | 3 green. 0 in every other exercise,
+///                          and 0 in bài 5 until the car first moves (the cycle starts there)
+/// 47 light_left_ms         bài 5: milliseconds left in the current light phase, counting the tick
+///                          in progress; 0 when the light is dark
+/// 48 clock_ms              bài 5: milliseconds on the 20 s / 30 s clock, 0 until it is armed
+/// 49 zone                  which part of the scene the bumper is in, so the page knows what to
+///                          light up: 0 start | 1 approach | 2 stop zone | 3 at the line | 4 past the
+///                          stop line | 5 at the crosswalk/railway | 6 in the junction |
+///                          7 on the exit lane | 8 past the finish line. 0 in bài 1 and bài 3
+/// 50 route                 which route the session drives: 0 none (bài 1, 3) | 1 straight road
+///                          (bài 2, 9, 11) | 2 junction right turn (bài 5) | 3 figure (bài 4, 6)
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
@@ -212,13 +226,17 @@ impl Session {
     pub fn with_ruleset(seed: u64, rules: Ruleset) -> Option<Self> {
         let exercise = match seed >> EXERCISE_SHIFT {
             0 | 1 => Exercise::Start,
+            2 => Exercise::Crosswalk,
             3 => Exercise::Hill,
             4 => Exercise::Vet,
+            5 => Exercise::Junction,
             6 => Exercise::Curve,
+            9 => Exercise::Rail,
+            11 => Exercise::Finish,
             _ => return None,
         };
         let thresholds = rules.thresholds();
-        let state = State::new(&rules, exercise);
+        let state = State::new(&rules, exercise, seed);
         // A zero seed would freeze xorshift; start from a non-zero constant like the skeleton did.
         let prng = Prng(seed ^ 0x9e37_79b9_7f4a_7c15);
         Some(Self { rules, thresholds, state, seed, prng, events: Vec::new(), pending: Vec::new() })
@@ -359,7 +377,75 @@ impl Session {
             out[25] = h.elevation_at(s.car.x_m);
             out[26] = h.grade_at(s.car.x_m);
         }
+        if s.exercise.is_road() {
+            out[50] = self.route_code();
+            self.road_snapshot(&mut out);
+        }
+        if s.exercise == Exercise::Junction {
+            let j = &self.rules.junction;
+            out[46] = f64::from(s.light.colour);
+            out[47] = f64::from(s.light.left) * DT * 1000.0;
+            out[48] = match s.light.armed_at {
+                Some(from) => f64::from(s.tick.saturating_sub(from)) * DT * 1000.0,
+                None => 0.0,
+            };
+            let _ = j;
+        }
         out
+    }
+
+    /// 0 none | 1 straight road | 2 junction right turn | 3 figure, for snapshot field 50.
+    fn route_code(&self) -> f64 {
+        match self.state.exercise {
+            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => 1.0,
+            Exercise::Junction => 2.0,
+            Exercise::Vet | Exercise::Curve => 3.0,
+            _ => 0.0,
+        }
+    }
+
+    /// Fields 21, 22, 24 and 49 for the straight-road exercises: the stop line gap, distance A at
+    /// the stop, the steps since it, and which part of the scene the bumper is in.
+    fn road_snapshot(&self, out: &mut Snapshot) {
+        let s = &self.state;
+        let rs = &self.rules;
+        let (line_m, zone_m, crosswalk_m, junction_m, finish_m) = match s.exercise {
+            Exercise::Junction => (
+                rs.junction.stop_line_m(),
+                rs.junction.stop_zone_length_m,
+                rs.junction.stop_line_m() + rs.junction.crosswalk_offset_m,
+                Some(rs.junction.stop_line_m() + rs.junction.junction_depth_m),
+                None,
+            ),
+            Exercise::Finish => (
+                rs.road.stop_line_m(),
+                rs.road.stop_zone_length_m,
+                rs.road.stop_line_m(),
+                None,
+                Some(rs.road.finish_m()),
+            ),
+            Exercise::Crosswalk => (
+                rs.road.stop_line_m(),
+                rs.road.stop_zone_length_m,
+                rs.road.crosswalk_m(),
+                None,
+                None,
+            ),
+            _ => (
+                rs.road.stop_line_m(),
+                rs.road.stop_zone_length_m,
+                rs.road.rail_m(),
+                None,
+                None,
+            ),
+        };
+        let bumper = out[9];
+        out[21] = line_m - bumper;
+        if let Some(stop) = s.stop {
+            out[22] = stop.at.a_m;
+            out[24] = f64::from(s.tick - stop.tick);
+        }
+        out[49] = zone_code(bumper, line_m, zone_m, crosswalk_m, junction_m, finish_m);
     }
 
     /// Hash of the full simulation state: every float as bits (NaN canonicalised, -0.0 folded),
@@ -375,7 +461,9 @@ impl Session {
         h.i32(s.score);
         h.bool(s.disqualified);
         h.bool(s.has_moved());
-        h.u32(s.latched());
+        // The latch is u64 (38 rules), but the exercises that existed before the road exercises
+        // hash exactly the low 32 bits they always hashed, so their golden hashes do not move.
+        h.u32(s.latched() as u32);
 
         // Car.
         h.f64(s.car.x_m);
@@ -420,6 +508,22 @@ impl Session {
                 h.f64(ep.elapsed_s);
                 h.f64(ep.next_keo_dai_s);
             }
+        }
+
+        // Bài 5's light and its 20 s / 30 s clock. Only this exercise writes the block, so no other
+        // hash moves; the high half of the latch rides with it.
+        if s.exercise == Exercise::Junction {
+            h.u64(s.latched());
+            h.u8(s.light.colour);
+            h.u32(s.light.clock);
+            h.opt_f64(s.light.armed_at.map(f64::from));
+            h.bool(s.light.arrived);
+        }
+        if s.exercise.is_road() {
+            h.opt_f64(s.stop.map(|p| p.at.a_m));
+            h.u32(s.stop.map_or(0, |p| p.tick));
+            h.bool(s.finished);
+            h.opt_f64(s.finish_signal.map(|sig| f64::from(signal_code(sig))));
         }
 
         // Events so far.
@@ -507,6 +611,41 @@ fn phase_code(p: exercise::Phase) -> u8 {
         exercise::Phase::Done => 3,
         exercise::Phase::Stopped => 4,
     }
+}
+
+/// Field 49. The bands are the scene's own numbers: the stop zone before the line, the line itself
+/// (half a stop-line width either side), the crosswalk or railway past it, the junction's depth, and
+/// the finish line at the far end.
+#[allow(clippy::too_many_arguments)]
+fn zone_code(
+    bumper: f64,
+    line_m: f64,
+    zone_m: f64,
+    crosswalk_m: f64,
+    junction_m: Option<f64>,
+    finish_m: Option<f64>,
+) -> f64 {
+    let at_line = 0.1;
+    if let Some(f) = finish_m {
+        if bumper >= f - at_line {
+            return 8.0;
+        }
+        return if bumper >= line_m - zone_m { 2.0 } else { 1.0 };
+    }
+    if bumper >= line_m + zone_m {
+        return 5.0;
+    }
+    if bumper >= line_m + at_line {
+        return 4.0;
+    }
+    if bumper >= line_m - at_line {
+        return 3.0;
+    }
+    if bumper >= line_m - zone_m {
+        return 2.0;
+    }
+    let _ = (crosswalk_m, junction_m);
+    1.0
 }
 
 fn signal_code(s: Signal) -> u8 {
