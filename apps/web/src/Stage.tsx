@@ -181,6 +181,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-aid-eta-ms=""
       data-aid-gap-mm=""
       data-aid-mark-mm=""
+      data-aid-now=""
       data-zone=""
       data-zone-label=""
       data-light=""
@@ -333,10 +334,14 @@ function paintAid(d: DOMStringMap, aid: ReturnType<Exercise['stop']>) {
     d.aidEtaMs = '';
     d.aidGapMm = '';
     d.aidMarkMm = '';
+    d.aidNow = '';
     return;
   }
   d.aidKey = aid.key;
   d.aidEtaMs = String(aid.etaMs);
+  // "1" exactly on the tick the words turn to "bấm ngay", so a script and a human reading the line
+  // see the same moment; empty when it is counting. `etaMs` is the bar's ideal and does not lead.
+  d.aidNow = aid.now ? '1' : '';
   d.aidGapMm = String(Math.round(aid.gapM * 1000));
   d.aidMarkMm = String(Math.round(aid.markM * 1000));
 }

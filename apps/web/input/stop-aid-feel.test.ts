@@ -237,6 +237,8 @@ function sweep(
   road: StopRoad,
   extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number; learner?: 'plan' | 'literal' },
   maxErrorMs: number,
+  /** The law's window, from the ruleset: A must land in 0..maxA. */
+  maxA: number,
   stepMs = 25,
   polesMs: readonly number[] = POLES_MS,
 ) {
@@ -251,7 +253,7 @@ function sweep(
         runs += 1;
         low = Math.min(low, r.A);
         high = Math.max(high, r.A);
-        const inside = r.A >= 0 && r.A <= MAX_A;
+        const inside = r.A >= 0 && r.A <= maxA;
         if (!inside || r.stalled || r.codes.length > 0) {
           failures.push(
             `poll ${pollMs} ms phase ${Math.round(phaseMs)} error ${errorMs} ms: A=${r.A.toFixed(3)} stalled=${r.stalled} charged=${r.codes.length}`,
@@ -285,6 +287,7 @@ for (const page of PAGES) {
       page.road,
       { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'plan' },
       E_GATE_MS,
+      page.maxA,
     );
     console.log(`     ${page.name}: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${page.maxA}`);
     assert.deepEqual(failures, []);
@@ -296,28 +299,33 @@ for (const page of PAGES) {
 // are gated rather than one standing in for the other.
 for (const page of PAGES) {
   test(`${page.name}: a learner who presses 150 to 350 ms after "bấm ngay" stops inside A`, () => {
-    const { failures, runs, low, high } = sweep(
+    const { failures, runs } = sweep(
       page.road,
       { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'literal' },
       350,
+      page.maxA,
       25,
       LITERAL_POLES_MS,
     );
-    console.log(`     ${page.name} (literal): A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m`);
-    // Only the reaction band is the gate here: the sweep also covers 0 to 350 ms, and a 0 ms reaction
-    // is a learner who presses exactly when the words change, which is not a person.
+    // Only the reaction band is the gate: the sweep also covers 0 to 350 ms, and a 0 ms reaction is a
+    // learner who presses exactly when the words change, which is not a person. The band's own extent
+    // is reported from the runs it actually made, so it cannot be wider than what was gated.
     const band = failures.filter((line) => {
       const m = /error (-?\d+) ms/.exec(line);
       return m !== null && Number(m[1]) >= 150 && Number(m[1]) <= 350;
     });
-    console.log(`     ${page.name} band failures: ${band.length}\n       ${band.slice(0,6).join('\n       ')}`);
-    assert.deepEqual(band, [], `${band.length} of the reaction-band runs missed A`);
+    const abs = band.map((line) => Number(/A=(-?[0-9.]+)/.exec(line)![1]));
+    console.log(
+      `     ${page.name} (literal, band 150-350 ms): ${runs} runs, ${band.length} outside 0..${page.maxA} m` +
+        (abs.length ? `, band A ${Math.min(...abs).toFixed(3)} to ${Math.max(...abs).toFixed(3)}` : ''),
+    );
+    assert.deepEqual(band, [], `${band.length} of the reaction-band runs missed 0..${page.maxA} m`);
   });
 }
 
 test('-150 to +150 ms is reported, not gated: the window has that much to spare or it does not', () => {
-  const hill = sweep(hillRoad, { seed: seedWord(3), lesson: 3 }, E_REPORT_MS);
-  const flat = sweep(flatRoad('brake'), { seed: seedWord(2), lesson: 2, clutchLeadMs: 600 }, E_REPORT_MS);
+  const hill = sweep(hillRoad, { seed: seedWord(3), lesson: 3 }, E_REPORT_MS, MAX_A);
+  const flat = sweep(flatRoad('brake'), { seed: seedWord(2), lesson: 2 }, E_REPORT_MS, ruleset.road!.max_a_m);
   for (const [name, r] of [['bài 3', hill], ['bài 2', flat]] as const) {
     const fails = r.failures.filter((line) => /error -?1(2[5-9]|50)/.test(line));
     console.log(`     ${name} at ±150 ms: ${fails.length} of ${r.runs} runs outside A (A ${r.low.toFixed(3)} to ${r.high.toFixed(3)})`);

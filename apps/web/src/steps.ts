@@ -278,6 +278,11 @@ export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11
   if (state.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
   if (state.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, xe sẽ tự bò tới vạch.';
 
+  // Bài 11 is the finish, not a stop short of a line: SH.KT.KHONG_QUA_VACH disqualifies a car that
+  // *stops* before the finish line, and SH.KT.KHONG_XI_NHAN_PHAI charges one that crosses without the
+  // right signal. So it must not be told to brake for the line or to read a countdown — it has none —
+  // and the signal has to be asked for before the crossing, not after a stop that would end the run.
+  if (lesson === 11) return adviceFinish(state, road);
   if (state.sinceStopTicks < 0) {
     if (state.speedMps > 2.6) return 'Chậm lại: nhả ga, để xe tự bò tới vạch dừng.';
     if (state.lineGapM < 0) return 'Đã qua vạch mà chưa dừng.';
@@ -292,12 +297,28 @@ export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11
       ? `Đã dừng quá vạch ${mm(-a)}. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`
       : `Đã dừng khi còn ${mm(a)} tới vạch, quá xa. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`;
   }
-  if (lesson === 11) {
-    if (state.speedMps <= 0.05 && state.signal !== 'right') return 'Bật xi nhan phải (W) trước khi qua vạch kết thúc.';
-    return 'Qua vạch kết thúc rồi dừng hẳn.';
-  }
   const what = lesson === 2 ? 'người đi bộ' : 'đường sắt';
   return `Dừng đúng vạch. Qua vạch rồi chạy tiếp, chú ý ${what}.`;
+}
+
+/**
+ * Bài 11's advice: the finish is crossed, not approached for a stop. The order the exercise scores is
+ * signal right, cross the finish line, then stop past it — so the line asks for the signal as soon as
+ * the car is moving, keeps asking if it is missing, and only asks for the stop once the bumper is over
+ * the line. Its own rule is what the words come from: KHONG_QUA_VACH disqualifies a car that does not
+ * cross, KHONG_XI_NHAN_PHAI charges one that crosses unsignalled.
+ */
+function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>): string {
+  if (state.signal !== 'right') {
+    return state.lineGapM > 0
+      ? `Bật xi nhan phải (W) trước khi qua vạch kết thúc, rồi chạy qua vạch. Còn ${Math.round(state.lineGapM * 1000)} mm.`
+      : 'Bật xi nhan phải (W) ngay — vạch kết thúc đã qua và chưa có xi nhan.';
+  }
+  if (state.frontBumperM < road.finish_offset_m + road.start_front_bumper_m) {
+    return 'Đã có xi nhan phải. Cứ chạy qua vạch kết thúc, đừng dừng lại trước vạch.';
+  }
+  if (state.speedMps > 0.05) return 'Đã qua vạch kết thúc: phanh ↓ rồi kéo phanh tay P để dừng hẳn.';
+  return 'Đã qua vạch và dừng. Hết bài.';
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -320,6 +341,19 @@ export const JUNCTION_STEPS: readonly Step[] = [
 
 /** Green, from snapshot field 46. */
 const GREEN = 3;
+
+/**
+ * The pace a junction is crossed at, m/s: 12 km/h. Fast enough that the route takes ~17 s of the 20 s
+ * clock at this length, and slow enough that the turn holds inside the lane — the arc's radius is set
+ * from the car's own tightest turn, so 12 km/h keeps a steering key held through it without the outer
+ * front wheel reaching the edge. Measured: holding ↑ until this speed and releasing at it crosses in
+ * about 15 s with no contact.
+ */
+const JUNCTION_TARGET_MPS = 12 / 3.6;
+/** The same target in the words the line says. */
+const TARGET_KMH = 12;
+/** Above this the car is being driven too fast for the turn, whatever the clock says. */
+const JUNCTION_FAST_MPS = 4.6;
 const YELLOW = 2;
 const RED = 1;
 
@@ -357,8 +391,10 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
   if (s.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
   if (s.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, rồi chạy tới vạch dừng.';
 
-  // Still short of the line: the light decides whether to stop or to go on.
-  if (s.lineGapM > 0) {
+  // Still short of the line: the light decides whether to stop or to go on. A car held at the line with
+  // the green on is not "short of the line" in the way this sentence means — it has stopped and needs to
+  // be told to go — so that case is checked first, before the line-gap branch can hide it.
+  if (s.lineGapM > 0 && !(s.sinceStopTicks >= 0 && s.speedMps < 0.3)) {
     if (s.lightColour === GREEN) return 'Đèn xanh: cứ qua vạch, nhưng bật xi nhan phải (W) trước khi vào cua.';
     if (s.lightColour === RED || s.lightColour === YELLOW) {
       const colour = s.lightColour === RED ? 'Đèn đỏ' : 'Đèn vàng';
@@ -383,12 +419,12 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
 
   // Past the line: the turn. The cue is the same one the figures use.
   if (s.signal !== 'right') return 'Bật xi nhan phải (W) ngay, trước khi vào cua.';
-  // The 20 s clock runs from the green and a junction is crossed at a real pace: at the idle creep
-  // the route alone takes ~25 s, so "để xe tự bò" — the right advice for the figures — is the wrong
-  // advice here. The number is the core's own clock, so this says "go faster" exactly when it does.
-  const left20 = 20 - s.clockMs / 1000;
-  if (s.clockMs > 0 && left20 > 0 && left20 < 12 && s.speedMps < 3.6) {
-    return `Chỉ còn ${Math.ceil(left20)} giây để qua ngã tư: giữ ga ↑ cho xe nhanh lên, đừng bò.`;
+
+  // Over-speed comes first, before the steering cue: at 29.7 km/h the cue for the bend is what the
+  // learner read, the speed warning never showed, and the car went into the lane edge. Speed is the
+  // thing that has to be fixed first, and it is checked before anything else that names a key.
+  if (s.speedMps > JUNCTION_FAST_MPS) {
+    return `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): nhả ga ↑ ra ngay cho xe chậm lại dưới ${TARGET_KMH} km/h.`;
   }
   // The lane edges are what SAI_VACH_KE is charged on, so the warning is the wheels' own contacts
   // (snapshot 27..30), not the car's centre: the outer front corner reaches the edge while the centre
@@ -398,8 +434,21 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
     const wheel = ['trước trái', 'trước phải', 'sau trái', 'sau phải'][s.contact.findIndex((c) => c === 1)];
     return `Bánh ${wheel} chạm vạch làn: trả lái ngay (thả phím ← →) cho xe về giữa làn.`;
   }
-  if (cue === 'right') return 'Đánh lái → sang phải và giữ, rẽ phải trong làn.';
-  if (cue === 'left') return 'Trả lái ← lại cho thẳng sau khi qua cua.';
-  if (s.speedMps > 5) return `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): nhả ga cho xe chậm lại.`;
-  return 'Giữ lái cho thẳng, đi hết làn ra khỏi ngã tư.';
+
+  // Speed, as a closed loop the learner can hold with one key: under the target, hold ↑; at or above
+  // it, let go. A bare "giữ ga" is what took the car to 29.7 km/h in 1.5 s and disqualified it, so the
+  // line always says which of the two to do, from the speed the page shows.
+  const fast = s.speedMps >= JUNCTION_TARGET_MPS;
+  const pace = fast
+    ? `Đủ nhanh rồi (${kmh(s.speedMps)} km/h): nhả ga ↑ ra, đừng ga nữa.`
+    : `Giữ ga ↑ cho tới ${TARGET_KMH} km/h (đang ${kmh(s.speedMps)} km/h), tới đó thì nhả ra.`;
+  // The 20 s clock runs from the green, so the pace is not a preference: it says how far behind the car
+  // is. The number is the core's own clock, so this says "go faster" exactly when it does.
+  const left20 = 20 - s.clockMs / 1000;
+  if (s.clockMs > 0 && left20 > 0 && left20 < 12 && s.speedMps < JUNCTION_TARGET_MPS) {
+    return `Chỉ còn ${Math.ceil(left20)} giây để qua ngã tư: ${pace}`;
+  }
+  if (cue === 'right') return `${pace} Đánh lái → sang phải và giữ, rẽ phải trong làn.`;
+  if (cue === 'left') return `${pace} Trả lái ← lại cho thẳng sau khi qua cua.`;
+  return `${pace} Giữ lái cho thẳng, đi hết làn ra khỏi ngã tư.`;
 }

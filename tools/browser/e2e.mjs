@@ -635,18 +635,19 @@ await check('bài 11 crossing without the right signal: SH.KT.KHONG_XI_NHAN_PHAI
 const JUNCTION_RED_SEED = 1;
 const JUNCTION_GREEN_SEED = 400;
 
-/** The pace the junction is crossed at, m/s. The 20 s clock does not wait for the idle creep. */
-const JUNCTION_PACE_MPS = 3.0;
 /** The learner's polling period on this page, ms. */
 const JUNCTION_POLL_MS = 40;
+/** How long the learner takes to act on a sentence they have read, ms. */
+const JUNCTION_REACT_MS = 300;
 
 /**
- * Drive bài 5: set off, hold a real pace to the line, brake on the aid while the light is not green,
- * wait, then signal, turn and go through.
+ * Drive bài 5 the way the page teaches it: read the advice line and act on it, nothing else.
  *
- * `arrive` is the colour the run asserts it met at the line — the seeds above are chosen for it, and
- * the assertion is what keeps them honest: a seed that drifts out of its band fails here rather than
- * quietly turning a red-arrival test into a green-arrival one.
+ * This is what the Supervisor's hand check does, and it is the point of the page: there is no hidden
+ * pace controller and no hidden signal press here. Every key is asked for by a sentence the learner
+ * could read, and `data-cue` supplies the steering key the same way it does for bài 4 and bài 6.
+ * `steerOut` is the one exception, and it is not a driver: it holds a wrong wheel on purpose, so the
+ * lane-edge failure can be provoked.
  */
 async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false }) {
   const key = page.keyboard;
@@ -667,52 +668,66 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
   await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
   await key.up('Space');
 
+  const held = new Set();
+  const down = async (code) => { if (!held.has(code)) { held.add(code); await key.down(code); } };
+  const up = async (code) => { if (held.has(code)) { held.delete(code); await key.up(code); } };
+  /** A key press the line asked for, made once per distinct sentence. */
+  let seen = '';
+  /** The line acts after REACT_MS, as a person reading it does. */
+  const REACT_MS = JUNCTION_REACT_MS;
+  const pending = [];
+  const later = (fn) => pending.push({ at: Date.now() + REACT_MS, fn });
+
   const deadline = Date.now() + WAIT_MS;
   let braked = false;
-  let throttle = false;
   let met = null;
   let heldDir = null;
   while (Date.now() < deadline) {
     const d = await readStage(page);
+    const advice = (await page.$eval('.advice', (el) => el.textContent ?? '')).trim();
+    const cue = await page.$eval('.advice', (el) => el.dataset.cue ?? '');
     const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
     if (bad.length) throw new Error(`unexpected penalty ${bad} at zone ${d.zone}\nstate: ${JSON.stringify(d)}`);
     if (met === null && Number(d.lineGap) < 0.8) met = d.light;
     if (d.phase === 'done' || d.disqualified === 'yes') break;
 
-    // Brake on the aid while the light is not green. On green there is no aid and the car goes on.
-    if (pressAid && !braked && d.aidEtaMs !== '' && Number(d.aidEtaMs) === 0) {
-      await key.down('Space');
-      await key.down('ArrowDown');
+    // The aid is the one thing that is not a sentence: the bar's own countdown, which the line tells
+    // the learner to follow ("phanh khi thanh đếm ngược báo").
+    if (pressAid && !braked && d.aidNow === '1') {
+      later(async () => { await up('ArrowUp'); await down('Space'); await down('ArrowDown'); });
       braked = true;
-      if (throttle) { await key.up('ArrowUp'); throttle = false; }
-      console.log(`     the aid said now at ${d.aidGapMm} mm (light ${d.light}, gap ${d.lineGap} m)`);
+      console.log(`     the bar said now at ${d.aidGapMm} mm (light ${d.light}, gap ${d.lineGap} m)`);
     }
-    // Green with the car held at the line: signal, release, and go on.
-    if (braked === true && d.light === 'green' && Number(d.speed) < 0.05) {
-      if (d.signal !== 'right') await key.press('KeyW');
-      await key.up('ArrowDown');
-      await key.up('Space');
-      braked = 'away';
+
+    // Everything else is the sentence. Each branch is one of the page's own instructions.
+    if (advice !== seen) {
+      seen = advice;
+      if (advice.includes('bấm 1 để vào số')) later(async () => { await down('Space'); await key.press('Digit1'); });
+      else if (advice.includes('Bấm P để nhả')) later(async () => { await key.press('KeyP'); await up('Space'); });
+      else if (advice.includes('xi nhan phải (W)')) {
+        if (d.signal !== 'right') later(() => key.press('KeyW'));
+      } else if (advice.includes('nhả ga ↑ ra')) later(() => up('ArrowUp'));
+      else if (advice.includes('Giữ ga ↑')) later(() => down('ArrowUp'));
+      else if (advice.includes('phanh ↓')) later(() => down('ArrowDown'));
+      if (advice.includes('nhả phanh cho xe đi')) later(async () => { await up('ArrowDown'); await up('Space'); });
+      if (advice.includes('Đánh lái → sang phải')) later(() => down('ArrowRight'));
+      else if (advice.includes('Trả lái ← lại')) later(async () => { await up('ArrowRight'); await down('ArrowLeft'); });
+      else if (advice.includes('thả phím ← →') || advice.includes('Giữ lái cho thẳng')) later(async () => { await up('ArrowLeft'); await up('ArrowRight'); });
     }
-    if (Number(d.lineGap) < 0.8 && met === null) met = d.light;
-    // Past the line (or pulling away): steer by the page's own cue, and keep the pace up.
-    if (braked === 'away' || (braked === false && Number(d.lineGap) < 0)) {
-      if (d.signal !== 'right') await key.press('KeyW');
-      const cue = steerOut ? 'right' : await page.$eval('.advice', (el) => el.dataset.cue ?? '');
-      const dir = cue === 'left' ? 'ArrowLeft' : cue === 'right' ? 'ArrowRight' : null;
-      if (dir !== heldDir) {
-        if (heldDir) await key.up(heldDir);
-        heldDir = dir;
-        if (dir) await key.down(dir);
-      }
-      const want = Number(d.speed) < JUNCTION_PACE_MPS - 0.3;
-      if (want && !throttle) { await key.down('ArrowUp'); throttle = true; }
-      if (!want && throttle && Number(d.speed) > JUNCTION_PACE_MPS + 0.3) { await key.up('ArrowUp'); throttle = false; }
+    // The steering key is the cue, as on the figures: one key, held or let go.
+    const wantDir = steerOut ? 'ArrowRight' : cue === 'left' ? 'ArrowLeft' : cue === 'right' ? 'ArrowRight' : null;
+    if (wantDir !== heldDir) {
+      if (heldDir) await up(heldDir);
+      heldDir = wantDir;
+      if (heldDir) await down(heldDir);
+    }
+    for (let i = pending.length - 1; i >= 0; i -= 1) {
+      if (Date.now() >= pending[i].at) await pending.splice(i, 1)[0].fn();
     }
     await page.waitForTimeout(JUNCTION_POLL_MS);
   }
-  if (heldDir) await key.up(heldDir);
-  if (throttle) await key.up('ArrowUp');
+  for (const code of [...held]) await key.up(code);
+  for (const { fn } of pending.splice(0)) void fn;
   if (met !== arrive) throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival`);
   await until(page, 'end of the junction', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
   const end = await readStage(page);
