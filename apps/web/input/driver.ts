@@ -53,6 +53,7 @@ export const KEY = {
   engine: 'KeyE',
   belt: 'KeyB',
   signalLeft: 'KeyQ',
+  signalRight: 'KeyW',
   handbrake: 'KeyP',
   order: 'Enter',
   neutral: ['KeyN', 'Digit0', 'Numpad0'],
@@ -88,6 +89,7 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
   KEY.engine,
   KEY.belt,
   KEY.signalLeft,
+  KEY.signalRight,
   KEY.handbrake,
   KEY.order,
   ...KEY.neutral,
@@ -96,11 +98,11 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** One source for the on-screen legend. */
-export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: true; noFigure?: true }> = [
+export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: true; noFigure?: true; signals?: true }> = [
   { keys: 'E', does: 'Nổ máy (cần về số 0 hoặc đạp côn)' },
   { keys: 'B', does: 'Thắt / tháo dây an toàn', bai1Only: true },
   { keys: 'Enter', does: 'Giám khảo phát lệnh xuất phát (đèn xanh)', bai1Only: true },
-  { keys: 'Q', does: 'Xi nhan trái bật / tắt', bai1Only: true },
+  { keys: 'Q / W', does: 'Xi nhan trái / phải: bật, bật cái kia là tắt cái này, bấm lại để tắt', signals: true },
   { keys: 'P', does: 'Phanh tay nhả / kéo' },
   { keys: 'Space hoặc Shift', does: 'Côn: giữ để đạp, nhả từ từ để vào điểm bắt' },
   { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)' },
@@ -114,8 +116,11 @@ export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: 
  * driven at the car's own idle creep, so they use neither throttle nor brake (measured: both clean
  * with neither pressed).
  */
-export const legendFor = (lesson: 1 | 3 | 4 | 6) =>
-  KEY_LEGEND.filter((entry) => (lesson === 1 || !entry.bai1Only) && (lesson < 4 || !entry.noFigure));
+export const legendFor = (lesson: number, signals = lesson === 1) =>
+  KEY_LEGEND.filter((entry) => {
+    if (entry.signals) return signals;
+    return (lesson === 1 || !entry.bai1Only) && (lesson < 4 || !entry.noFigure);
+  });
 
 /** What the driver needs to know about the car; read from the sim state of the previous tick. */
 export interface DriveView {
@@ -142,7 +147,8 @@ export function createDriver(): Driver {
   const pedals = { throttle: 0, brake: 0, clutch: 0, steer: 0 };
   let gear = 0;
   let belt = false;
-  let signalLeft = false;
+  /** The turn stalk: 0 off, 1 left, 2 right. Pressing a side cancels the other, as a real stalk does. */
+  let signal = 0;
   let handbrake = true;
   let ordered = false;
   let crankLeft = 0;
@@ -162,7 +168,8 @@ export function createDriver(): Driver {
     step(held, pressed, view) {
       for (const code of pressed) {
         if (code === KEY.belt) belt = !belt;
-        else if (code === KEY.signalLeft) signalLeft = !signalLeft;
+        else if (code === KEY.signalLeft) signal = signal === 1 ? 0 : 1;
+        else if (code === KEY.signalRight) signal = signal === 2 ? 0 : 2;
         else if (code === KEY.handbrake) handbrake = !handbrake;
         else if (code === KEY.order) ordered = true;
         else if (code === KEY.engine) {
@@ -204,7 +211,8 @@ export function createDriver(): Driver {
 
       let flags = 0;
       if (belt) flags |= FLAG.BELT;
-      if (signalLeft) flags |= FLAG.LEFT;
+      if (signal === 1) flags |= FLAG.LEFT;
+      if (signal === 2) flags |= FLAG.RIGHT;
       if (handbrake) flags |= FLAG.HANDBRAKE;
       if (ordered) flags |= FLAG.ORDER;
       if (crankLeft > 0) {

@@ -53,6 +53,13 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const audioEl = useRef<HTMLParagraphElement>(null);
   const hillEl = useRef<HTMLElement>(null);
   const advice = useRef<HTMLParagraphElement>(null);
+  const aidEl = useRef<HTMLDivElement>(null);
+  const aidFill = useRef<HTMLDivElement>(null);
+  const aidMark = useRef<HTMLDivElement>(null);
+  const aidKey = useRef<HTMLSpanElement>(null);
+  const aidIn = useRef<HTMLSpanElement>(null);
+  /** The widest gap the aid has been seen at, so the bar's scale does not jump as the car rolls up. */
+  const spanRef = useRef(12);
   /** The figure's centreline, read once from the core; the same polyline the scene draws. */
   const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run]);
   const bai3 = exercise.lesson === 3;
@@ -61,6 +68,9 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
 
   useEffect(() => {
     const hill = hillEl.current ? hillParts(hillEl.current) : null;
+    const aidParts = aidEl.current
+      ? { el: aidEl.current, fill: aidFill.current!, mark: aidMark.current!, key: aidKey.current!, inn: aidIn.current! }
+      : null;
     const fig = figureEl.current ? figureParts(figureEl.current) : null;
     const stop = run.onFrame(() => {
       const s = run.state;
@@ -73,6 +83,11 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (gear.current) gear.current.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
       if (bumper.current) bumper.current.textContent = s.frontBumperM.toFixed(2);
       if (hill) paintHill(hill, s, ruleset);
+      if (aidParts) {
+        const aid = exercise.stop(s, ruleset);
+        if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
+        paintAid(aidParts, aid, spanRef.current);
+      }
       if (fig) paintFigure(fig, s);
       if (score.current) score.current.textContent = s.disqualified ? 'ĐÌNH CHỈ' : String(s.score);
       if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified, exercise.lesson);
@@ -156,6 +171,18 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             </strong>
             <small data-part="limit" />
           </div>
+          {exercise.stops ? (
+            <div className="aid" data-aid="stop" ref={aidEl} data-state="idle">
+              <div className="aid-track">
+                <div className="aid-fill" ref={aidFill} />
+                <div className="aid-mark" ref={aidMark} />
+              </div>
+              <p className="aid-now">
+                <span className="aid-key" ref={aidKey} />
+                <span className="aid-in" ref={aidIn} />
+              </p>
+            </div>
+          ) : null}
           <p className="advice" ref={advice} />
         </section>
       ) : null}
@@ -289,7 +316,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       <section className="hud-keys" aria-label="Phím">
         <h2>Phím</h2>
         <ul>
-          {legendFor(exercise.lesson).map((entry) => (
+          {legendFor(exercise.lesson, exercise.signals).map((entry) => (
             <li key={entry.keys}>
               <span className="key">{entry.keys}</span>
               {entry.does}
@@ -382,6 +409,44 @@ function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ru
   t.value.textContent = left === null ? '—' : `${Math.ceil(left)} s`;
   t.limit.textContent = left === null ? 'tính từ lúc dừng xe' : 'để qua vạch';
   t.cell.dataset.state = left === null ? 'neutral' : left < 10 ? 'warn' : 'ok';
+}
+
+/** The aid bar's parts, looked up once so the 60 Hz paint touches no selector. */
+interface AidParts {
+  el: HTMLElement;
+  fill: HTMLElement;
+  mark: HTMLElement;
+  key: HTMLElement;
+  inn: HTMLElement;
+}
+
+/**
+ * The stop aid, as something to time against rather than a number to read: a bar that shrinks as the
+ * key comes due, with a marker for where the key should land. The bar is the gap from the bumper to
+ * the line, drawn against the widest gap the aid has ever been shown at, and the marker sits at the
+ * mark's gap — so the fill reaches the marker exactly when the countdown reaches zero, and both keep
+ * moving as the car does. A learner times the crossing, not a number.
+ *
+ * It is deliberately the same simple HUD vocabulary as the rest: a track, a fill and a mark, no art.
+ */
+function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: number) {
+  if (!aid) {
+    parts.el.dataset.state = 'idle';
+    parts.fill.style.width = '0%';
+    parts.mark.style.left = '0%';
+    parts.key.textContent = '';
+    parts.inn.textContent = '';
+    return;
+  }
+  const span = Math.max(widest, aid.gapM);
+  const fillPct = Math.max(0, Math.min(100, (aid.gapM / span) * 100));
+  const markPct = Math.max(0, Math.min(100, (aid.markM / span) * 100));
+  parts.el.dataset.state = aid.etaMs === 0 ? 'now' : 'counting';
+  parts.el.dataset.key = aid.key;
+  parts.fill.style.width = `${fillPct}%`;
+  parts.mark.style.left = `${markPct}%`;
+  parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Phanh';
+  parts.inn.textContent = aid.etaMs === 0 ? 'ngay bây giờ' : `còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 
 function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3 | 4 | 6): string {

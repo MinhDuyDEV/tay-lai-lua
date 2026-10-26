@@ -544,3 +544,71 @@ body {
     max-height: 22vh;
   }
 }
+
+/* The stop aid: a bar that shrinks toward the mark where the critical key should land. Same
+   vocabulary as the gauges — a track, a fill and a mark — because it is something to time against,
+   not a chart. The fill's edge reaches the mark exactly as the countdown reaches zero. */
+
+.hud-hill .aid {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.aid-track {
+  position: relative;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.aid-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: linear-gradient(to right, rgba(95, 209, 138, 0.35), var(--good));
+}
+
+.aid-mark {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: translateX(-1px);
+}
+
+.aid[data-state='now'] .aid-fill {
+  background: linear-gradient(to right, rgba(240, 196, 25, 0.45), var(--accent));
+}
+
+.aid[data-state='now'] .aid-mark {
+  background: var(--text);
+}
+
+.aid[data-state='idle'] {
+  opacity: 0.35;
+}
+
+.aid-now {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.aid-key {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.aid[data-state='now'] .aid-in {
+  color: var(--accent);
+}

@@ -70,6 +70,8 @@ export interface Drivetrain {
   crank_ticks: number;
   /** Newtons of rolling resistance; with `mass_kg` it sets the coast deceleration. */
   rolling_n: number;
+  /** Newtons per (m/s)², the air drag that grows with speed. */
+  drag_n_per_mps2: number;
   brake_max_n: number;
   final_drive: number;
   /** Gear ratios by gear name; `gears['1']` is first. */

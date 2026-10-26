@@ -94,11 +94,11 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       audio.post(run.state);
       // The run changes without a React render; the result card needs one when it ends (or restarts).
       setDone(run.state.phase === 'done' || run.state.disqualified);
-      if (root.current) paint(root.current, run, exercise, glOk, audio.state(), audio.level(), entered);
+      if (root.current) paint(root.current, run, exercise, ruleset, glOk, audio.state(), audio.level(), entered);
     };
     write();
     return run.onFrame(write);
-  }, [run, exercise, glOk, audio, entered]);
+  }, [run, exercise, ruleset, glOk, audio, entered]);
 
   useEffect(() => {
     if (!run) return;
@@ -154,6 +154,10 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-line-gap="0.000"
       data-stop-a="0.000"
       data-rollback="0.000"
+      data-aid-key=""
+      data-aid-eta-ms=""
+      data-aid-gap-mm=""
+      data-aid-mark-mm=""
       data-since-stop="-1"
       data-elevation="0.000"
       data-rpm="850"
@@ -229,7 +233,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
 }
 
 /** Everything the test polls, written on the root element each frame. */
-function paint(el: HTMLElement, run: Run, exercise: Exercise, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
+function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, glOk: boolean, audio: AudioState, level: number, entered: boolean) {
   const s = run.state;
   const d = el.dataset;
   d.tick = String(s.tick);
@@ -256,6 +260,7 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, glOk: boolean, aud
   d.audio = audio;
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
+  paintAid(d, exercise.stop(s, ruleset));
   d.entered = entered ? 'yes' : 'no';
   // Figure runs: everything the advice line reasons about, so a test (and the Supervisor) reads the
   // same numbers the page used.
@@ -279,4 +284,23 @@ async function loadCore(wasmUrl: string, seed: bigint): Promise<() => Session> {
   const bytes = await response.arrayBuffer();
   openSession(bytes, seed).dispose();
   return () => openSession(bytes, seed);
+}
+
+/**
+ * The stop aid on the root element, in the names the Supervisor's scripts and the end-to-end test
+ * read: the key, the milliseconds until it should land, the gap in mm and the gap it should land at.
+ * All four go empty when there is no aid, so "no aid" and "aid with no time left" cannot be confused.
+ */
+function paintAid(d: DOMStringMap, aid: ReturnType<Exercise['stop']>) {
+  if (!aid) {
+    d.aidKey = '';
+    d.aidEtaMs = '';
+    d.aidGapMm = '';
+    d.aidMarkMm = '';
+    return;
+  }
+  d.aidKey = aid.key;
+  d.aidEtaMs = String(aid.etaMs);
+  d.aidGapMm = String(Math.round(aid.gapM * 1000));
+  d.aidMarkMm = String(Math.round(aid.markM * 1000));
 }
