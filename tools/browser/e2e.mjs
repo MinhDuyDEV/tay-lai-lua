@@ -619,6 +619,169 @@ await check('bài 11 crossing without the right signal: SH.KT.KHONG_XI_NHAN_PHAI
   await page.close();
 });
 
+
+// ---- bài 5: the signalled junction -----------------------------------------------------------
+
+/**
+ * The seeds whose arrival at the line is red and green, at this learner's own pace.
+ *
+ * Not chosen by eye. The seed sets the light's phase (`phase_offset`, the seed modulo the cycle) and
+ * the colour is measured on the tick the car reaches the line, in the browser, because the tick the
+ * car reaches it depends on how the learner sets off. Seed 1 is red with 5.2 s left — enough for the
+ * aid to count down — and seed 400 is green with 24.6 s left, so the 20 s clock is nearly all ahead of
+ * the car on arrival. `driveJunction` asserts the colour it actually met, so a seed that drifts fails
+ * here rather than quietly testing the wrong arrival.
+ */
+const JUNCTION_RED_SEED = 1;
+const JUNCTION_GREEN_SEED = 400;
+
+/** The pace the junction is crossed at, m/s. The 20 s clock does not wait for the idle creep. */
+const JUNCTION_PACE_MPS = 3.0;
+/** The learner's polling period on this page, ms. */
+const JUNCTION_POLL_MS = 40;
+
+/**
+ * Drive bài 5: set off, hold a real pace to the line, brake on the aid while the light is not green,
+ * wait, then signal, turn and go through.
+ *
+ * `arrive` is the colour the run asserts it met at the line — the seeds above are chosen for it, and
+ * the assertion is what keeps them honest: a seed that drifts out of its band fails here rather than
+ * quietly turning a red-arrival test into a green-arrival one.
+ */
+async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  await key.down('Space');
+  await until(page, 'clutch down', `Number(d.clutch) > 0.99`, allowed);
+  // The core ignores a gear key on a tick when the clutch was not already fully down (`ShiftGear`
+  // reads the pedal it saw last tick), so a press landing on the way down does nothing. Press, then
+  // look: retrying is what a learner does when the lever does not go in the first time.
+  for (let i = 0; i < 12 && (await readStage(page)).gear !== '1'; i += 1) {
+    await key.press('Digit1');
+    await page.waitForTimeout(120);
+  }
+  await until(page, 'gear 1', `d.gear === '1'`, allowed);
+  await key.press('KeyP');
+  await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
+  await key.up('Space');
+
+  const deadline = Date.now() + WAIT_MS;
+  let braked = false;
+  let throttle = false;
+  let met = null;
+  let heldDir = null;
+  while (Date.now() < deadline) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} at zone ${d.zone}\nstate: ${JSON.stringify(d)}`);
+    if (met === null && Number(d.lineGap) < 0.8) met = d.light;
+    if (d.phase === 'done' || d.disqualified === 'yes') break;
+
+    // Brake on the aid while the light is not green. On green there is no aid and the car goes on.
+    if (pressAid && !braked && d.aidEtaMs !== '' && Number(d.aidEtaMs) === 0) {
+      await key.down('Space');
+      await key.down('ArrowDown');
+      braked = true;
+      if (throttle) { await key.up('ArrowUp'); throttle = false; }
+      console.log(`     the aid said now at ${d.aidGapMm} mm (light ${d.light}, gap ${d.lineGap} m)`);
+    }
+    // Green with the car held at the line: signal, release, and go on.
+    if (braked === true && d.light === 'green' && Number(d.speed) < 0.05) {
+      if (d.signal !== 'right') await key.press('KeyW');
+      await key.up('ArrowDown');
+      await key.up('Space');
+      braked = 'away';
+    }
+    if (Number(d.lineGap) < 0.8 && met === null) met = d.light;
+    // Past the line (or pulling away): steer by the page's own cue, and keep the pace up.
+    if (braked === 'away' || (braked === false && Number(d.lineGap) < 0)) {
+      if (d.signal !== 'right') await key.press('KeyW');
+      const cue = steerOut ? 'right' : await page.$eval('.advice', (el) => el.dataset.cue ?? '');
+      const dir = cue === 'left' ? 'ArrowLeft' : cue === 'right' ? 'ArrowRight' : null;
+      if (dir !== heldDir) {
+        if (heldDir) await key.up(heldDir);
+        heldDir = dir;
+        if (dir) await key.down(dir);
+      }
+      const want = Number(d.speed) < JUNCTION_PACE_MPS - 0.3;
+      if (want && !throttle) { await key.down('ArrowUp'); throttle = true; }
+      if (!want && throttle && Number(d.speed) > JUNCTION_PACE_MPS + 0.3) { await key.up('ArrowUp'); throttle = false; }
+    }
+    await page.waitForTimeout(JUNCTION_POLL_MS);
+  }
+  if (heldDir) await key.up(heldDir);
+  if (throttle) await key.up('ArrowUp');
+  if (met !== arrive) throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival`);
+  await until(page, 'end of the junction', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
+  const end = await readStage(page);
+  return { ...end, met };
+}
+
+let junctionRed = null;
+{
+  await check('bài 5 arriving on red: stop inside A, wait, go on green, signal, turn — score 100', async () => {
+    const { page, problems } = await fresh(`/thi/5?seed=${JUNCTION_RED_SEED}`);
+    const d = await driveJunction(page, { allowed: [], arrive: 'red' });
+    console.log(`     met ${d.met}; A ${d.stopA} m, clock ${d.clockMs} ms at the end, zone ${d.zone}`);
+    if (Number(d.stopA) < 0 || Number(d.stopA) > ruleset.junction.max_a_m) throw new Error(`A ${d.stopA} m is outside the window`);
+    if (d.penalties !== '' || d.score !== '100' || d.disqualified !== 'no') throw new Error(`not a clean junction: ${JSON.stringify(d)}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    junctionRed = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+    await page.close();
+  });
+
+  await check('the bài 5 red trace replays to the hash the page shows', () => replays(junctionRed));
+
+  await check('bài 5 arriving on green: no stop, straight into the turn — score 100', async () => {
+    const { page, problems } = await fresh(`/thi/5?seed=${JUNCTION_GREEN_SEED}`);
+    const d = await driveJunction(page, { allowed: [], arrive: 'green' });
+    console.log(`     met ${d.met}; no stop, clock ${d.clockMs} ms, zone ${d.zone}`);
+    if (d.penalties !== '' || d.score !== '100' || d.disqualified !== 'no') throw new Error(`not a clean junction: ${JSON.stringify(d)}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+
+  await check('bài 5 through the red light: SH.05.VUOT_DEN_DO, −10, quote shown', async () => {
+    const { page, problems } = await fresh(`/thi/5?seed=${JUNCTION_RED_SEED}`);
+    // The learner who ignores the light and drives on: the aid is never taken, so the car goes
+    // through on red and the core charges it as the bumper enters the junction.
+    const d = await driveJunction(page, { allowed: ['SH.05.VUOT_DEN_DO', 'SH.05.KHONG_XI_NHAN'], arrive: 'red', pressAid: false });
+    if (!d.penalties.split(' ').includes('SH.05.VUOT_DEN_DO')) {
+      throw new Error(`the red light was not charged: ${JSON.stringify(d)}`);
+    }
+    const rule = ruleset.rules.find((r) => r.id === 'SH.05.VUOT_DEN_DO');
+    const shown = await page.$eval('[data-penalty="SH.05.VUOT_DEN_DO"] blockquote', (e) => e.textContent);
+    if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    const pts = await page.$eval('[data-penalty="SH.05.VUOT_DEN_DO"] .points', (e) => e.textContent);
+    if (!pts.includes(String(rule.penalty.points))) throw new Error(`points shown "${pts}" for ${rule.penalty.points}`);
+    if (d.lastPenalty === 'SH.05.VUOT_DEN_DO' && d.lastPenaltyQuote !== rule.source.quote) {
+      throw new Error('#stage quote does not match the panel');
+    }
+    console.log(`     charged ${d.penalties} at zone ${d.zone}, score ${d.score}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+
+  await check('bài 5 over the lane edge: SH.05.SAI_VACH_KE, đình chỉ, quote shown', async () => {
+    const { page, problems } = await fresh(`/thi/5?seed=${JUNCTION_GREEN_SEED}`);
+    // The learner who steers out of the lane: past the line the wheel is held hard right through the
+    // arc, which takes the outer front wheel onto the boundary line.
+    const d = await driveJunction(page, { allowed: ['SH.05.SAI_VACH_KE'], arrive: 'green', steerOut: true });
+    if (!d.penalties.split(' ').includes('SH.05.SAI_VACH_KE')) {
+      throw new Error(`the boundary line was not charged: ${JSON.stringify(d)}`);
+    }
+    if (d.lastPenaltyPoints !== 'DISQUALIFY') throw new Error(`đình chỉ not shown: ${d.lastPenaltyPoints}`);
+    const rule = ruleset.rules.find((r) => r.id === 'SH.05.SAI_VACH_KE');
+    const shown = await page.$eval('[data-penalty="SH.05.SAI_VACH_KE"] blockquote', (e) => e.textContent);
+    if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    console.log(`     charged ${d.penalties} at zone ${d.zone}, disqualified ${d.disqualified}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+}
+
   // ---- bài 4 and bài 6: the figure pages ------------------------------------------------------
   for (const lesson of [4, 6]) {
     const page4 = `/thi/${lesson}`;
