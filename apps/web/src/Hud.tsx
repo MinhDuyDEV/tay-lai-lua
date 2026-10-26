@@ -446,7 +446,7 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   parts.fill.style.width = `${fillPct}%`;
   parts.mark.style.left = `${markPct}%`;
   parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Phanh';
-  parts.inn.textContent = aid.etaMs === 0 ? 'ngay bây giờ' : `còn ${(aid.etaMs / 1000).toFixed(1)} s`;
+  parts.inn.textContent = aid.etaMs === 0 ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 
 function phaseLabel(phase: string, disqualified: boolean, lesson: 1 | 3 | 4 | 6): string {
