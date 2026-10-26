@@ -551,12 +551,14 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   const span = Math.max(widest, aid.gapM);
   const fillPct = Math.max(0, Math.min(100, (aid.gapM / span) * 100));
   const markPct = Math.max(0, Math.min(100, (aid.markM / span) * 100));
-  parts.el.dataset.state = aid.etaMs === 0 ? 'now' : 'counting';
+  // The words turn to "bấm ngay" a reaction before the bar meets its mark, so both a learner reading
+  // the sentence and one watching the bar stop at the same place.
+  parts.el.dataset.state = aid.now ? 'now' : 'counting';
   parts.el.dataset.key = aid.key;
   parts.fill.style.width = `${fillPct}%`;
   parts.mark.style.left = `${markPct}%`;
   parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Phanh';
-  parts.inn.textContent = aid.etaMs === 0 ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
+  parts.inn.textContent = aid.now ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 
 function phaseLabel(phase: string, disqualified: boolean, lesson: Lesson): string {

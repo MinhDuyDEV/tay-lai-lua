@@ -39,6 +39,8 @@ const bytes = () => wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteO
 const MAX_A = ruleset.hill!.max_a_m;
 /** Poll periods the Supervisor's script and a person between them cover. */
 const POLES_MS = [16, 50, 80, 250, 500] as const;
+/** How often a person reading a live page samples it: a repaint, not a stopwatch. */
+const LITERAL_POLES_MS = [16, 50] as const;
 /** Anticipation error swept in 25 ms steps; the gate is the inner set, the outer is reported. */
 const E_GATE_MS = 100;
 const E_REPORT_MS = 150;
@@ -123,6 +125,12 @@ function drive(opts: {
   pollMs: number;
   phaseMs: number;
   errorMs: number;
+  /**
+   * `plan`: the anticipating learner — the planned press is the read time plus `eta`, re-planned on
+   * every read (the brief's model). `literal`: the learner who waits for the page to say "bấm ngay"
+   * and then reacts, so the press lands `errorMs` after the words turn to now.
+   */
+  learner?: 'plan' | 'literal';
 }): Result {
   const session = openSession(bytes(), opts.seed);
   const driver = createDriver();
@@ -139,8 +147,20 @@ function drive(opts: {
   /** True once a read has seen the countdown at 0: from then on the plan is kept, never re-armed. */
   let due = false;
   let clutchFromMs = Infinity;
+  /** The literal learner's own clock: when the page first said "bấm ngay". */
+  let nowAtMs = Infinity;
+  let aidSeen = false;
   let presses = 0;
   const codes: number[] = [];
+  /**
+   * When this learner presses, in run milliseconds. The anticipating learner presses at its plan plus
+   * its error; the literal learner presses a reaction after the page says "bấm ngay". One function, so
+   * the press and the clutch that leads it cannot disagree.
+   */
+  const pressatMs = (): number =>
+    opts.learner === 'literal'
+      ? (nowAtMs === Infinity ? Infinity : nowAtMs + opts.errorMs)
+      : planMs + opts.errorMs;
   /** One set-up state machine per run: it remembers what it has already pressed. */
   const setUp = setUpFor(opts.lesson);
 
@@ -152,20 +172,33 @@ function drive(opts: {
       if (ms >= nextReadMs) {
         nextReadMs = ms + opts.pollMs;
         const aid = stopAid(view(s), ruleset, opts.road);
+        if (aid) aidSeen = true;
+        const literal = opts.learner === 'literal';
         if (aid && !due) {
-          // Replan from this read while the countdown is still running: the planned press is the read
-          // time plus the countdown, which is an absolute moment and does not drift with the polling.
-          if (aid.etaMs > 0) planMs = ms + aid.etaMs;
-          // A read that sees 0 does not move the plan later — that is "it keeps its plan, it does not
-          // re-arm later" — it only gives a learner with no plan yet something to act on now.
-          else if (!havePlan) planMs = ms;
+          if (literal) {
+            // The learner who reads the words: the page says "bấm ngay" when `etaMs` reaches 0, which
+            // leads the bar's mark by a reaction band, and the press lands `errorMs` after that.
+            if (aid.now && nowAtMs === Infinity) nowAtMs = ms;
+          } else {
+            // Replan from this read while the countdown is still running: the planned press is the
+            // read time plus the countdown, an absolute moment that does not drift with the polling.
+            if (!aid.now) planMs = ms + aid.etaMs;
+            // A read that sees 0 does not move the plan later — "it keeps its plan, it does not
+            // re-arm later" — it only gives a learner with no plan yet something to act on now.
+            else if (!havePlan) planMs = ms;
+          }
           havePlan = true;
-          if (aid.etaMs === 0) due = true;
-          if (opts.clutchLeadMs !== undefined) clutchFromMs = Math.min(clutchFromMs, planMs - opts.clutchLeadMs);
+          if (aid.now) due = true;
+          // When this learner will actually press. The clutch goes down ahead of *that*, for both
+          // learners and for the same reason: the advice line asks for the clutch first, and a brake
+          // in gear stalls the engine. A learner with no plan yet cannot lead anything.
+          if (pressatMs() !== Infinity && opts.clutchLeadMs !== undefined) {
+            clutchFromMs = Math.min(clutchFromMs, pressatMs() - opts.clutchLeadMs);
+          }
         }
       }
       if (ms >= clutchFromMs) keys.add('Space');
-      if (havePlan && ms >= planMs + opts.errorMs) {
+      if (havePlan && ms >= pressatMs()) {
         keys.add('Space');
         if (opts.road.key === 'brake') keys.add('ArrowDown');
         presses += 1;
@@ -200,14 +233,20 @@ function codeOf(before: SimState, after: SimState): number[] {
 }
 
 /** Every poll period at three phases and every error, against one road. */
-function sweep(road: StopRoad, extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number }, maxErrorMs: number) {
+function sweep(
+  road: StopRoad,
+  extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number; learner?: 'plan' | 'literal' },
+  maxErrorMs: number,
+  stepMs = 25,
+  polesMs: readonly number[] = POLES_MS,
+) {
   const failures: string[] = [];
   let runs = 0;
   let low = Infinity;
   let high = -Infinity;
-  for (const pollMs of POLES_MS) {
+  for (const pollMs of polesMs) {
     for (const phaseMs of [0, pollMs / 3, (2 * pollMs) / 3]) {
-      for (let errorMs = -maxErrorMs; errorMs <= maxErrorMs; errorMs += 25) {
+      for (let errorMs = -maxErrorMs; errorMs <= maxErrorMs; errorMs += stepMs) {
         const r = drive({ ...extra, road, pollMs, phaseMs, errorMs });
         runs += 1;
         low = Math.min(low, r.A);
@@ -224,19 +263,57 @@ function sweep(road: StopRoad, extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s
   return { failures, runs, low, high };
 }
 
-test('bài 3: a learner polling 16 to 500 ms and pressing within 100 ms of the countdown stops inside A, every time', () => {
-  const { failures, runs, low, high } = sweep(hillRoad, { seed: seedWord(3), lesson: 3 }, E_GATE_MS);
-  console.log(`     bài 3: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${MAX_A}`);
-  assert.deepEqual(failures, []);
-});
+/**
+ * The four pages the stop aid has to serve, each with its own scene: bài 3's slope (the clutch times
+ * it), and bài 2, bài 9 and bài 5's flat road (the brake does). bài 5 is driven on a red light so the
+ * aid is there at all; its own stop line and its own window are the core's.
+ */
+const PAGES: ReadonlyArray<{ name: string; road: StopRoad; seed: bigint; lesson: 2 | 3; maxA: number; clutchLeadMs?: number }> = [
+  { name: 'bài 3', road: hillRoad, seed: seedWord(3), lesson: 3, maxA: MAX_A },
+  { name: 'bài 2', road: flatRoad('brake'), seed: seedWord(2), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
+  { name: 'bài 9', road: flatRoad('brake'), seed: seedWord(9), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
+  // Seed 1 is the red arrival the page opens on, so the light asks for the stop.
+  { name: 'bài 5 (red)', road: flatRoad('brake'), seed: seedWord(5, 1n), lesson: 2, maxA: ruleset.junction!.max_a_m, clutchLeadMs: 600 },
+];
 
-test('bài 2: the same learner, on the brake, stops inside A every time', () => {
-  // bài 2's own scene: its stop line, its stop zone, its codes. The clutch goes down 600 ms before the
-  // planned brake, as the advice line says; the brake is what the countdown times.
-  const { failures, runs, low, high } = sweep(flatRoad('brake'), { seed: seedWord(2), lesson: 2, clutchLeadMs: 600 }, E_GATE_MS);
-  console.log(`     bài 2: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${ruleset.road!.max_a_m}`);
-  assert.deepEqual(failures, []);
-});
+// (a) the anticipating learner: reads the countdown every P ms, plans the press at read + eta, and
+// presses within ±100 ms of that plan. This is the brief's learner, and it starts where the page
+// starts: before the car is moving, so the whole approach from rest is in the run.
+for (const page of PAGES) {
+  test(`${page.name}: a learner polling 16 to 500 ms and pressing within 100 ms of the countdown stops inside A`, () => {
+    const { failures, runs, low, high } = sweep(
+      page.road,
+      { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'plan' },
+      E_GATE_MS,
+    );
+    console.log(`     ${page.name}: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${page.maxA}`);
+    assert.deepEqual(failures, []);
+  });
+}
+
+// (b) the literal learner: waits for the page to say "bấm ngay" and then reacts, 150 to 350 ms later.
+// This is a different signal from (a)'s — the words lead the bar's mark by a reaction band — so both
+// are gated rather than one standing in for the other.
+for (const page of PAGES) {
+  test(`${page.name}: a learner who presses 150 to 350 ms after "bấm ngay" stops inside A`, () => {
+    const { failures, runs, low, high } = sweep(
+      page.road,
+      { seed: page.seed, lesson: page.lesson, clutchLeadMs: page.clutchLeadMs, learner: 'literal' },
+      350,
+      25,
+      LITERAL_POLES_MS,
+    );
+    console.log(`     ${page.name} (literal): A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m`);
+    // Only the reaction band is the gate here: the sweep also covers 0 to 350 ms, and a 0 ms reaction
+    // is a learner who presses exactly when the words change, which is not a person.
+    const band = failures.filter((line) => {
+      const m = /error (-?\d+) ms/.exec(line);
+      return m !== null && Number(m[1]) >= 150 && Number(m[1]) <= 350;
+    });
+    console.log(`     ${page.name} band failures: ${band.length}\n       ${band.slice(0,6).join('\n       ')}`);
+    assert.deepEqual(band, [], `${band.length} of the reaction-band runs missed A`);
+  });
+}
 
 test('-150 to +150 ms is reported, not gated: the window has that much to spare or it does not', () => {
   const hill = sweep(hillRoad, { seed: seedWord(3), lesson: 3 }, E_REPORT_MS);

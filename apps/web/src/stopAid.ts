@@ -1,27 +1,22 @@
 // The stop aid: when to press the one key that decides whether the car stops inside A.
 //
-// A is 500 mm ("khoảng cách A không quá 500mm" — bài 2, 3, 5 and 9 all quote it), and at the
-// keyboard's idle creep the car covers it in a third of a second. A cue that says "press now" cannot
-// fit that: a person reading the line is 100 to 500 ms behind it and the page is polled
-// (`input/stop-aid-feel.test.ts` sweeps 16 to 500 ms). So the aid is a *countdown to a key landing*,
-// not a trigger. Everything here comes from the ruleset's own numbers and the keyboard's pedal rates
-// (`FEEL`), and the zero point sits in the middle of the window: a press with no timing error lands
-// at A_MID_M, leaving half of A for being early or late.
+// A is 500 mm ("khoảng cách A không quá 500mm" — bài 2, 3, 5 and 9 all quote it), and at the car's
+// creep it covers that in a third of a second. A cue that means "press at this instant" cannot fit
+// that, and neither can one that means "press when I say now": a person reading the line is 150 to
+// 350 ms behind it and the page is polled. So the aid is two moments, not one:
 //
-// The countdown is `the road left before the press / the speed the car has now`, where the press
-// point is the gap at which pressing *this instant* would stop the car at A_MID_M. Both halves come
-// from the car as it is: the gap and the speed are the core's own `line_gap_m` and `speed_mps`, and
-// the stop length is the core's motion arithmetic (`vehicle.rs` `step_motion`) run forward — rolling
-// plus drag·v², gravity along the grade where the stop happens, the brake growing at
-// `FEEL.brake.rise`, and the engine still holding the car while the clutch pedal goes down. So a
-// stale reading is still honest to half a second: the gap closes at the speed the learner can see,
-// and the mark moves by only as much as the car's speed does in that time.
+//   * the *bar's mark* is where a press with no timing error lands the car: a key that lands at the
+//     mark stops the car at A_MID_M, the middle of the window;
+//   * the *"bấm ngay" text* leads that mark by LEAD_MS, so a learner who reads it and reacts inside the
+//     band presses around the mark. The text is a trigger for a human; the bar is the exact geometry.
 //
-// Which key is critical is a property of the road, not of one exercise. On a grade it is the clutch:
-// pressing it opens the drive, and the slope's gravity does the stopping. On the flat the road takes
-// only ~0.12 m/s² off a coasting car, so the brake is the only thing that stops it — and the clutch
-// is asked for before it (a brake in gear stalls the engine), which is the advice line's job, not
-// the countdown's.
+// Both are computed by running the core's own motion forward from the state the car is in — speed,
+// the engine and clutch as they actually are, the grade under the road ahead — not by holding the
+// current speed. That distinction is the whole of the earlier bug: the page's approach starts from
+// rest about 2 m before the line, so at the moment the aid appears the car is still accelerating
+// toward its creep. A countdown computed as `gap / speed` treats it as already at creep, says "now"
+// far too early, and every learner who believed it stopped short of the window or past it
+// (`stop-aid-feel.test.ts` measures this on bài 2, 3 and 9's own scenes, from the page's start state).
 
 import { DT, FEEL } from '../input/driver.ts';
 import { GRAVITY_MPS2, type Ruleset } from './ruleset.ts';
@@ -47,8 +42,17 @@ export const flatRoad = (key: StopKey): StopRoad => ({ grade: () => 0, key });
 /** What the page publishes, and what the HUD's bar draws. */
 export interface StopAid {
   key: StopKey;
-  /** Milliseconds until the key should land; 0 once it is due. */
+  /**
+   * Milliseconds until the key should land for the stop to be at A_MID_M: the bar's countdown, and the
+   * moment a learner watching the bar meets its mark presses at. 0 once that moment has passed.
+   */
   etaMs: number;
+  /**
+   * True once the *words* should say "bấm ngay": `LEAD_MS` before the mark, so a learner who reads the
+   * line and presses a reaction later still lands on it. Separate from `etaMs` on purpose — one number
+   * cannot serve both a learner timing the bar and a learner answering the sentence.
+   */
+  now: boolean;
   /** Front bumper to the line, metres, signed: positive while short of it. */
   gapM: number;
   /** The gap at which the key should land, metres. */
@@ -57,10 +61,17 @@ export interface StopAid {
 
 /**
  * Where a press with no timing error lands, metres short of the line: the middle of A's 500 mm
- * window, so being early and being late both have half of it to spend. `stop-aid-feel.test.ts`
- * measures where the sweep actually lands and this is set from that, not the other way round.
+ * window, so being early and being late both have half of it to spend.
  */
 export const A_MID_M = 0.27;
+
+/**
+ * How far the "bấm ngay" text leads the bar's mark, milliseconds. A learner who reads the words and
+ * presses 150 to 350 ms later presses within 25 ms of the mark if the text leads by the middle of
+ * that band. The bar itself is not moved: a learner watching the bar meet its mark presses at the
+ * mark, and both are the same stop.
+ */
+export const LEAD_MS = 250;
 
 /** A deceleration below this is none at all: a level road with no brake in reach. */
 const EPS = 1e-6;
@@ -68,15 +79,25 @@ const EPS = 1e-6;
 /** Below this the car is standing still and there is nothing to time. */
 const MOVING_MPS = 0.05;
 /**
- * How far ahead the countdown is worth publishing, seconds. Past this the countdown rests on the car
- * holding its speed for that long, which nobody can promise — it is still picking up or shedding
- * speed — so the number would be a clock rather than a key to time. It also bounds the bar's scale:
- * a learner sees at most `còn 4.9 s` when the aid appears.
+ * How far ahead the *countdown* is worth publishing, seconds. Past this the forward run rests on the
+ * car holding its line for that long, which nobody can promise — it is still picking up speed — so the
+ * number would be a clock rather than a key to time. It also bounds the bar's scale.
  */
 const MAX_ETA_S = 5;
-/** The forward run of a stop gives up after this long, seconds: a `clutch` press on the flat
- * decelerates at a tenth of a m/s². */
+/**
+ * How far ahead the planner will search for the mark, seconds. Larger than `MAX_ETA_S` because the
+ * search has to reach the mark before the aid decides there is nothing to publish: on bài 3 the car
+ * sets off ~14 m from the line and takes several seconds to get there, and a search that gave up
+ * inside the publish window would report "due now" from the far end of the approach. What the learner
+ * is shown is still capped by `MAX_ETA_S`.
+ */
+const MAX_SEARCH_S = 40;
+/** The forward run gives up after this long, seconds: a coast on the flat decelerates at a
+ * tenth of a m/s². */
 const MAX_RUN_S = 30;
+
+/** RPM -> rad/s, as `vehicle.rs`. */
+const RADPS_PER_RPM = (Math.PI * 2) / 60;
 
 /** Deceleration of the road alone at `v`, m/s²: gravity along the grade plus rolling and air drag. */
 function roadDecel(ruleset: Ruleset, grade: number, v: number): number {
@@ -85,18 +106,58 @@ function roadDecel(ruleset: Ruleset, grade: number, v: number): number {
   return GRAVITY_MPS2 * sinSlope + (rolling + drag * v * v) / ruleset.vehicle.mass_kg;
 }
 
+/** The engine's indicated torque at `rpm` with the throttle at `throttle` (`vehicle.rs` engine_torque). */
+function engineTorque(ruleset: Ruleset, rpm: number, throttle: number): number {
+  const d = ruleset.drivetrain;
+  const r = rpm / d.indicated_ref_rpm;
+  const shape = Math.min(1, Math.max(0, 1 - (r - 0.5) * (r - 0.5) * 1.6));
+  return d.indicated_torque_nm * shape * Math.min(1, Math.max(0, throttle));
+}
+
+/**
+ * Torque the partly closed clutch carries, positive when it drags the engine down
+ * (`vehicle.rs` clutch_torque). `gear` is first, which every stop line here is driven in.
+ */
+function clutchTorque(ruleset: Ruleset, rpm: number, v: number, clutch: number): number {
+  const d = ruleset.drivetrain;
+  const ratio = d.gears['1'];
+  if (ratio === undefined) return 0;
+  const engagement = 1 - Math.min(1, Math.max(0, clutch));
+  if (engagement <= 0) return 0;
+  const driven = (v / ruleset.vehicle.wheel_radius_m) * ratio * d.final_drive;
+  const slip = rpm * RADPS_PER_RPM - driven;
+  const carried = Math.min(d.clutch_capacity_nm, Math.max(-d.clutch_capacity_nm, d.clutch_stiffness_nm_per_rad_s * slip));
+  return carried * engagement;
+}
+
+/** The drive force at the contact patch, from a clutch torque and first gear (`vehicle.rs`). */
+function driveForce(ruleset: Ruleset, torqueNm: number): number {
+  const d = ruleset.drivetrain;
+  const ratio = d.gears['1'];
+  if (ratio === undefined) return 0;
+  return (torqueNm * ratio * d.final_drive) / ruleset.vehicle.wheel_radius_m;
+}
+
 /**
  * How much road the car still covers, and how long it takes, from the moment the critical key lands
- * at `v0` until it stands still.
+ * at `v0` with the engine at `rpm0`, until it stands still.
  *
  * `brake` is taken with the clutch already down: the engine is out of it and the pedal is all that is
- * stopping the car. `clutch` starts with the drive still carrying the car: the engine feeds the
- * road's own resistance through the clutch, so the car holds its speed until the pedal has gone
- * through the middle of its bite zone, and the road alone has it from there on. Both phases and the
- * two rates come from `FEEL` — the same numbers the driver presses the pedals with — so a car with a
- * different brake or a different bite zone gets a different answer.
+ * stopping the car. `clutch` starts with the drive still carrying the car: the pedal takes
+ * `(biteLow + biteHigh) / 2 / press` seconds to reach its bite, and until then the engine holds the
+ * car; after that the road alone has it. Both pedal rates come from `FEEL` — the same numbers the
+ * driver presses with — so a car with a different brake or bite zone gets a different answer.
  */
-export function stopTravel(ruleset: Ruleset, v0: number, grade: number, key: StopKey): { travelM: number; timeS: number } {
+export function stopTravel(
+  ruleset: Ruleset,
+  v0: number,
+  grade: number | StopRoad,
+  key: StopKey,
+  /** The gap to the line where the stop begins. Read only by a road whose grade varies along it. */
+  fromGapM = 0,
+): { travelM: number; timeS: number } {
+  /** The grade the car is on after `m` metres of the stop. A road that varies is walked, not assumed. */
+  const gradeAt = typeof grade === 'number' ? () => grade : (m: number) => grade.grade(fromGapM - m);
   const mass = ruleset.vehicle.mass_kg;
   const brakeMaxN = ruleset.drivetrain.brake_max_n;
   const { biteHigh, biteLow, press: pressRate } = FEEL.clutch;
@@ -107,12 +168,12 @@ export function stopTravel(ruleset: Ruleset, v0: number, grade: number, key: Sto
   let travelM = 0;
   let timeS = 0;
   // The drive holds the car at its speed; measured, this is where a clutch press starts costing road.
-  const carried = Math.min(carriedS, v0 / Math.max(roadDecel(ruleset, grade, v0), EPS));
+  const carried = Math.min(carriedS, v0 / Math.max(roadDecel(ruleset, gradeAt(0), v0), EPS));
   travelM += v0 * carried;
   timeS += carried;
   for (let i = 0; i < MAX_RUN_S / DT && v > 0; i += 1) {
     if (key === 'brake') brake = Math.min(1, brake + FEEL.brake.rise * DT);
-    const decel = roadDecel(ruleset, grade, v) + (brakeMaxN * brake) / mass;
+    const decel = roadDecel(ruleset, gradeAt(travelM), v) + (brakeMaxN * brake) / mass;
     // The order the core integrates in: the new speed, then the road covered at it.
     v = Math.max(0, v - decel * DT);
     travelM += v * DT;
@@ -122,17 +183,70 @@ export function stopTravel(ruleset: Ruleset, v0: number, grade: number, key: Sto
 }
 
 /**
- * The gap at which pressing now stops the car at A_MID_M, or null when even a press now cannot make
- * the window: the car comes to rest short of A_MID_M on its own, so no key would be needed.
- *
- * The stop's own grade is read where the stop happens, and the stop happens `travelM` past the mark,
- * so the mark and the grade are taken as a fixed point; it settles in one step on a straight approach
- * to a line, which is the only kind there is.
+ * Where a press must land for the car to stop at A_MID_M, given the state now: walk the free run
+ * forward until a stop from that point would end at the mark. Solved by bisection on the moment,
+ * because a press early stops the car short of the line and a press late carries it over, so the
+ * gap a press must happen at is monotonic in time.
  */
-function pressGapM(ruleset: Ruleset, v: number, road: StopRoad): number {
-  let mark = A_MID_M + stopTravel(ruleset, v, road.grade(A_MID_M), road.key).travelM;
-  mark = A_MID_M + stopTravel(ruleset, v, road.grade(mark), road.key).travelM;
-  return mark;
+function pressPoint(
+  ruleset: Ruleset,
+  now: { v: number; rpm: number; clutch: number; throttle: number },
+  road: StopRoad,
+  gapM: number,
+): { etaS: number; gapM: number } | null {
+  // Walk the free run forward — nothing more pressed, feet where they are — to the moment where
+  // `gap - what a stop still costs` reaches the mark. That gap is monotonic in time (later means less
+  // road), so the first sample that crosses the mark brackets it and interpolation lands on it.
+  let prev = { t: 0, v: now.v, gap: gapM };
+  const d = ruleset.drivetrain;
+  const vehicle = ruleset.vehicle;
+  let v = now.v;
+  let rpm = now.rpm;
+  let gap = gapM;
+  let t = 0;
+  for (let i = 0; i < MAX_SEARCH_S / DT; i += 1) {
+    const governor = Math.min(d.idle_max_nm, Math.max(0, (d.idle_target_rpm - rpm) * d.idle_gain_nm_per_rpm));
+    const indicated = engineTorque(ruleset, rpm, now.throttle);
+    const friction = d.friction_base_nm + d.friction_per_rpm * rpm;
+    const drag = clutchTorque(ruleset, rpm, v, now.clutch);
+    rpm += ((indicated + governor - friction - drag) / d.engine_inertia_kgm2 * DT) / RADPS_PER_RPM;
+    if (rpm < d.stall_rpm) rpm = d.stall_rpm;
+    const driveN = driveForce(ruleset, clutchTorque(ruleset, rpm, v, now.clutch));
+    const grade = road.grade(gap);
+    const slopeN = -(vehicle.mass_kg * GRAVITY_MPS2 * (grade / Math.sqrt(1 + grade * grade)));
+    const pushN = driveN + slopeN;
+    const dragN = d.drag_n_per_mps2 * v * v;
+    const staticN = d.rolling_n;
+    const netN =
+      Math.abs(v) < 1e-9
+        ? Math.abs(pushN) <= staticN
+          ? 0
+          : pushN - Math.sign(pushN) * staticN
+        : pushN - Math.sign(v) * (d.rolling_n + dragN);
+    const next = v + (netN / vehicle.mass_kg) * DT;
+    const crossed = next * v < 0;
+    const driveline = driveN * next > 0;
+    const gravity = slopeN * next > 0 && Math.abs(pushN) > staticN;
+    v = crossed && !driveline && !gravity ? 0 : next;
+    gap -= v * DT;
+    t += DT;
+
+    // Where would the car stop if the key landed at this moment?
+    const landsAt = gap - stopTravel(ruleset, v, road, road.key, gap).travelM;
+    if (landsAt <= A_MID_M) {
+      // Between the previous sample and this one. Interpolate on the landing point, which is smooth.
+      const prevLands = prev.gap - stopTravel(ruleset, prev.v, road, road.key, prev.gap).travelM;
+      const span = landsAt - prevLands;
+      const f = span === 0 ? 1 : Math.min(1, Math.max(0, (A_MID_M - prevLands) / span));
+      return { etaS: prev.t + (t - prev.t) * f, gapM: prev.gap + (gap - prev.gap) * f };
+    }
+    prev = { t, v, gap };
+    // Past the line nothing is being timed any more, and the run has no reason to continue.
+    if (gap <= 0) return null;
+  }
+  // The run gave up before the car reached the mark: it is still far away (the approach can start
+  // metres out, and a long forward run is not worth publishing), so there is no countdown yet.
+  return null;
 }
 
 /**
@@ -140,14 +254,13 @@ function pressGapM(ruleset: Ruleset, v: number, road: StopRoad): number {
  * not being driven toward the line (engine off, not in first, handbrake on) or it is standing still.
  *
  * Once the critical key is already down the countdown is over — the stop is happening and the answer
- * is "now, here" — so `etaMs` is 0 and the mark is the gap the car is at. Without that a script that
- * polls after the press reads a fresh positive countdown for a car that is already slowing, plans a
- * second press, and releases the keys in between.
+ * is "now, here" — so both countdowns are 0 and the mark is the gap the car is at. Without that a
+ * script that polls after the press reads a fresh positive countdown for a car that is already
+ * slowing, plans a second press, and releases the keys in between.
  *
  * There is no aid at all while the drive is open on the clutch road: a car in first with the clutch
- * down is setting off or changing gear, not rolling to a stop, and a countdown then is a countdown on
- * a car that is not going anywhere. On the brake road the clutch is *expected* down (the advice line
- * asks for it first), so only the brake itself ends that countdown.
+ * down is setting off or changing gear, not rolling to a stop. On the brake road the clutch is
+ * *expected* down (the advice line asks for it first), so only the brake itself ends that countdown.
  */
 export function stopAid(state: SimState, ruleset: Ruleset, road: StopRoad): StopAid | null {
   if (state.disqualified || state.phase === 'done') return null;
@@ -157,12 +270,14 @@ export function stopAid(state: SimState, ruleset: Ruleset, road: StopRoad): Stop
   if (v <= MOVING_MPS) return null;
   const gapM = state.lineGapM;
   if (road.key === 'clutch' && state.clutch > 0.05) return null;
-  if (road.key === 'brake' && state.brake > 0.05) return { key: road.key, etaMs: 0, gapM, markM: gapM };
-  const markM = pressGapM(ruleset, v, road);
-  if (markM >= gapM) return { key: road.key, etaMs: 0, gapM, markM: gapM };
-  // The car keeps closing the gap at its speed until the key lands: the engine holds it in gear, and
-  // the coast with the clutch down is in the stop's own length.
-  const etaMs = Math.round(((gapM - markM) / v) * 1000);
+  if (road.key === 'brake' && state.brake > 0.05) {
+    return { key: road.key, etaMs: 0, now: true, gapM, markM: gapM };
+  }
+  const point = pressPoint(ruleset, { v, rpm: state.rpm, clutch: state.clutch, throttle: state.throttle }, road, gapM);
+  if (!point) return null;
+  const etaMs = Math.round(point.etaS * 1000);
   if (etaMs > MAX_ETA_S * 1000) return null;
-  return { key: road.key, etaMs, gapM, markM };
+  // The bar and the countdown are the ideal moment; the sentence leads it by a reaction band, because
+  // a learner answers words late and a learner watching the bar does not.
+  return { key: road.key, etaMs, now: etaMs <= LEAD_MS, gapM, markM: point.gapM };
 }

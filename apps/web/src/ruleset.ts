@@ -153,6 +153,22 @@ export interface Drivetrain {
   final_drive: number;
   /** Gear ratios by gear name; `gears['1']` is first. */
   gears: Record<string, number>;
+  //
+  // The engine and clutch, as `crates/sim-core/src/vehicle.rs` steps them. The stop aid runs the same
+  // motion forward to work out when a key has to land, and it needs the same numbers to do it: a
+  // countdown that assumed the current speed holds was wrong on every approach from rest, because the
+  // car is still accelerating toward its creep. `stop-aid-feel.test.ts` drives the real wasm and
+  // compares, so a divergence here fails a test rather than shipping.
+  stall_rpm: number;
+  indicated_torque_nm: number;
+  indicated_ref_rpm: number;
+  friction_base_nm: number;
+  friction_per_rpm: number;
+  idle_gain_nm_per_rpm: number;
+  idle_max_nm: number;
+  engine_inertia_kgm2: number;
+  clutch_capacity_nm: number;
+  clutch_stiffness_nm_per_rad_s: number;
 }
 
 export interface Vehicle {
