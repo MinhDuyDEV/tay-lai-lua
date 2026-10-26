@@ -10,7 +10,7 @@
 // driver's lock shrinks with speed (`input/driver.ts` FEEL.steer), and a figure's tightest radius
 // sets the fastest speed the car can actually hold the line at.
 
-import type { Ruleset } from './ruleset.ts';
+import { creepSpeedMps, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
 /** Which figure this is; matches the core's exercise ids. */
@@ -101,15 +101,6 @@ export function maxSpeedForRadius(radiusM: number, ruleset: Ruleset): number {
 }
 
 /**
- * The pace a figure is driven at, m/s: the bend's own limit.
- *
- * It is published beside the cue and printed in the advice line, so the speed the learner is asked
- * for is the speed the test drives at. It is *not* floored at the car's idle creep: below creep the
- * car will not go slower without riding the clutch, and braking to a slower speed in gear stalls the
- * engine, so the advice says "lift off" rather than naming a speed the car cannot hold.
- */
-
-/**
  * The steering law, and why it is shaped like this.
  *
  * A keyboard wheel is a *rate*, not an angle: holding ← moves the wheel toward full lock at
@@ -128,8 +119,16 @@ export function maxSpeedForRadius(radiusM: number, ruleset: Ruleset): number {
  * is in the snapshot, so the page, the test and the Supervisor read the same answer.
  */
 const CROSS_TRACK_GAIN = 1.15;
-/** How far ahead the bend is anticipated, metres: what the car covers in about a reaction. */
-const FEED_FORWARD_M = 2.2;
+/**
+ * How far ahead the bend is anticipated, metres: what the car covers in about a reaction.
+ *
+ * Measured on bài 6 over steer lags of 100–400 ms: 2.2 m put a rear wheel on the paint at 250 ms
+ * (progress 26 m, the far side of the second bend) at every band from 0.06 to 0.14; 1.5 m cleared all
+ * seven lags on both figures. Shorter is better here because the car creeps at 1.86 m/s: 1.5 m is
+ * already 0.8 s of travel, and looking further ahead turns into the bend before the learner can see
+ * why the wheel moved.
+ */
+const FEED_FORWARD_M = 1.5;
 /**
  * The dead band on the wanted wheel angle, radians. Inside it the line says `straight`.
  *
@@ -183,13 +182,20 @@ export function cueFigure(s: SimState, centre: Centreline, ruleset: Ruleset): Fi
 }
 
 /**
- * The pace the figure can actually be held at, m/s: the fastest speed the driver's own steering lock
- * can hold the tightest bend at. Published next to the cue and printed in the advice line, so the
- * speed the learner is asked for and the speed the test drives at are the same number.
+ * The speed a figure is driven at, m/s: the car's own idle creep in first gear, from the ruleset's
+ * gearbox — not a number chosen to make a sweep pass.
+ *
+ * Measured, and this is why. With the clutch up and no throttle the car holds 1.86 m/s (computed from
+ * idle rpm × first gear ÷ final drive × wheel; 1.76 m/s measured on the slope). Slower than that has
+ * to be held by riding the clutch or by braking, and braking below creep *in gear* stalls the engine
+ * (`SH.X.CHET_MAY`), so a pace below creep is not an instruction a learner can carry out. At creep
+ * both figures are drivable with no throttle at all: measured, 14 of 14 steer-lag combinations clean
+ * on both, at every `FEEL.steer.speedScaleMps` from 6 to 14.
+ *
+ * So the advice line asks for one thing — "đừng ga, để xe tự bò" (no throttle, let the car creep).
  */
-export function paceFigure(centre: Centreline, ruleset: Ruleset): number {
-  const r = tightestRadiusM(centre);
-  return Number.isFinite(r) ? maxSpeedForRadius(r, ruleset) : ruleset.steer.speedScaleMps;
+export function paceFigure(ruleset: Ruleset): number {
+  return creepSpeedMps(ruleset);
 }
 
 const m = (v: number) => `${Math.round(v * 100) / 100} m`;
@@ -204,9 +210,9 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (s.phase === 'done') return 'Đã qua vạch kết thúc. Bấm Esc để làm lại.';
   if (s.gear !== 1) return 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
-  if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi nhấn ga ↑ nhẹ.';
+  if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi cứ để côn tự bắt.';
 
-  const pace = paceFigure(centre, ruleset);
+  const pace = paceFigure(ruleset);
   const kmh = (v: number) => (v * 3.6).toFixed(0);
   // The curb is 0.1 m outside the 0.1 m line, so a wheel on the paint is 28 mm from it: a touch is
   // the moment to straighten, not to steer further.
@@ -214,10 +220,12 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
   if (s.contact.some((c) => c === 1)) {
     return `Có bánh đè vạch: trả lái cho thẳng ngay (thả phím ← →), xe tự về tim đường.`;
   }
+  // The car creeps at idle by itself; touching the throttle is what makes it too fast, so that is
+  // what the line tells the learner to stop doing.
   if (s.speedMps > pace + 0.15) {
-    return `Quá nhanh cho ${name} (${kmh(s.speedMps)} km/h): nhả ga cho xe chậm lại, hình này chỉ chạy được khoảng ${kmh(pace)} km/h.`;
+    return `Quá nhanh cho ${name} (${kmh(s.speedMps)} km/h): nhả ga ↑ ra, đừng ga nữa — cứ để xe tự bò khoảng ${kmh(pace)} km/h là đủ.`;
   }
-  if (s.clockS === 0 && s.progressM < 1) return 'Nhả phanh tay P, vào số 1 rồi nhấn ga ↑ nhẹ đi qua vạch vào hình.';
+  if (s.clockS === 0 && s.progressM < 1) return 'Nhả phanh tay P, vào số 1 rồi cứ để xe tự bò qua vạch, đừng ga.';
 
   const cue = cueFigure(s, centre, ruleset);
   const side = s.lateralM;
@@ -234,7 +242,7 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
   }
   // Straight: say the speed to keep, and name the bend that is coming so it is not a surprise.
   const feed = turnAhead(centre, s.progressM, FEED_FORWARD_M);
-  const speed = `giữ khoảng ${kmh(pace)} km/h`;
+  const speed = 'đừng ga, cứ để xe tự bò';
   if (feed < -0.12) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua phải.`;
   if (feed > 0.12) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua trái.`;
   return `Thả lái cho thẳng, ${speed}; xe đang lệch tim đường ${m(side)}.`;

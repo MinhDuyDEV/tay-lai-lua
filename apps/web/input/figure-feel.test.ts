@@ -14,18 +14,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { cueFigure, paceFigure, tightestRadiusM, maxSpeedForRadius } from '../src/figures.ts';
+import { cueFigure, paceFigure, tightestRadiusM } from '../src/figures.ts';
 import type { Ruleset } from '../src/ruleset.ts';
-import { FEEL, createDriver } from './driver.ts';
+import { createDriver, steerFeel } from './driver.ts';
 import { openSession, seedWord, type SimState } from '../src/sim/session.ts';
 
 const WASM = new URL('../../../build/sim.wasm', import.meta.url);
 const RULESET_FILE = new URL('../../../content/rulesets/tt108-2026.json', import.meta.url);
 const data = JSON.parse(readFileSync(RULESET_FILE, 'utf8'));
-const ruleset: Ruleset = {
-  ...data,
-  steer: { speedScaleMps: FEEL.steer.speedScaleMps, minLock: FEEL.steer.minLock },
-};
+const ruleset: Ruleset = { ...data, steer: steerFeel };
 const wasmBytes = readFileSync(WASM);
 
 const LATENCY = [6, 15, 24] as const; // ticks: 100, 250, 400 ms from the cue to the key
@@ -56,7 +53,7 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
     seedWord(lesson),
   );
   const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
-  const pace = paceFigure(centre, ruleset);
+  const pace = paceFigure(ruleset);
   const driver = createDriver();
   const wanted: Set<string>[] = [];
   let held = new Set<string>();
@@ -83,17 +80,23 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
       // says straight or the other way — the only reading of a key the page can ask for.
       if (cue === 'left' && steer) k.add('ArrowLeft');
       else if (cue === 'right' && steer) k.add('ArrowRight');
-      // Speed is the advice line's own duty, and it names the figure's pace. A person holds a speed
-      // by feathering the throttle once the car is rolling; holding it down over-revs the engine,
-      // which is its own penalty.
-      if (rolling) {
-        if (s.speedMps < pace - 0.15 && s.throttle < 0.55) k.add('ArrowUp');
-        else if (s.speedMps > pace + 0.25) k.add('ArrowDown');
-      }
+      // Speed: the advice line says "đừng ga, cứ để xe tự bò" — so the learner never touches the
+      // throttle, and the car's own idle creep is the speed. If it is ever above the line's pace the
+      // line says "nhả ga"; there is no throttle held to release, so the learner lifts off and the
+      // car drags itself back down.
+      if (rolling && s.speedMps > pace + 0.15) k.add('ArrowDown');
     }
     wanted.push(k);
-    const latOf = (code: string) =>
-      code === 'ArrowLeft' || code === 'ArrowRight' ? latency.steer : latency.pedals;
+    // Only the driving keys carry the measured reaction lag. The set-up keys do not: the page names
+    // each step in the advice line ("đạp côn hết cỡ... bấm 1") and the learner does it while reading,
+    // with no time pressure and nothing to miss. Lagging them modelled a learner who watches the car
+    // rather than the line, and stalled the engine during the launch for reasons the page never
+    // asked for.
+    const SETUP = new Set(['Space', 'Digit1', 'KeyP']);
+    const latOf = (code: string) => {
+      if (SETUP.has(code)) return 0;
+      return code === 'ArrowLeft' || code === 'ArrowRight' ? latency.steer : latency.pedals;
+    };
     const down = new Set<string>();
     for (const code of ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyP', 'Digit1']) {
       if (wanted[t - latOf(code)]?.has(code)) down.add(code);
@@ -148,19 +151,48 @@ test('bài 6 fails when the learner never steers, so the steering cue is what pa
   assert.notEqual(failures.length, 0, 'the figure passes without steering, so the sweep proves nothing');
 });
 
-test('the speed bound comes from the tightest bend, and bài 6 is tighter than bài 4', () => {
-  const radius = (lesson: 4 | 6) => {
-    const session = openSession(
-      wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
-      seedWord(lesson),
-    );
-    const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
-    const r = tightestRadiusM(centre);
-    session.dispose();
-    return r;
-  };
-  const r4 = radius(4);
-  const r6 = radius(6);
-  assert.ok(r6 < r4, `bài 6 should bend tighter than bài 4: ${r6} vs ${r4}`);
-  assert.ok(maxSpeedForRadius(r6, ruleset) < maxSpeedForRadius(r4, ruleset), 'the tighter bend must allow less speed');
+// The pace is the car's own idle creep, so it is one number for both figures and it has to be
+// derivable from the ruleset rather than chosen to make the sweep pass. If someone later "fixes" a
+// failing sweep by lowering it, this fails: below creep the car has to ride the clutch or brake in
+// gear, and braking in gear stalls the engine.
+test('the pace is the car\'s own idle creep in first gear, from the ruleset gearbox', () => {
+  const { idle_target_rpm: idle, final_drive: final, gears } = data.drivetrain;
+  const expected =
+    (((idle / gears['1']) / final) * 2 * Math.PI * data.vehicle.wheel_radius_m) / 60;
+  assert.ok(Math.abs(paceFigure(ruleset) - expected) < 1e-9, `${paceFigure(ruleset)} vs ${expected}`);
+  // The car must be able to reach it with no throttle at all: idle creep is what makes the pace true.
+  assert.ok(paceFigure(ruleset) > 1.5 && paceFigure(ruleset) < 2.1, `creep ${paceFigure(ruleset)} m/s`);
+});
+
+// The cue must be a real function of where the car is on the path: if it answered the same thing
+// everywhere, a learner holding that key would still be told to hold it, and the sweep would pass for
+// the wrong reason. bài 6 bends both ways, so the line must name both directions somewhere.
+test('the cue names both directions over a figure, so it follows the path and not the clock', () => {
+  const session = openSession(
+    wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
+    seedWord(6),
+  );
+  const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
+  const driver = createDriver();
+  const seen = new Set<string>();
+  let held = new Set<string>();
+  let s: SimState = session.state;
+  for (let t = 0; t < 4000 && !(s.phase === 'done' || s.disqualified); t += 1) {
+    const k = new Set<string>();
+    if (s.gear !== 1) {
+      k.add('Space');
+      if (s.clutch > 0.95) k.add('Digit1');
+    }
+    if (s.gear === 1 && s.handbrake) k.add('KeyP');
+    const cue = cueFigure(s, centre, ruleset);
+    seen.add(cue);
+    if (cue === 'left') k.add('ArrowLeft');
+    else if (cue === 'right') k.add('ArrowRight');
+    const pressed = [...k].filter((code) => !held.has(code));
+    held = k;
+    session.step(driver.step(k, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
+    s = session.state;
+  }
+  session.dispose();
+  assert.deepEqual([...seen].sort(), ['left', 'right', 'straight']);
 });

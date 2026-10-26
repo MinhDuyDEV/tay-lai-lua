@@ -27,7 +27,7 @@ export const FLAG = {
 export const FEEL = {
   throttle: { riseBase: 0.6, riseGain: 1.0, fall: 4 },
   brake: { rise: 3, fall: 5 },
-  steer: { rate: 2, centre: 3, speedScaleMps: 6, minLock: 0.2 },
+  steer: { rate: 2, centre: 3, speedScaleMps: 12, minLock: 0.2 },
   clutch: {
     press: 6,
     /** Above `biteHigh` and below `biteLow` the pedal lifts at `liftFast`, between them at `liftBite`. */
@@ -62,6 +62,20 @@ const GEAR_CODES: ReadonlyArray<readonly [string, number]> = [1, 2, 3, 4, 5].fla
   [`Digit${g}`, g] as const,
   [`Numpad${g}`, g] as const,
 ]);
+
+/**
+ * The ruleset's view of the keyboard's steering model, in one place.
+ *
+ * `figures.ts` works out the pace a bend can be held at from these numbers, so every caller that builds
+ * a ruleset for a figure must take them from here. Spelling them out at each call site is how a field
+ * went missing once already: `centre` was absent, the cue's prediction read NaN, and the cue silently
+ * answered `straight` forever.
+ */
+export const steerFeel = {
+  speedScaleMps: FEEL.steer.speedScaleMps,
+  minLock: FEEL.steer.minLock,
+  centre: FEEL.steer.centre,
+} as const;
 
 /** Every code the page should capture (and stop the browser from scrolling with). */
 export const HANDLED_CODES: ReadonlySet<string> = new Set([
