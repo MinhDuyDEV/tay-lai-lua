@@ -72,12 +72,19 @@ export const F = {
    * 8 past the finish line. 0 in bài 1 and bài 3.
    */
   zone: 49,
-  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure. */
+  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure
+   * | 4 park. */
   route: 50,
+  /** Bài 7/8: 0 | 1, all four hull corners inside the bay on this tick. */
+  hullInside: 51,
+  /** Bài 7/8: 0 | 1, the yard's finish signal has been given (the run is then done). */
+  finishSignal: 52,
+  /** Bài 7/8: consecutive still-and-inside ticks so far. */
+  holdTicks: 53,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 51;
+export const STATE_LEN = 54;
 
 /**
  * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses
@@ -139,8 +146,15 @@ export interface SimState {
    * 8 past the finish line. 0 in bài 1 and bài 3.
    */
   zone: ZoneCode;
-  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure. */
+  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure
+   * | 4 park. */
   route: RouteCode;
+  /** Bài 7/8: all four hull corners are inside the bay on this tick. */
+  hullInside: boolean;
+  /** Bài 7/8: the finish signal has been given; the run is over. */
+  finishSignal: boolean;
+  /** Bài 7/8: consecutive ticks still and inside the bay. */
+  holdTicks: number;
   clockS: number;
   contactEpisodeS: number;
   /** Wheel centres FL FR RL RR in the same frame as `carX`/`carY`. */
@@ -181,8 +195,8 @@ export type ZoneName = (typeof ZONE_NAMES)[number];
 export const zoneName = (code: ZoneCode): ZoneName => ZONE_NAMES[code];
 
 /** Snapshot field 50: which route the session drives. */
-export type RouteCode = 0 | 1 | 2 | 3;
-export const ROUTE_NAMES = ['none', 'road', 'junction', 'figure'] as const;
+export type RouteCode = 0 | 1 | 2 | 3 | 4;
+export const ROUTE_NAMES = ['none', 'road', 'junction', 'figure', 'park'] as const;
 export type RouteName = (typeof ROUTE_NAMES)[number];
 export const routeName = (code: RouteCode): RouteName => ROUTE_NAMES[code];
 
@@ -256,6 +270,9 @@ export function readState(block: Float64Array, count: number): SimState {
     clockMs: block[F.clockMs],
     zone: coded(ZONE_NAMES, block[F.zone], 'zone'),
     route: coded(ROUTE_NAMES, block[F.route], 'route'),
+    hullInside: block[F.hullInside] !== 0,
+    finishSignal: block[F.finishSignal] !== 0,
+    holdTicks: block[F.holdTicks],
     wheels: [
       [block[F.wheels], block[F.wheels + 1]],
       [block[F.wheels + 2], block[F.wheels + 3]],

@@ -21,6 +21,10 @@ export type StepId =
   | 'stop'
   | 'start'
   | 'line'
+  // bài 7, 8
+  | 'into'
+  | 'back'
+  | 'inside'
   // bài 4 / bài 6
   | 'entry'
   | 'vet'
@@ -99,6 +103,29 @@ export function markFigure(done: Set<StepId>, state: SimState): void {
   if (state.clockS > 0) done.add('entry');
   if (state.progressM > 0 && state.contact.every((c) => c === 0)) done.add('line');
   if (state.phase === 'done' && !state.disqualified) done.add('finish');
+}
+
+/**
+ * Bài 7 and bài 8's checklist: the sequence the law itself gives ("2.3.1 lái xe tiến vào khoảng cách
+ * khống chế … 2.3.2 lùi để ghép xe vào nơi đỗ … 2.3.3 dừng xe khi bánh xe sau nằm trên vị trí đỗ").
+ * The steps are marked from the core's own fields — `hullInside` is the scorer's answer, not the
+ * page's — so the checklist cannot claim a step the exam has not credited.
+ */
+export const PARK_STEPS: readonly Step[] = [
+  { id: 'gear', label: 'Côn + số 1, nhả phanh tay', key: 'Space, 1, P' },
+  { id: 'into', label: 'Tiến vào khoảng khống chế, qua cửa ô', key: '↑, ↓, ← →' },
+  { id: 'back', label: 'Lùi vào ô (R), đánh lái theo lời nhắc', key: 'R, ← →' },
+  { id: 'inside', label: 'Thân xe nằm trọn trong ô', key: '← →' },
+  { id: 'signal', label: 'Đứng phanh đến khi có tín hiệu, rồi Enter', key: '↓, Enter' },
+];
+
+export function markPark(done: Set<StepId>, state: SimState): void {
+  if (state.gear !== 0 && state.clutch > 0.9) done.add('gear');
+  // The car has entered the control distance once the core's clock is running.
+  if (state.clockMs > 0) done.add('into');
+  if (state.gear === -1) done.add('back');
+  if (state.hullInside) done.add('inside');
+  if (state.finishSignal) done.add('signal');
 }
 
 /** Seconds left of the 30 s since the stop, or null before the stop. */

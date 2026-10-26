@@ -98,21 +98,40 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** One source for the on-screen legend. */
-export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: true; noFigure?: true; signals?: true }> = [
+export const KEY_LEGEND: ReadonlyArray<{
+  keys: string;
+  does: string;
+  bai1Only?: true;
+  /** Hidden for the two figures driven at the idle creep (bài 4, 6), which need no pedal but the clutch. */
+  noFigure?: true;
+  /** Shown only where the reverse gear and the end-of-exam key are part of the lesson (bài 7, 8). */
+  park?: true;
+  signals?: true;
+}> = [
   { keys: 'E', does: 'Nổ máy (cần về số 0 hoặc đạp côn)' },
   { keys: 'B', does: 'Thắt / tháo dây an toàn', bai1Only: true },
   { keys: 'Enter', does: 'Giám khảo phát lệnh xuất phát (đèn xanh)', bai1Only: true },
+  { keys: 'Enter', does: 'Báo đã ghép xong: kết thúc bài và chấm kết quả', park: true },
   { keys: 'Q / W', does: 'Xi nhan trái / phải: bật, bật cái kia là tắt cái này, bấm lại để tắt', signals: true },
   { keys: 'P', does: 'Phanh tay nhả / kéo' },
   { keys: 'Space hoặc Shift', does: 'Côn: giữ để đạp, nhả từ từ để vào điểm bắt' },
-  { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)' },
+  { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)', noFigure: true },
+  { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)', park: true },
+  { keys: 'R', does: 'Số lùi: đạp côn hết cỡ rồi bấm R', park: true },
+  // The throttle: hidden on bài 4/6 (creep only, no throttle) and on bài 7/8 (the reverse park is done
+  // on the clutch and the brake, and a learner holding ↑ in a 2 m bay is the one thing that cannot be
+  // recovered).
   { keys: '↑', does: 'Ga: giữ càng lâu càng sâu', noFigure: true },
+  // The brake: hidden only on bài 4/6, which are driven at the idle creep; bài 7/8 need it to stop.
   { keys: '↓', does: 'Phanh', noFigure: true },
+  { keys: '↓', does: 'Phanh: giữ để dừng hẳn rồi giữ xe đứng yên', park: true },
   { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
 ];
 
-/** The two figures, which are driven at the car's own idle creep: no throttle, no brake. */
+/** The two figures driven at the car's own idle creep: no throttle and no brake on the line. */
 const FIGURE_LESSONS: ReadonlySet<number> = new Set([4, 6]);
+/** Bài 7 and bài 8: the reverse park, where the brake and R are the manoeuvre. */
+const PARK_LESSONS: ReadonlySet<number> = new Set([7, 8]);
 
 /**
  * The legend for one lesson: bài 3, 4 and 6 have no belt, start order or signal, and bài 4 and 6 are
@@ -124,7 +143,14 @@ const FIGURE_LESSONS: ReadonlySet<number> = new Set([4, 6]);
 export const legendFor = (lesson: number, signals = lesson === 1) =>
   KEY_LEGEND.filter((entry) => {
     if (entry.signals) return signals;
-    return (lesson === 1 || !entry.bai1Only) && (!entry.noFigure || !FIGURE_LESSONS.has(lesson));
+    // `park` means "only bài 7 and bài 8": the reverse gear, the end-of-exam key and the brake are that
+    // lesson's own. `brake` means "everywhere but the two creep figures", which is the row the road
+    // lessons already had.
+    if (entry.park) return PARK_LESSONS.has(lesson);
+    return (
+      (lesson === 1 || !entry.bai1Only) &&
+      (!entry.noFigure || !(FIGURE_LESSONS.has(lesson) || PARK_LESSONS.has(lesson)))
+    );
   });
 
 /** What the driver needs to know about the car; read from the sim state of the previous tick. */

@@ -11,8 +11,15 @@ import { hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
+import { cueGhep, hullOutside, yardOf } from './ghep.ts';
 import { lightName, zoneName, type LightName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
+
+/** The park card's own numbers, or a clear error: a park page with no bay cannot draw one. */
+function yardOfOrThrow(yard: ReturnType<typeof yardOf> | null): ReturnType<typeof yardOf> {
+  if (!yard) throw new Error('bài 7/8: the core published no bay rectangle (sim_course kind 8)');
+  return yard;
+}
 
 export interface HudProps {
   run: Run;
@@ -62,12 +69,16 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const spanRef = useRef(12);
   /** The figure's centreline, read once from the core; the same polyline the scene draws. */
   const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run]);
+  /** Bài 7/8: the area and the bay, read once from the core's own course. */
+  const yard = useMemo(() => exercise.park?.(run.course) ?? null, [run, exercise]);
   const bai3 = exercise.lesson === 3;
   /** Bài 2, 9 and 11: one straight road, a stop line, and one thing past it. */
   const road = exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11;
   /** Bài 5: the signalled junction. It shares the road card, and adds the light and the 20/30 s clock. */
   const junction = exercise.lesson === 5;
   const figure = exercise.lesson === 4 || exercise.lesson === 6;
+  /** Bài 7 and bài 8: the bay card, the hold counter and the top-down inset of the yard. */
+  const park = exercise.lesson === 7 || exercise.lesson === 8;
   const figureEl = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -92,7 +103,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
         paintAid(aidParts, aid, spanRef.current);
       }
-      if (fig) paintFigure(fig, s);
+      if (fig) paintFigure(fig, s, yard, ruleset, park);
       if (score.current) score.current.textContent = s.disqualified ? 'ĐÌNH CHỈ' : String(s.score);
       if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified, exercise.lesson);
       if (throttle.current) throttle.current.style.height = bar(s.throttle);
@@ -109,9 +120,16 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         if (hint.current.textContent !== text) hint.current.textContent = text;
       }
       if (advice.current) {
-        const text = exercise.advice(s, ruleset, centre) ?? '';
+        const text = exercise.advice(s, ruleset, centre, yard) ?? '';
         if (advice.current.textContent !== text) advice.current.textContent = text;
-        advice.current.dataset.cue = exercise.cue(s, ruleset, centre) ?? '';
+        advice.current.dataset.cue = exercise.cue(s, ruleset, centre, yard) ?? '';
+        // One value per attribute, and only where the park has them: the pedal word the line asks for
+        // and the gear it needs, so a script (and the end-to-end test) reads the same thing a learner does.
+        if (park) {
+          const cue = cueGhep(s, yardOfOrThrow(yard), ruleset);
+          advice.current.dataset.pedal = cue.pedal;
+          advice.current.dataset.gearWanted = cue.gear === 0 ? '' : String(cue.gear);
+        }
       }
       if (audioEl.current) {
         const now = audio();
@@ -212,7 +230,34 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         </section>
       ) : null}
 
-      {figure ? <Inset run={run} /> : null}
+      {figure || park ? <Inset run={run} ruleset={ruleset} yard={yard} /> : null}
+
+      {park ? (
+        <section className="hud-hill hud-figure" aria-label="Ô ghép xe" ref={figureEl}>
+          <div className="cell" data-cell="progress">
+            <span className="name">Trong ô</span>
+            <strong>
+              <span data-part="value">chưa</span>
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="lateral">
+            <span className="name">Thân xe ngoài ô</span>
+            <strong>
+              <span data-part="value">0</span> m
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="clock">
+            <span className="name">Đứng yên / tín hiệu</span>
+            <strong>
+              <span data-part="value">—</span>
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <p className="advice" ref={advice} />
+        </section>
+      ) : null}
 
       {figure ? (
         <section className="hud-hill hud-figure" aria-label="Hình" ref={figureEl}>
@@ -376,7 +421,17 @@ function figureParts(el: HTMLElement): Record<'progress' | 'lateral' | 'clock', 
 }
 
 /** Progress, lateral offset and the clock, and the four wheels' worst contact state. */
-function paintFigure(parts: ReturnType<typeof figureParts>, s: SimState) {
+function paintFigure(
+  parts: ReturnType<typeof figureParts>,
+  s: SimState,
+  yard: ReturnType<typeof yardOf> | null,
+  ruleset: Ruleset,
+  park: boolean,
+) {
+  if (park) {
+    paintPark(parts, s, yard, ruleset);
+    return;
+  }
   const p = parts.progress;
   p.value.textContent = s.progressM.toFixed(1);
   p.limit.textContent = `trên ${s.courseLengthM.toFixed(1)} m`;
@@ -390,6 +445,40 @@ function paintFigure(parts: ReturnType<typeof figureParts>, s: SimState) {
   t.value.textContent = s.clockS === 0 ? '—' : `${s.clockS.toFixed(1)} s`;
   t.limit.textContent = s.clockS === 0 ? 'tính từ vạch vào hình' : s.contact.some((c) => c === 2) ? 'đã chạm bó vỉa' : s.contact.some((c) => c === 1) ? 'có bánh đè vạch' : 'chưa đè vạch';
   t.cell.dataset.state = s.contact.some((c) => c === 2) ? 'bad' : s.contact.some((c) => c === 1) ? 'warn' : 'ok';
+}
+
+/**
+ * Bài 7/8's card: whether the hull is in the bay, how far the worst corner still is, and how the hold
+ * to the finish signal is going. Every number comes from the core's own snapshot fields — `hullInside`
+ * is the scorer's answer, and `holdTicks` is the counter the signal is given on — so the card cannot
+ * congratulate a learner the exam has not credited.
+ */
+function paintPark(
+  parts: ReturnType<typeof figureParts>,
+  s: SimState,
+  yard: ReturnType<typeof yardOf> | null,
+  ruleset: Ruleset,
+) {
+  const p = parts.progress;
+  p.value.textContent = s.finishSignal ? 'rồi' : s.hullInside ? 'rồi' : 'chưa';
+  p.limit.textContent = s.finishSignal ? 'đã có tín hiệu báo kết thúc' : s.hullInside ? 'thân xe nằm trọn trong ô' : 'còn thân xe ngoài ô';
+  p.cell.dataset.state = s.hullInside ? 'ok' : 'warn';
+
+  const l = parts.lateral;
+  const outside = yard ? hullOutside(yard, ruleset, { x: s.carX, y: s.carY, h: s.heading }) : 0;
+  l.value.textContent = outside.toFixed(2);
+  l.limit.textContent = s.hullInside ? 'đã vào hết' : 'lùi thêm cho hết thân xe';
+  l.cell.dataset.state = outside === 0 ? 'ok' : outside > 0.6 ? 'bad' : 'warn';
+
+  const t = parts.clock;
+  const need = Math.max(1, Math.round(0.5 * 60));
+  t.value.textContent = s.finishSignal ? 'đã báo' : `${Math.min(s.holdTicks, need)}/${need}`;
+  t.limit.textContent = s.finishSignal
+    ? 'bấm Enter để kết thúc'
+    : s.hullInside
+      ? 'giữ phanh cho xe đứng yên'
+      : 'đứng yên trong ô mới tính';
+  t.cell.dataset.state = s.finishSignal ? 'ok' : s.hullInside && s.holdTicks > 0 ? 'warn' : 'ok';
 }
 
 interface HillCell {

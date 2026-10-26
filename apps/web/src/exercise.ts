@@ -5,6 +5,8 @@
 import { flatRoad, stopAid, type StopAid, type StopRoad } from './stopAid.ts';
 import { seedWord } from './sim/session.ts';
 import { adviceFigure, cueFigure, wantSteer, type Centreline } from './figures.ts';
+import { adviceGhep, cueGhep, yardOf, type GhepCue, type Yard } from './ghep.ts';
+import { parkRects, type ParkRects } from './sim/session.ts';
 import {
   adviceBai3,
   adviceJunction,
@@ -15,6 +17,8 @@ import {
   markRoad,
   roadSteps,
   FIGURE_STEPS,
+  PARK_STEPS,
+  markPark,
   markBai1,
   markBai3,
   markFigure,
@@ -26,7 +30,10 @@ import {
 import { hillOf, junctionOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
-export type Lesson = 1 | 2 | 3 | 4 | 5 | 6 | 9 | 11;
+export type Lesson = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 11;
+
+/** Bài 7 and bài 8: the reverse park, whose figures are two rectangles the core publishes. */
+export type ParkLesson = 7 | 8;
 
 /**
  * The straight-road lessons: a lane, a stop line, and one thing past it. They share the road scene
@@ -52,9 +59,14 @@ export interface Exercise {
   steps: readonly Step[];
   mark(done: Set<StepId>, state: SimState, ruleset: Ruleset): void;
   /** The line to do next, or null when the exercise has none. */
-  advice(state: SimState, ruleset: Ruleset, centre: Centreline): string | null;
+  advice(state: SimState, ruleset: Ruleset, centre: Centreline, yard?: Yard | null): string | null;
   /** The key the learner is being asked to press now, if any; published next to the advice line. */
-  cue(state: SimState, ruleset: Ruleset, centre: Centreline): string | null;
+  cue(state: SimState, ruleset: Ruleset, centre: Centreline, yard?: Yard | null): string | null;
+  /**
+   * The park figures' two rectangles, read from the core's own course once. Null for every other
+   * lesson: a page that drew a bay the scorer does not have would be worse than no picture.
+   */
+  park?: (course: readonly { kind: number; lineId: number; points: readonly (readonly [number, number])[] }[]) => Yard | null;
   /**
    * The countdown to the one key that decides the stop, or null when this exercise has no stop line
    * to make. The road and the critical key are the exercise's own; the arithmetic is `stopAid`.
@@ -129,6 +141,8 @@ const EXERCISES: Record<Lesson, Exercise> = {
   9: road(9, 'Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua', 'Tạm dừng đúng vạch trước đường sắt, quan sát rồi đi tiếp, bằng bàn phím.'),
   11: road(11, 'Bài 11 — Kết thúc', 'Qua vạch kết thúc với xi nhan phải rồi dừng, bằng bàn phím.'),
   5: junction(5, seedWord(5, 1n)),
+  7: park(7, seedWord(7)),
+  8: park(8, seedWord(8)),
 };
 
 export const exerciseFor = (lesson: Lesson): Exercise => EXERCISES[lesson];
@@ -193,6 +207,43 @@ function junction(lesson: 5, seed: bigint): Exercise {
     signals: SIGNAL_LESSONS.has(lesson),
     stops: true,
     introKeys: 5,
+  };
+}
+
+/**
+ * Bài 7 and bài 8. The bay comes from the core (`sim_course` kind 8, two rectangles) and the line from
+ * `ghep.ts`'s planner, which re-solves from the pose the snapshot publishes every tick: a learner who
+ * stops in a different place gets a different line, not a script that no longer fits.
+ *
+ * The lesson's whole shape is pulses — stop, put the wheel over, tap a little, stop — because the
+ * reverse creep is 1.74 m/s and the bays have 0.2 to 0.3 m of slack per side, so a key that lands late
+ * by a person's 300 ms is half a metre of travel. That is why the cue has a `clutch` word (the car has
+ * to be still and the pedal down before the gear goes in) beside the steer and pedal words.
+ */
+function park(lesson: ParkLesson, seed: bigint): Exercise {
+  return {
+    lesson,
+    title: lesson === 7 ? 'Bài 7 — Ghép xe dọc vào nơi đỗ' : 'Bài 8 — Ghép xe ngang vào nơi đỗ',
+    description:
+      lesson === 7
+        ? 'Ghép xe dọc vào nơi đỗ (Hình 13): tiến vào khoảng khống chế, lùi chuẩn vào ô, đứng phanh đến khi có tín hiệu, bằng bàn phím.'
+        : 'Ghép xe ngang vào nơi đỗ (Hình 14): lùi chuẩn vào ô hẹp bên phải, đứng phanh đến khi có tín hiệu, bằng bàn phím.',
+    seed,
+    steps: PARK_STEPS,
+    mark: markPark,
+    advice: (state, ruleset, _centre, yard) => {
+      if (!yard) return 'Chưa đọc được hình ghép xe từ sim: tải lại trang.';
+      return adviceGhep(state, yard, ruleset, lesson);
+    },
+    cue: (state, ruleset, _centre, yard) => (yard ? cueGhep(state, yard, ruleset).steer : null),
+    stop: () => null,
+    signals: false,
+    stops: false,
+    introKeys: 6,
+    park: (course) => {
+      const rects: ParkRects | null = parkRects(course as never);
+      return rects ? yardOf(rects) : null;
+    },
   };
 }
 

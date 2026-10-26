@@ -204,6 +204,9 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-audio-level="0.0000"
       data-hash=""
       data-entered="no"
+      data-hull-inside="no"
+      data-finish-signal="no"
+      data-hold-ticks="0"
     >
       <div className="viewport">
         <Canvas
@@ -301,6 +304,18 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   // Figure runs: everything the advice line reasons about, so a test (and the Supervisor) reads the
   // same numbers the page used. Bài 5 is drawn on a route too, and the core fills the same fields for
   // it, so it publishes them under the same names — a steering script has one shape to read.
+  // Bài 7 and bài 8 publish the park's own numbers: the scorer's containment and signal, and the hold
+  // counter, so a test (and the learner) reads the same thing. `data-hold-need` is the tick count the
+  // core gives the signal on, from the ruleset, never a literal in the page.
+  if (exercise.lesson === 7 || exercise.lesson === 8) {
+    d.hullInside = s.hullInside ? 'yes' : 'no';
+    d.finishSignal = s.finishSignal ? 'yes' : 'no';
+    d.holdTicks = String(s.holdTicks);
+    d.clock = (s.clockMs / 1000).toFixed(2);
+    d.progress = s.progressM.toFixed(3);
+    d.lateral = s.lateralM.toFixed(3);
+    d.contact = s.contact.join('');
+  }
   if (exercise.lesson === 4 || exercise.lesson === 5 || exercise.lesson === 6) {
     d.progress = s.progressM.toFixed(3);
     d.courseLen = s.courseLengthM.toFixed(3);
