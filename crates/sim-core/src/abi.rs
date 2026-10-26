@@ -34,6 +34,8 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// * 4 — bài 4 (Qua vệt bánh xe và đường vòng vuông góc);
 /// * 5 — bài 5 (Qua ngã tư có tín hiệu điều khiển giao thông);
 /// * 6 — bài 6 (Qua đường vòng quanh co);
+/// * 7 — bài 7 (Ghép xe dọc vào nơi đỗ);
+/// * 8 — bài 8 (Ghép xe ngang vào nơi đỗ);
 /// * 9 — bài 9 (Tạm dừng ở chỗ có đường sắt chạy qua);
 /// * 11 — bài 11 (Kết thúc).
 ///
@@ -117,9 +119,23 @@ pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) 
 ///   2 finish or end line / 3 crosswalk stripe / 4 rail;
 /// * kind 7 — the signal head's position (bài 2, 5, 9), one point.
 ///
-/// Records arrive in that order: lines, gates, centreline, markings, signal. The four exercises that
-/// existed before the road scene write exactly the records they always wrote, in the order they
-/// always wrote them, so their blocks are unchanged.
+/// Records arrive in that order: lines, gates, centreline, markings, signal, and — for bài 7 and
+/// bài 8 only — the two rectangles that make the bay exercise. The exercises that existed before
+/// each addition write exactly the records they always wrote, in the order they always wrote them,
+/// so their blocks are unchanged.
+///
+/// Record kinds:
+/// * 1 — a limit line, one polyline, `line_id` = its index in `Course::lines`;
+/// * 2 — a curb band, a polyline just outside a limit line;
+/// * 3 — bài 4's vệt lines;
+/// * 4 — a gate, as the two ends of a line across the lane; `line_id` is `Gate`: 1 entry, 2 exit,
+///   3 vệt start, 4 vệt end, 5 the bay's mouth;
+/// * 5 — the centreline the learner follows;
+/// * 6 — a transverse marking (stop line, crosswalk stripe, rail, finish line);
+/// * 7 — the signal head's position;
+/// * 8 — bài 7 and bài 8: a closed quad. `line_id` 1 is the drivable area (the control lane of
+///   Hình 13, the road of Hình 14), `line_id` 2 is the bay itself. Six values each, the first corner
+///   repeated at the end.
 ///
 /// Coordinates are metres in the same frame as the snapshot's `x_m`/`y_m`.
 ///

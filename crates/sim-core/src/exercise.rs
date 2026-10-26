@@ -231,8 +231,12 @@ pub struct State {
     /// edge. The web driver latches the flag high after the first press, which makes the first
     /// press the only edge there is.
     pub prev_order: bool,
-    /// Bài 7 and bài 8: how many QUA_THOI_GIAN charges the clock has produced.
+    /// Bài 7 and bài 8: how many QUA_THOI_GIAN charges the clock has produced, and how many ticks the
+    /// clock has run. The charge is judged on whole ticks, not on accumulated seconds: "cứ quá 02
+    /// phút" means a period must be *exceeded*, so 240 s exactly is one charge and not two, which is
+    /// what makes the 240 s cap cost at most 05 points (see `assumptions.park_time_cap`).
     park_clock_charges: u32,
+    park_clock_ticks: u32,
     /// Bài 4 and bài 6: one contact episode per painted line, indexed like `course.lines`.
     episodes: Vec<Episode>,
     /// Bài 4 and bài 6: metres along the centreline of the furthest point reached, for the
@@ -375,6 +379,7 @@ impl State {
             signal_given: false,
             prev_order: false,
             park_clock_charges: 0,
+            park_clock_ticks: 0,
             episodes,
             furthest_m: 0.0,
             clock_s: 0.0,
@@ -849,8 +854,8 @@ impl State {
             }
         }
         let keo_dai_every_s = t.de_vach_keo_dai_ticks as f64 * DT;
-        let de_vach = sa_hinh_id(self.exercise, "DE_VACH");
-        let keo_dai = sa_hinh_id(self.exercise, "DE_VACH_KEO_DAI");
+        let de_vach = contact_id(self.exercise, "DE_VACH");
+        let keo_dai = contact_id(self.exercise, "DE_VACH_KEO_DAI");
         let mut episodes = core::mem::take(&mut self.episodes);
         for (i, ep) in episodes.iter_mut().enumerate() {
             if touching[i] {
@@ -1053,12 +1058,14 @@ impl State {
             return;
         }
         self.clock_s += DT;
-        let over = (self.clock_s / rs.park.time_limit_s) as u32;
-        if over > self.park_clock_charges {
-            self.park_clock_charges += 1;
+        self.park_clock_ticks = self.park_clock_ticks.saturating_add(1);
+        // One charge per whole 2 minutes *exceeded*: the clock must be past `n × limit`, not at it.
+        let limit = t.park_time_limit_ticks.max(1);
+        let exceeded = self.park_clock_ticks / limit;
+        if self.park_clock_ticks % limit != 0 && exceeded > self.park_clock_charges {
+            self.park_clock_charges = exceeded;
             self.charge_counted(rs, "SH.GHEP.QUA_THOI_GIAN", fired);
         }
-        let _ = t;
     }
 
     /// **The one place the exam ends without a finish signal.** Any trigger may call it: the
@@ -1081,6 +1088,18 @@ impl State {
         } else {
             self.charge(rs, "SH.GHEP.CHUA_VAO_CHUONG", fired);
         }
+    }
+}
+
+/// The ruleset id of a line-contact rule for whichever of bài 4, bài 6, bài 7 or bài 8 is running.
+/// The three families share one contact model (`contact_tick`) and differ only in their codes, so the
+/// mapping lives here once — a park exercise that fell through to bài 4's ids would charge the wrong
+/// rule, which is what this function exists to make impossible.
+fn contact_id(exercise: Exercise, name: &str) -> &'static str {
+    match (exercise, name) {
+        (Exercise::GhepDoc | Exercise::GhepNgang, "DE_VACH") => "SH.GHEP.DE_VACH",
+        (Exercise::GhepDoc | Exercise::GhepNgang, "DE_VACH_KEO_DAI") => "SH.GHEP.DE_VACH_KEO_DAI",
+        _ => sa_hinh_id(exercise, name),
     }
 }
 
@@ -1192,6 +1211,12 @@ impl State {
     /// picks them up so the park block is written the same way as the figure block beside it.
     pub fn park_wheels(&self) -> u8 {
         0
+    }
+
+    /// Bài 7 and bài 8: ticks the exercise clock has run, which is what the 2-minute charge is
+    /// judged on.
+    pub fn park_clock_ticks(&self) -> u32 {
+        self.park_clock_ticks
     }
 }
 

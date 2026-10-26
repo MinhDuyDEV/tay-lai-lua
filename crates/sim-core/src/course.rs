@@ -843,76 +843,95 @@ fn park_figure(figure: Figure, rs: &Ruleset) -> Option<Course> {
     let p = &rs.park;
     let sh = &rs.sa_hinh;
     let half_line = 0.5 * sh.line_width_m;
+    // The car is placed `lead` before the gate, on the driving axis, and the gate is the line across
+    // the lane at the near edge of the exercise — where "tiến vào khoảng cách khống chế" ends.
     let lead = sh.lead_m + 0.5 * v.length_m;
     let pi = core::f64::consts::PI;
 
-    // The gate is x = 0: the line across the lane where the figure begins. The car is placed `lead`
-    // outside it, on the driving axis.
-    let (area, bay, mid_y, heading) = match figure {
+    // The drivable AREA is the whole figure the car may be on, approach included: leaving it is
+    // SAI_HINH, and it starts inside it. The BAY is where the hull has to end up. Along the driving
+    // axis, bài 7 reads left to right as [closed end | Ed | bay Rd | open entry], and bài 8 reads
+    // left to right as [approach | Lg bay | run-out].
+    let (area, bay, heading, approach_negative) = match figure {
         Figure::GhepDoc => {
             let lane = p.doc_lane_m(v);
             let (ld, rd) = (p.doc_length_m(v), p.doc_width_m(v));
-            // Right to left: [open entry | Ed | bay Rd | Ed | closed end].
-            let bay = (-lane - rd, -ld, -lane, 0.0);
-            let area = (bay.0 - lane, 0.0, lead + 2.0 * lane, lane);
-            (area, bay, 0.5 * lane, pi)
+            // "Làn chính kéo dài Ed về bên trái ô đỗ, đầu bên trái bị bó vỉa đóng kín": the closed
+            // end sits Ed past the bay's far side. To the right of the bay the lane runs on — that is
+            // the entry the car comes in through, so the area carries it out to the start pose.
+            // "Làn chính kéo dài Ed về bên trái ô đỗ": the closed end is Ed left of the bay's far
+            // side. To the right the lane runs on to the open entry; the car starts `lead` inside
+            // that end, so the start pose is inside the figure rather than on its edge.
+            let area = (-(lane + rd), 0.0, 2.0 * lead + lane, lane);
+            let bay = (-rd, -ld, 0.0, 0.0);
+            (area, bay, pi, true)
         }
         _ => {
             let lane = sh.lane_width_m(v);
             let (lg, rg) = (p.ngang_length_m(v), p.ngang_width_m(v));
-            // A road with the bay cut out of its right-hand edge, well before the car's start so it
-            // has to be driven past and reversed back into.
-            let bay = (-lg - 2.0 * lane, -rg, -2.0 * lane, 0.0);
-            let area = (-6.0 * lane, 0.0, 6.0 * lane + lg, lane);
-            (area, bay, 0.5 * lane, 0.0)
+            // "ô đỗ lõm vào lề bên phải của đường": recessed into the road's right edge. The car
+            // drives past it and reverses back in, so the road runs on past the bay far enough to
+            // line the car up again.
+            let area = (-2.0 * lead, 0.0, lg + 3.0 * lane, lane);
+            let bay = (0.0, -rg, lg, 0.0);
+            (area, bay, 0.0, false)
         }
     };
+    let lane_half = 0.5 * (area.3 - area.1);
+    let mid_y = 0.5 * (area.1 + area.3);
 
-    // Every painted limit line, as one polyline each: the bay's three closed sides are ONE line (a
-    // wheel dragged round the bay is one episode), and each boundary edge of the area is its own.
+    // Every painted limit line, one polyline each, so the episode count means what it says: the bay's
+    // three closed sides are ONE line (dragging round the bay is one mistake), and each painted edge
+    // of the area is its own. Nothing is painted across the bay's mouth.
     let mut lines = vec![
-        // The bay: up one side, across the closed end, back up the other. No line at the mouth.
         painted(1, half_line, vec![(bay.0, 0.0), (bay.0, bay.1), (bay.2, bay.1), (bay.2, 0.0)]),
-        // The far side of the lane, and the side that holds the bay's mouth in two pieces.
+        // The edge of the road/lane away from the bay, and the near edge in two pieces round the bay.
         painted(1, half_line, vec![(area.0, area.3), (area.2, area.3)]),
         painted(1, half_line, vec![(area.0, 0.0), (bay.0, 0.0)]),
         painted(1, half_line, vec![(bay.2, 0.0), (area.2, 0.0)]),
     ];
-    // The area ends: bài 7's closed left end is a line and a curb; bài 8's road runs on in both
-    // directions, so neither end is a limit — a car that leaves the drawn road is caught by SAI_HINH,
-    // which is measured on the rectangles rather than on the paint.
+    // Bài 7's far end is "bó vỉa đóng kín" — a closed curbed end — so it is drawn as a limit line.
+    // Bài 8's road runs on in both directions, so its ends are not lines: a car that leaves the drawn
+    // road is caught by SAI_HINH, which is measured on the rectangles, not on the paint.
     if figure == Figure::GhepDoc {
         lines.push(painted(1, half_line, vec![(area.0, 0.0), (area.0, area.3)]));
     }
 
     // Curb bands, `line_curb_setback_m` outside the limit lines: the bay's three closed sides, the
-    // lane's far side, the lane's near side away from the bay, and bài 7's closed end.
+    // far side of the lane, the near side either side of the bay, and bài 7's closed end. A wheel up
+    // on any of them is the shared SH.X.VIA_HE.
     let off = sh.line_curb_setback_m + 0.5 * CURB_WIDTH_M;
     let curb_half = 0.5 * CURB_WIDTH_M;
     let mut curbs = vec![
-        painted(2, curb_half, vec![(bay.0 - off, 0.0), (bay.0 - off, bay.1 - off), (bay.2 + off, bay.1 - off), (bay.2 + off, 0.0)]),
+        painted(2, curb_half, vec![
+            (bay.0 - off, 0.0),
+            (bay.0 - off, bay.1 - off),
+            (bay.2 + off, bay.1 - off),
+            (bay.2 + off, 0.0),
+        ]),
         painted(2, curb_half, vec![(area.0, area.3 + off), (area.2, area.3 + off)]),
         painted(2, curb_half, vec![(area.0, -off), (bay.0 - off, -off)]),
         painted(2, curb_half, vec![(bay.2 + off, -off), (area.2, -off)]),
     ];
     if figure == Figure::GhepDoc {
-        // "đầu bên trái bị bó vỉa đóng kín": the dead end is a curb, which is what stops the car.
         curbs.push(painted(2, curb_half, vec![(area.0 - off, -off), (area.0 - off, area.3 + off)]));
     }
     lines.extend(curbs);
 
     let gates = vec![
-        gate_across((0.0, mid_y), if figure == Figure::GhepDoc { pi } else { 0.0 }, 0.5 * (area.3 - area.1) + 0.5, Gate::Entry),
-        // The bay's mouth, so the page can draw where the car has to reverse through and mark it.
+        gate_across((0.0, mid_y), heading, lane_half + 0.5, Gate::Entry),
+        // The bay's mouth, so the page can draw the line the car has to reverse through.
         GateLine { kind: Gate::BayMouth, a: (bay.0, 0.0), b: (bay.2, 0.0) },
     ];
-    // The centreline is the driving axis along the middle of the lane: the car's guide, and what the
-    // page's path cue reads. SAI_HINH does not use it — the two rectangles are what the law
-    // describes — so it is free to be the simple line the learner actually drives.
-    let centre = if figure == Figure::GhepDoc {
-        vec![(lead, mid_y), (area.0, mid_y)]
+
+    // The driving axis along the middle of the lane: the car's guide, and what the page's path cue
+    // reads. SAI_HINH does not use it — the two rectangles are what the law describes — so it is free
+    // to be the simple line the learner actually drives.
+    // The driving axis, starting `lead` inside the approach end.
+    let centre = if approach_negative {
+        vec![(area.2 - lead, mid_y), (area.0, mid_y)]
     } else {
-        vec![(-lead, mid_y), (area.2, mid_y)]
+        vec![(area.0 + lead, mid_y), (area.2, mid_y)]
     };
     let total = centre_length_of(&centre);
     let start = centre[0];
@@ -928,12 +947,12 @@ fn park_figure(figure: Figure, rs: &Ruleset) -> Option<Course> {
             x: start.0,
             y: mid_y,
             heading,
-            half_lane_m: 0.5 * (area.3 - area.1),
+            half_lane_m: lane_half,
             entry_m: 0.0,
             exit_m: total,
         },
     );
-    built.park = Some(ParkBay { area, bay, gate_x: 0.0, approach_negative: figure == Figure::GhepDoc });
+    built.park = Some(ParkBay { area, bay, gate_x: 0.0, approach_negative });
     Some(built)
 }
 

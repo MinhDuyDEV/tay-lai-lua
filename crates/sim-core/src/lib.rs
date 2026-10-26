@@ -28,6 +28,8 @@ mod scenarios_hill;
 mod scenarios_road;
 #[cfg(test)]
 mod scenarios_junction;
+#[cfg(test)]
+mod scenarios_ghep;
 
 use exercise::{DT, Exercise, Signal, State};
 use hash::Hash;
