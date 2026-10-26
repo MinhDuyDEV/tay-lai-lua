@@ -3,12 +3,10 @@
 // the snapshot's progress, lateral offset and heading error and turns them into the next thing to do
 // with the arrow keys.
 //
-// The law is pursuit: aim at a point a lookahead further along the centreline and steer toward it.
-// The lookahead has to be walkable by a person, so it is sized from the reaction: the car covers
-// `v·lag` metres before the key lands, so the aim point must sit at least that far ahead or the
-// learner is always correcting last second's error. That is also why the pace is limited: the
-// driver's lock shrinks with speed (`input/driver.ts` FEEL.steer), and a figure's tightest radius
-// sets the fastest speed the car can actually hold the line at.
+// The law is feed-forward from the path with a little feedback, and it is *early*: a person reading a
+// Vietnamese sentence and then pressing a key is 100 to 500 ms behind the line, and a car at the
+// idle creep covers up to a metre in that time. The cue is therefore worked out for where the car
+// will be when the key lands, not where it is when the line is read (see `cueFigure`).
 
 import { creepSpeedMps, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
@@ -50,118 +48,74 @@ export function centrelineLengthM(points: Centreline): number {
   return total;
 }
 
-/**
- * The tightest radius on the centreline, in metres.
- *
- * The core draws a bend as a chain of short chords, so a measurement window that lands on the join
- * between two arcs (where the turn reverses) reads far too tight. A bend the learner actually has to
- * hold is a *sustained* turn, so this takes the tightest radius that holds across a window as long as
- * the bend is: for every start point, the turn over the next `arc` metres, and the radius only counts
- * when the turn over the following `arc` metres is the same to within 10 %.
- */
-export function tightestRadiusM(points: Centreline): number {
+/** The direction of the path at `at` metres, radians: the chord from `half` before to `half` after. */
+function pathHeading(points: Centreline, at: number, half: number): number {
   const total = centrelineLengthM(points);
-  const arc = 1.5;
-  const step = 0.1;
-  const turnOver = (at: number): number => {
-    const a = pointAt(points, at);
-    const b = pointAt(points, at + arc);
-    return Math.abs(Math.atan2(a.tx * b.ty - a.ty * b.tx, a.tx * b.tx + a.ty * b.ty));
-  };
-  let min = Infinity;
-  for (let at = 0; at + arc * 2 <= total; at += step) {
-    const first = turnOver(at);
-    if (first < 1e-3) continue;
-    const second = turnOver(at + arc);
-    // A sustained bend: the next window turns by the same amount. A chord join does not.
-    if (Math.abs(second - first) > first * 0.1) continue;
-    const r = arc / first;
-    if (r < min) min = r;
-  }
-  return min;
+  const a = pointAt(points, Math.max(0, at - half));
+  const b = pointAt(points, Math.min(total, at + half));
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+
+/** The path's curvature at `at` metres, 1/m (+ = left), from two chords `half` apart. */
+function pathCurvature(points: Centreline, at: number, half: number): number {
+  const total = centrelineLengthM(points);
+  const mid = Math.max(half, Math.min(total - half, at));
+  return wrap(pathHeading(points, mid + half / 2, half) - pathHeading(points, mid - half / 2, half)) / half;
 }
 
 /**
- * The fastest speed the car's steering can hold a `radius` bend at, from the driver's own lock
- * model: `lock(v) = max(minLock, 1 / (1 + (v / speedScale)^2))` of `max_steer_rad`.
+ * The steering cue, and why it is shaped like this.
+ *
+ * A keyboard wheel is a *rate*, not an angle: holding ← winds the wheel toward full lock at
+ * `FEEL.steer.rate` and letting go unwinds it at `FEEL.steer.centre`. And the learner is late: 100 to
+ * 500 ms of reading and reaching, plus the page being polled, so the key lands 0.2 to 1 m of path
+ * after the line changed. Measured on bài 6 with a learner who reads `data-cue` every 50 ms and acts
+ * after a fixed delay (the Supervisor's script): the previous law, which named the wheel angle for
+ * where the car *is*, failed from 350 ms with the outer front wheel on the paint after the S-bend's
+ * reversal, where the wheel has to swing from full left to full right (a whole second at the key's
+ * rate) and any lateness is a metre of wrong-way travel.
+ *
+ * So the cue is for where the car will be when the key lands:
+ *   * feed-forward: the wheel angle the path's own curvature asks for, taken at a lead distance
+ *     `v · (REACT_S + SWING_SHARE · swing time)` ahead — the reaction the cue assumes, plus the share
+ *     of the time the wheel needs to get there, so a learner who is early or late by the same amount
+ *     lands on the path either way;
+ *   * feedback, small and smooth: the car's heading against the *smoothed* path direction (the core's
+ *     centreline is a chain of 6.7° chords, and the raw heading error jumps by 0.12 rad at each joint,
+ *     which flickered the cue to `straight` mid-bend and cost the learner a release each time), plus
+ *     the cross-track offset, plus where the wheel will be heading once the key is let go.
+ * The sum is compared with a dead band: inside it the line says `straight` ("let go").
  */
-export function maxSpeedForRadius(radiusM: number, ruleset: Ruleset): number {
-  const { max_steer_rad: maxSteer, wheelbase_m: base } = ruleset.vehicle;
-  const feel = ruleset.steer;
-  const need = Math.atan(base / radiusM);
-  let lo = 0;
-  let hi = feel.speedScaleMps * 4;
-  for (let i = 0; i < 60; i += 1) {
-    const mid = (lo + hi) / 2;
-    const lock = Math.max(feel.minLock, 1 / (1 + (mid / feel.speedScaleMps) ** 2));
-    if (lock * maxSteer >= need) lo = mid;
-    else hi = mid;
-  }
-  return lo;
-}
+const REACT_S = 0.45;
+const SWING_SHARE = 0.465;
+/** Half-length of the chords the path direction and curvature are read from, metres. */
+const PATH_CHORD_M = 0.98;
+const HEADING_GAIN = 1.06;
+/** Cross-track: `atan(CROSS_TRACK_M * lateral / v)`, radians. */
+const CROSS_TRACK_M = 0.8;
+/** The dead band on the wanted wheel angle, radians. */
+const STEER_BAND_RAD = 0.16;
 
-/**
- * The steering law, and why it is shaped like this.
- *
- * A keyboard wheel is a *rate*, not an angle: holding ← moves the wheel toward full lock at
- * `FEEL.steer.rate`, letting go centre-s itself at `FEEL.steer.centre`. So the cue must not name the
- * angle to end up at — measuring that was the mistake: the cue said `left` for the whole of a bend,
- * the learner held the key, the wheel sat at full lock, and the car cut 9 % inside a 4.30 m arc and
- * clipped the curb with its rear corner. Instead the cue names the direction to move the wheel *now*,
- * relative to where the wheel already is, and `straight` means let go and let it centre.
- *
- * What the wheel should end up at is still computed from the path, in three parts:
- *   * heading: turn back toward the path's own direction (`headingErrRad`);
- *   * cross-track: turn toward the centreline in proportion to how far off it the car is, scaled by
- *     speed so a slow car corrects sooner (`lateralM`);
- *   * feed-forward: the path's own turn over the next stretch, so a bend is entered, not discovered.
- * The difference between that and the wheel's present angle, with a dead band, is the cue. All of it
- * is in the snapshot, so the page, the test and the Supervisor read the same answer.
- */
-const CROSS_TRACK_GAIN = 1.15;
-/**
- * How far ahead the bend is anticipated, metres: what the car covers in about a reaction.
- *
- * Measured on bài 6 over steer lags of 100–400 ms: 2.2 m put a rear wheel on the paint at 250 ms
- * (progress 26 m, the far side of the second bend) at every band from 0.06 to 0.14; 1.5 m cleared all
- * seven lags on both figures. Shorter is better here because the car creeps at 1.86 m/s: 1.5 m is
- * already 0.8 s of travel, and looking further ahead turns into the bend before the learner can see
- * why the wheel moved.
- */
-const FEED_FORWARD_M = 1.5;
-/**
- * The dead band on the wanted wheel angle, radians. Inside it the line says `straight`.
- *
- * Measured on bài 4 (41.7 m, one right bend, one left bend) over steer lags of 100–400 ms: 0.03 rad
- * clipped the curb at three of seven lags, 0.10 kept all seven off the paint with the worst lateral
- * error 0.52 m. The band is wide because the wheel is a *rate*: `straight` means "let go and the
- * wheel unwinds", which is itself a half-second of the car turning.
- */
-const STEER_BAND_RAD = 0.10;
-
-/** The turn the centreline takes over the `span` metres from `at`, radians (+ = left). */
-function turnAhead(points: Centreline, at: number, span: number): number {
-  const a = pointAt(points, at);
-  const b = pointAt(points, Math.min(centrelineLengthM(points), at + span));
-  return Math.atan2(a.tx * b.ty - a.ty * b.tx, a.tx * b.tx + a.ty * b.ty);
-}
-
-/**
- * The wheel angle the car needs now, radians (+ = left), from the snapshot.
- *
- * The heading term is *predicted*: a key let go now leaves the wheel to unwind at
- * `FEEL.steer.centre` rad/s, so the car keeps yawing for `|steer| / centre` seconds after the learner
- * stops pressing. Without that term the cue asks for the wheel to be held after the bend is already
- * done, and the car leaves the far side of the bend wide — measured on bài 6 as the rear wheel on the
- * paint at 26 m.
- */
+/** The wheel angle the car needs when the key lands, radians (+ = left), from the snapshot. */
 export function wantSteer(s: SimState, centre: Centreline, ruleset: Ruleset): number {
+  const { wheelbase_m: base, max_steer_rad: lock } = ruleset.vehicle;
   const v = Math.max(s.speedMps, 0.6);
-  const unwind = Math.abs(s.steerRad) / ruleset.steer.centre;
-  const yawRate = (v * Math.tan(s.steerRad)) / ruleset.vehicle.wheelbase_m;
-  const cross = -Math.atan2(CROSS_TRACK_GAIN * s.lateralM, v);
-  const feed = turnAhead(centre, s.progressM, FEED_FORWARD_M);
-  return -(s.headingErrRad + yawRate * unwind) + cross + feed;
+  const target = (ahead: number): number => Math.atan(base * pathCurvature(centre, s.progressM + ahead, PATH_CHORD_M));
+  // The lead depends on how far the wheel has to go, which depends on the lead: two passes settle it.
+  let lead = v * REACT_S;
+  for (let i = 0; i < 2; i += 1) {
+    const swingS = Math.abs(target(lead) - s.steerRad) / (lock * ruleset.steer.rate);
+    lead = v * (REACT_S + SWING_SHARE * swingS);
+  }
+  const feedForward = target(lead);
+  const heading = wrap(s.heading - pathHeading(centre, s.progressM, PATH_CHORD_M));
+  // Letting go leaves the wheel to unwind at `centre` rad/s, and the car keeps yawing meanwhile.
+  const unwindS = Math.abs(s.steerRad) / ruleset.steer.centre;
+  const yaw = (v * Math.tan(s.steerRad)) / base;
+  const feedback = -HEADING_GAIN * (heading + yaw * unwindS) - Math.atan2(CROSS_TRACK_M * s.lateralM, v);
+  return feedForward + feedback;
 }
 
 /**
@@ -199,6 +153,10 @@ export function paceFigure(ruleset: Ruleset): number {
 }
 
 const m = (v: number) => `${Math.round(v * 100) / 100} m`;
+
+/** How far ahead the advice line looks for a bend to name, and how sharp counts as one (1/m). */
+const BEND_AHEAD_M = 2.2;
+const BEND_MIN_PER_M = 0.08;
 
 /**
  * What the advice line says for a figure run: one sentence, the next thing to do. The steering key
@@ -241,9 +199,9 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
       : `Đánh lái → sang phải và giữ, vào cua.`;
   }
   // Straight: say the speed to keep, and name the bend that is coming so it is not a surprise.
-  const feed = turnAhead(centre, s.progressM, FEED_FORWARD_M);
+  const bend = pathCurvature(centre, s.progressM + BEND_AHEAD_M, PATH_CHORD_M);
   const speed = 'đừng ga, cứ để xe tự bò';
-  if (feed < -0.12) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua phải.`;
-  if (feed > 0.12) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua trái.`;
+  if (bend < -BEND_MIN_PER_M) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua phải.`;
+  if (bend > BEND_MIN_PER_M) return `Thả lái cho thẳng (xe đang lệch ${m(side)}), ${speed} — sắp tới cua trái.`;
   return `Thả lái cho thẳng, ${speed}; xe đang lệch tim đường ${m(side)}.`;
 }

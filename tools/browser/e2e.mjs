@@ -144,6 +144,8 @@ async function drive(page, { belt, allowed }) {
 // cue in data-cue — 'slow' when the car is too fast for the stop cue to be honest, then 'clutch' and
 // 'brake'. The lag is the middle of the 100-400 ms the feel test sweeps.
 const REACTION_MS = 250;
+// The figures are driven at the edge of the spec: 500 ms between the line changing and the key landing.
+const FIGURE_REACTION_MS = 500;
 const cue = (name) => `document.querySelector('.advice')?.dataset.cue === '${name}'`;
 
 /**
@@ -244,9 +246,12 @@ async function driveFigure(page, { allowed, throttle = false }) {
   await key.up('Space');
   if (throttle) await key.down('ArrowUp');
 
-  // Hold the arrow key the line names, and only that one, changing it when the line changes.
+  // Hold the arrow key the line names, and only that one. The learner polls the line, and when it
+  // differs from what they last acted on they wait FIGURE_REACTION_MS and then press what *that*
+  // reading said, even if the line has moved on again — the same learner as the Supervisor's hand
+  // check, and the stricter one: re-reading after the wait would hide a cue that comes too late.
   let heldDir = null;
-  let heldCue = null;
+  let seen = '';
   const finishAt = Date.now() + WAIT_MS;
   while (Date.now() < finishAt) {
     const d = await readStage(page);
@@ -255,18 +260,19 @@ async function driveFigure(page, { allowed, throttle = false }) {
     if (d.phase === 'done' || d.disqualified === 'yes') break;
 
     const name = await page.$eval('.advice', (el) => el.dataset.cue ?? '');
-    if (name !== heldCue) {
-      // The advice line's own words, printed once per change: this is what the Learner would read.
+    if (name !== seen) {
+      seen = name;
+      // The advice line's own words, printed once per change: this is what the learner would read.
       console.log(`     at ${Number(d.progress).toFixed(1)} m the line says: ${(await page.$eval('.advice', (el) => el.textContent)).trim()}`);
-      heldCue = name;
+      await page.waitForTimeout(FIGURE_REACTION_MS);
+      const dir = name === 'left' ? 'ArrowLeft' : name === 'right' ? 'ArrowRight' : null;
+      if (dir !== heldDir) {
+        if (heldDir) await key.up(heldDir);
+        heldDir = dir;
+        if (dir) await key.down(dir);
+      }
     }
-    const dir = name === 'left' ? 'ArrowLeft' : name === 'right' ? 'ArrowRight' : null;
-    if (dir !== heldDir) {
-      if (heldDir) await key.up(heldDir);
-      heldDir = dir;
-      if (dir) await key.down(dir);
-    }
-    await page.waitForTimeout(REACTION_MS);
+    await page.waitForTimeout(50);
   }
   if (heldDir) await key.up(heldDir);
   if (throttle) await key.up('ArrowUp');

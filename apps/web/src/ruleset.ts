@@ -94,7 +94,9 @@ export interface SteerFeel {
   /** `lock(v) = max(minLock, 1 / (1 + (v / speedScaleMps)^2))` of full lock. */
   speedScaleMps: number;
   minLock: number;
-  /** How fast the wheel unwinds toward centre when the key is released, rad/s of full lock. */
+  /** How fast the wheel winds toward lock while a key is held, in full-lock units per second. */
+  rate: number;
+  /** How fast it unwinds toward centre when the key is released, same units. */
   centre: number;
 }
 

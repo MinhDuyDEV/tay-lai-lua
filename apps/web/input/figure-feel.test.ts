@@ -3,11 +3,20 @@
 // Run `task build` first (it writes build/sim.wasm).
 //
 // The guarantee: a learner who does what the advice line says — hold the arrow key the cue names, let
-// go on `straight`, never touch the throttle (the car creeps at idle) — with 100 to 400 ms of lag on
-// the steering (seven lags, 50 ms apart) and 100, 250 or 400 ms on the clutch, gear and handbrake,
-// finishes both figures without touching a painted line and scores 100. Each figure also has a control
-// that must fail (a learner who never steers), so the sweep proves something about the cue and not
-// about the car.
+// go on `straight`, never touch the throttle (the car creeps at idle) — finishes both figures without
+// touching a painted line and scores 100, with 100 to 500 ms between the line changing and the key
+// landing (ten lags 50 ms apart) and 100, 250 or 400 ms on the clutch, gear and handbrake. Each figure
+// also has a control that must fail (a learner who never steers), so the sweep proves something about
+// the cue and not about the car.
+//
+// The learner polls, like a person glancing at the line and like the Supervisor's hand-check script:
+// every `POLL_TICKS` they read the cue, and when it differs from the one they last acted on they wait
+// their lag and then press what *that* cue said — even if it has changed again meanwhile — and look
+// again. A plain delayed copy of the cue is kinder than that (it never acts on a stale reading), and
+// passed where the polling learner did not.
+//
+// The spec is 500 ms; the sweep runs to 600 ms, because a check that passes only at the exact
+// modelled lag is not a margin, and a person reading a Vietnamese sentence is slower than a script.
 //
 // The steering is the page's own `cueFigure`, read exactly as the HUD publishes it in `data-cue`.
 // The learner's hands are the real `createDriver`, so the self-centring lock, the pedal rates and
@@ -15,7 +24,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { cueFigure, paceFigure, tightestRadiusM } from '../src/figures.ts';
+import { cueFigure, paceFigure } from '../src/figures.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { createDriver, steerFeel } from './driver.ts';
 import { openSession, seedWord, type SimState } from '../src/sim/session.ts';
@@ -26,8 +35,11 @@ const data = JSON.parse(readFileSync(RULESET_FILE, 'utf8'));
 const ruleset: Ruleset = { ...data, steer: steerFeel };
 const wasmBytes = readFileSync(WASM);
 
-const STEER_LAG = [6, 9, 12, 15, 18, 21, 24] as const; // ticks: 100 to 400 ms in 50 ms steps
+/** Ticks of 1/60 s: 100 to 600 ms in 50 ms steps (the spec ends at 500; the rest is margin). */
+const STEER_LAG = [6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36] as const;
 const PEDAL_LAG = [6, 15, 24] as const; // 100, 250, 400 ms for the clutch, gear and handbrake
+/** How often the learner looks at the line: about 67 ms, a script's 50 ms poll plus its round trip. */
+const POLL_TICKS = 4;
 const WHEELS_CLEAR = '0000';
 
 interface Latency {
@@ -46,10 +58,10 @@ interface Result {
 }
 
 /**
- * One whole run. The learner presses the key the cue names, after `latency.steer`; the pedals are
- * `latency.pedals` behind the line's speed words. Nothing else drives the car.
+ * One whole run. The set-up keys (clutch, gear, handbrake) follow the checklist `latency.pedals`
+ * late; the arrow keys follow the polled cue `latency.steer` late. Nothing else drives the car.
  */
-function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true } = {}): Result {
+function drive(lesson: 4 | 6, latency: Latency, { steer = true } = {}): Result {
   const session = openSession(
     wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
     seedWord(lesson),
@@ -57,44 +69,52 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
   const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
   const pace = paceFigure(ruleset);
   const driver = createDriver();
-  const wanted: Set<string>[] = [];
+  const setup: Set<string>[] = [];
   let held = new Set<string>();
   let s: SimState = session.state;
   const cues: string[] = [];
   const out: Result = { finished: false, disqualified: false, score: 0, contact: '', clockS: 0, progressM: 0, cues };
+  // The polling learner: what they last acted on, what they are about to press and when.
+  let acted = '';
+  let pending = 'straight';
+  let actAt = -1;
+  let nextLook = 0;
+  let arrow = '';
 
   for (let t = 0; t < 9000 && !(s.phase === 'done' || s.disqualified); t += 1) {
     const k = new Set<string>();
     // The way the page's own checklist says to set off: clutch to the floor, gear 1, handbrake off,
-    // clutch up, and only then the throttle. A throttle with the clutch still coming up bogs the
-    // engine down and stalls it, which is the learner's mistake, not the page's.
+    // clutch up, and only then (never, here) the throttle.
     if (s.gear !== 1) {
       k.add('Space');
       if (s.clutch > 0.95) k.add('Digit1');
     }
     if (s.gear === 1 && s.handbrake) k.add('KeyP');
-    const rolling = s.gear === 1 && !s.handbrake && s.clutch < 0.05;
+    setup.push(k);
 
-    const cue = followCue ? cueFigure(s, centre, ruleset) : null;
-    if (cue && cues.at(-1) !== cue) cues.push(cue);
-    if (followCue) {
-      // A person holds the arrow key while the line keeps naming that direction, and lets go when it
-      // says straight or the other way — the only reading of a key the page can ask for.
-      if (cue === 'left' && steer) k.add('ArrowLeft');
-      else if (cue === 'right' && steer) k.add('ArrowRight');
-      // Speed: the advice line says "đừng ga, cứ để xe tự bò" — so the learner never touches the
-      // throttle, and the car's own idle creep is the speed. If it is ever above the line's pace the
-      // line says "nhả ga"; there is no throttle held to release, so the learner lifts off and the
-      // car drags itself back down.
-      if (rolling && s.speedMps > pace + 0.15) k.add('ArrowDown');
+    const cue = cueFigure(s, centre, ruleset);
+    if (actAt >= 0 && t >= actAt) {
+      arrow = pending === 'left' ? 'ArrowLeft' : pending === 'right' ? 'ArrowRight' : '';
+      actAt = -1;
+      nextLook = t + POLL_TICKS;
     }
-    wanted.push(k);
-    // Steering carries the steer lag; the clutch, gear lever and handbrake carry the pedal lag.
-    const latOf = (code: string) => (code === 'ArrowLeft' || code === 'ArrowRight' ? latency.steer : latency.pedals);
-    const down = new Set<string>();
-    for (const code of ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyP', 'Digit1']) {
-      if (wanted[t - latOf(code)]?.has(code)) down.add(code);
+    if (actAt < 0 && t >= nextLook) {
+      if (cue !== acted) {
+        acted = cue;
+        pending = cue;
+        actAt = t + latency.steer;
+        if (cues.at(-1) !== cue) cues.push(cue);
+      } else {
+        nextLook = t + POLL_TICKS;
+      }
     }
+
+    const down = new Set<string>(setup[t - latency.pedals] ?? []);
+    if (arrow && steer) down.add(arrow);
+    // Speed: the advice line says "đừng ga, cứ để xe tự bò", so the throttle is never touched. If the
+    // car is ever above the line's pace the line says "nhả ga"; with no throttle held there is nothing
+    // to release, so the learner brakes.
+    if (s.gear === 1 && !s.handbrake && s.clutch < 0.05 && s.speedMps > pace + 0.15) down.add('ArrowDown');
     const pressed = [...down].filter((code) => !held.has(code));
     held = down;
     session.step(driver.step(down, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
@@ -111,7 +131,7 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
 }
 
 /** Every lag combination; returns what went wrong, in a form the failure message can print. */
-function sweep(lesson: 4 | 6, options: { followCue?: boolean; steer?: boolean } = {}): string[] {
+function sweep(lesson: 4 | 6, options: { steer?: boolean } = {}): string[] {
   const failures: string[] = [];
   for (const steerLag of STEER_LAG) {
     for (const pedalLag of PEDAL_LAG) {
@@ -119,7 +139,7 @@ function sweep(lesson: 4 | 6, options: { followCue?: boolean; steer?: boolean } 
       const clean = r.finished && r.score === 100 && r.contact === WHEELS_CLEAR;
       if (!clean) {
         failures.push(
-          `steer ${steerLag} pedals ${pedalLag}: score=${r.score} contact=${r.contact} clock=${r.clockS.toFixed(1)}s progress=${r.progressM.toFixed(1)}m finished=${r.finished} dq=${r.disqualified} cues=[${[...new Set(r.cues)]}]`,
+          `steer ${steerLag * 1000 / 60 | 0} ms pedals ${pedalLag}: score=${r.score} contact=${r.contact} clock=${r.clockS.toFixed(1)}s progress=${r.progressM.toFixed(1)}m finished=${r.finished} dq=${r.disqualified} cues=[${[...new Set(r.cues)]}]`,
         );
       }
     }
@@ -127,11 +147,11 @@ function sweep(lesson: 4 | 6, options: { followCue?: boolean; steer?: boolean } 
   return failures;
 }
 
-test('bài 4: following the page cue 100 to 400 ms late finishes with 100 and no line touched', () => {
+test('bài 4: following the polled page cue 100 to 500 ms late (and 600 for margin) finishes with 100, no line touched', () => {
   assert.deepEqual(sweep(4), []);
 });
 
-test('bài 6: following the page cue 100 to 400 ms late finishes with 100 and no line touched', () => {
+test('bài 6: following the polled page cue 100 to 500 ms late (and 600 for margin) finishes with 100, no line touched', () => {
   assert.deepEqual(sweep(6), []);
 });
 

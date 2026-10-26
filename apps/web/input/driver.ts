@@ -74,6 +74,7 @@ const GEAR_CODES: ReadonlyArray<readonly [string, number]> = [1, 2, 3, 4, 5].fla
 export const steerFeel = {
   speedScaleMps: FEEL.steer.speedScaleMps,
   minLock: FEEL.steer.minLock,
+  rate: FEEL.steer.rate,
   centre: FEEL.steer.centre,
 } as const;
 
