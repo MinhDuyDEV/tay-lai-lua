@@ -707,7 +707,7 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
       else if (advice.includes('xi nhan phải (W)')) {
         if (d.signal !== 'right') later(() => key.press('KeyW'));
       } else if (advice.includes('nhả ga ↑ ra')) later(() => up('ArrowUp'));
-      else if (advice.includes('Giữ ga ↑')) later(() => down('ArrowUp'));
+      else if (advice.includes('Giữ ga ↑') || advice.includes('giữ ga ↑')) later(() => down('ArrowUp'));
       else if (advice.includes('phanh ↓')) later(() => down('ArrowDown'));
       if (advice.includes('nhả phanh cho xe đi')) later(async () => { await up('ArrowDown'); await up('Space'); });
       if (advice.includes('Đánh lái → sang phải')) later(() => down('ArrowRight'));
@@ -728,7 +728,9 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
   }
   for (const code of [...held]) await key.up(code);
   for (const { fn } of pending.splice(0)) void fn;
-  if (met !== arrive) throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival`);
+  // A run that provokes the lane edge is steered off the line on purpose and may be suspended before
+  // it reaches the stop line at all, so it has no arrival colour to check.
+  if (!steerOut && met !== arrive) throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival`);
   await until(page, 'end of the junction', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
   const end = await readStage(page);
   return { ...end, met };

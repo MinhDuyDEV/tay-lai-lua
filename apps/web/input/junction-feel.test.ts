@@ -49,10 +49,13 @@ interface Ask {
   signal: boolean;
 }
 function askOf(text: string): Ask {
+  // A reader matches meaning, not capitalisation: the sentence starts with the key when it is the first
+  // thing to do, and mid-sentence when it follows the signal.
+  const t = text.toLocaleLowerCase('vi');
   return {
-    throttle: text.includes('giữ ga ↑') ? 'hold' : text.includes('nhả ga') ? 'release' : null,
-    brake: text.includes('phanh ↓') || text.includes('kéo phanh tay P'),
-    signal: text.includes('xi nhan phải'),
+    throttle: t.includes('giữ ga ↑') ? 'hold' : t.includes('nhả ga') ? 'release' : null,
+    brake: t.includes('phanh ↓') || t.includes('kéo phanh tay p'),
+    signal: t.includes('xi nhan phải'),
   };
 }
 const sameAsk = (a: Ask, b: Ask | null): boolean =>

@@ -414,7 +414,7 @@ function paceJunction(s: SimState): string {
   const n = (v: number) => (v * 3.6).toFixed(0);
   return s.speedMps * 3.6 >= JUNCTION_READ_KMH
     ? `Đủ đà rồi (${n(s.speedMps)} km/h): nhả ga ↑ ra, cứ để xe chạy đà.`
-    : `Còn chậm (${n(s.speedMps)} km/h): giữ ga ↑ cho tới ${JUNCTION_READ_KMH} km/h rồi thả ra, xe còn lên thêm chút nữa.`;
+    : `Giữ ga ↑ cho tới ${JUNCTION_READ_KMH} km/h (đang ${n(s.speedMps)} km/h) rồi thả ra, xe còn lên thêm chút nữa.`;
 }
 
 /**
