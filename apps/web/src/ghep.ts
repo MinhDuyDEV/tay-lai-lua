@@ -258,11 +258,11 @@ function arrives(plan: Plan, hold: Pose): boolean {
  * fits is not a line: the plan kept is the roomiest, then the one with the fewest direction changes,
  * then the shortest.
  */
-export function planPark(from: Pose, yard: Yard, ruleset: Ruleset, budget = 20000): Plan | null {
+export function planPark(from: Pose, yard: Yard, ruleset: Ruleset, budget = 2500): Plan | null {
   const hold = holdPose(yard);
   const mouth = mouthOf(yard);
   const lattice = legLattice(ruleset);
-  if (arrivesAt(from, hold)) {
+  if (arrivesAt(from, yard, ruleset)) {
     return { legs: [], end: from, margin: patchMargin(from, yard, ruleset), shunts: 0, length: 0 };
   }
   const key = (p: Pose): string =>
@@ -293,7 +293,7 @@ export function planPark(from: Pose, yard: Yard, ruleset: Ruleset, budget = 2000
             node.shunts + (node.legs.length > 0 && node.legs[node.legs.length - 1].dir !== leg.dir ? 1 : 0),
           length: node.length + leg.len,
         };
-        if (arrivesAt(got.end, hold)) {
+        if (arrivesAt(got.end, yard, ruleset)) {
           if (!best || compare(got, best) < 0) best = got;
           continue;
         }
@@ -301,7 +301,7 @@ export function planPark(from: Pose, yard: Yard, ruleset: Ruleset, budget = 2000
           // Square at the mouth: close the plan with one exact straight reverse down the bay.
           const inLeg: Leg = { dir: -1, steerRad: 0, len: got.end.y - hold.y };
           const walkedIn = walkLeg(got.end, inLeg, yard, ruleset);
-          if (walkedIn && arrivesAt(walkedIn.end, hold)) {
+          if (walkedIn && arrivesAt(walkedIn.end, yard, ruleset)) {
             const whole: Plan = {
               legs: [...got.legs, inLeg],
               end: walkedIn.end,
@@ -326,7 +326,7 @@ export function planPark(from: Pose, yard: Yard, ruleset: Ruleset, budget = 2000
     // ones are where the plan is going. A beam of only the closest never tries the forward shuttle
     // that every clean line on these two figures begins with.
     next.sort((a, b) => Math.min(b.margin, 0.3) - Math.min(a.margin, 0.3));
-    frontier = next.slice(0, 900);
+    frontier = next.slice(0, 400);
   }
   return best;
 }
@@ -345,6 +345,15 @@ const LOCK_FRACTIONS = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1] as const;
  */
 const PULSES = [0.2, 0.35, 0.55, 0.8, 1.1, 1.4] as const;
 
+/**
+ * How far one *forward* leg reaches, metres. A lead-in is not a tap: the learner holds the wheel at a
+ * lock and drives across the lane in one go, which is what both clean lines do — bài 7 needs a 5 m
+ * sweep to reach its diagonal launch pose, bài 8 a 6.8 m one. The pulse ladder above is the *reverse*
+ * precision ladder (0.2 m steps into the bay, where the slack is centimetres); using it for the
+ * lead-in is what made every earlier search fail, because no plan could cross the lane at 1.4 m a step.
+ */
+const LEAD_IN = [0.35, 0.55, 0.8, 0.95, 1.1, 1.4, 1.8, 2.4, 3.1, 4.0, 5.0, 6.2, 7.6] as const;
+
 /** Lock fractions and pulse lengths the planner may use, as legs of the real car. */
 function legLattice(ruleset: Ruleset): Leg[] {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
@@ -352,17 +361,24 @@ function legLattice(ruleset: Ruleset): Leg[] {
   for (const dir of [-1, 1] as const) {
     for (const frac of LOCK_FRACTIONS) {
       for (const sign of frac === 0 ? [1] : [1, -1]) {
-        for (const len of PULSES) out.push({ dir, steerRad: sign * frac * lock, len });
+        for (const len of dir === 1 ? [...LEAD_IN, ...PULSES] : PULSES) {
+          out.push({ dir, steerRad: sign * frac * lock, len });
+        }
       }
     }
   }
   return out;
 }
 
-/** Whether a pose is in the bay, square enough that the whole hull fits and the signal would count. */
-function arrivesAt(p: Pose, hold: Pose): boolean {
-  return Math.hypot(p.x - hold.x, p.y - hold.y) <= 0.30
-    && Math.abs(wrap(p.h - hold.h)) <= 0.12;
+/**
+ * Whether a pose is *parked*: the core's own finish test, which is the whole hull inside the bay and the
+ * car square enough to stand there. It is deliberately NOT "within 0.30 m of one chosen point": the bay
+ * is 2.2 x 5.2 m and every pose whose body fits it is a finish, so pinning the search to a point throws
+ * away almost all of the free region — measured: the lead's own clean line ends 0.46 m from the bay's
+ * centre with a 0.19 m margin and would have been rejected.
+ */
+function arrivesAt(p: Pose, yard: Yard, ruleset: Ruleset): boolean {
+  return hullInsideBay(p, yard, ruleset) && patchMargin(p, yard, ruleset) > 0;
 }
 
 /**
@@ -408,7 +424,12 @@ export type GhepCue = 'left' | 'right' | 'straight';
  * `clutch` — hold Space, the car has to change gear direction and only shifts with the pedal down;
  * `hold` — stand on ↓ and stay there; the car is parked and the signal is counting.
  */
-export type GhepPedal = 'creep' | 'brake' | 'clutch' | 'hold';
+/**
+ * One value per attribute. `park` means "release the handbrake, this is the first thing" — the same
+ * word the driving school starts with and the same one `P` does; it is not folded into `hold`, because
+ * a learner told to hold the brake with the handbrake still on never moves at all.
+ */
+export type GhepPedal = 'creep' | 'brake' | 'clutch' | 'hold' | 'park' | 'enter';
 
 /** What the page tells the learner to do this tick. */
 export interface GhepCueNow {
@@ -447,11 +468,34 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0
   const pose: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const parked = s.hullInside && Math.abs(s.speedMps) < 0.05;
   if (parked) return { steer: 'straight', pedal: 'hold', gear: 0, parked: true, plan: null };
+  // The start order the driving school teaches, and the one `PARK_STEPS` lists: clutch, first gear, then
+  // the handbrake. Saying "release the brake" while the lever is still in neutral is the wrong order: the
+  // car would roll with nothing engaged.
+  if (s.gear === 0) return { steer: 'straight', pedal: 'clutch', gear: 1, parked: false, plan: null };
+  if (s.handbrake) return { steer: 'straight', pedal: 'park', gear: 0, parked: false, plan: null };
   if (s.finishSignal || s.disqualified || s.phase === 'done') {
-    return { steer: 'straight', pedal: 'hold', gear: 0, parked, plan: null };
+    // The finish is the one instruction the learner must not miss: `enter` is its own word, so the model
+    // (and the page) never has to guess whether "stand on the brake" also means "press Enter".
+    return { steer: 'straight', pedal: 'enter', gear: 0, parked, plan: null };
   }
-  const plan = planPark(pose, yard, ruleset);
-  if (!plan || plan.legs.length === 0) return { steer: 'straight', pedal: 'hold', gear: 0, parked, plan: null };
+  const plan = planFor(pose, yard, ruleset);
+  if (!plan || plan.legs.length === 0) {
+    // No clean line from here. The page still has to say *something* the learner can act on, and the one
+    // thing that is always safe is "put it in gear and move slowly toward the bay": a learner who is
+    // stopped mid-yard needs to get closer before a plan exists. `park` is not repeated here — the
+    // handbrake case is above — so this is a real instruction, not a fall-through.
+    const towards = holdPose(yard);
+    const bearing = Math.atan2(towards.y - pose.y, towards.x - pose.x);
+    const err = wrap(bearing - pose.h);
+    const dir: 1 | -1 = Math.abs(err) > HALF_PI ? -1 : 1;
+    const steer: GhepCue = err > 0.12 ? 'left' : err < -0.12 ? 'right' : 'straight';
+    // Reversing flips which way the wheel sends the car, exactly as it does for a driver.
+    const word: GhepCue = dir === 1 ? steer : steer === 'left' ? 'right' : steer === 'right' ? 'left' : 'straight';
+    // Once the lever is already in that gear the learner's next move is to let the clutch up, not to
+    // press it again: repeating `clutch` would hold the pedal down and the car would never move.
+    const pedal: GhepPedal = s.gear === dir ? 'creep' : 'clutch';
+    return { steer: word, pedal, gear: dir, parked, plan: null };
+  }
 
   const first = plan.legs[0];
   const speed = Math.abs(s.speedMps);
@@ -479,6 +523,32 @@ export function reverseCreepMps(ruleset: Ruleset): number {
 }
 
 const m = (v: number) => `${Math.round(v * 100) / 100} m`;
+
+/**
+ * The plan for the pose the car is at, memoised.
+ *
+ * `planPark` is a search — a few hundred milliseconds, and it is the frame's whole budget — while the
+ * HUD asks for the cue every frame. The car moves between frames, so the plan is keyed on the pose
+ * rounded to 5 cm and 0.5°: below that the plan does not change, and the learner cannot act on the
+ * difference. A new key re-solves, which is exactly the replan-after-every-stop the manoeuvre needs,
+ * and the stale plan is dropped rather than reused so a plan can never be acted on from a pose it was
+ * not solved for.
+ */
+const planCache = new WeakMap<Ruleset, { key: string; plan: Plan | null }>();
+
+function planFor(pose: Pose, yard: Yard, ruleset: Ruleset): Plan | null {
+  const key = [
+    yard.bay.join(','),
+    Math.round(pose.x / 0.05),
+    Math.round(pose.y / 0.05),
+    Math.round(pose.h / (Math.PI / 360)),
+  ].join('|');
+  const hit = planCache.get(ruleset);
+  if (hit && hit.key === key) return hit.plan;
+  const plan = planPark(pose, yard, ruleset);
+  planCache.set(ruleset, { key, plan });
+  return plan;
+}
 
 /**
  * The line the learner reads, one sentence, always starting with the key it asks for.

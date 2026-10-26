@@ -5,7 +5,7 @@
 import { flatRoad, stopAid, type StopAid, type StopRoad } from './stopAid.ts';
 import { seedWord } from './sim/session.ts';
 import { adviceFigure, cueFigure, wantSteer, type Centreline } from './figures.ts';
-import { adviceGhep, cueGhep, yardOf, type GhepCue, type Yard } from './ghep.ts';
+import { adviceGhep, cueGhep, yardOf, type GhepCueNow, type Yard } from './ghep.ts';
 import { parkRects, type ParkRects } from './sim/session.ts';
 import {
   adviceBai3,
@@ -67,6 +67,12 @@ export interface Exercise {
    * lesson: a page that drew a bay the scorer does not have would be worse than no picture.
    */
   park?: (course: readonly { kind: number; lineId: number; points: readonly (readonly [number, number])[] }[]) => Yard | null;
+  /**
+   * The park cue in full — steering word, pedal word and the gear it needs — as the HUD publishes it in
+   * `data-cue`, `data-pedal` and `data-gear-wanted`. The learner-model test reads this through the same
+   * argument list the HUD uses, so the test cannot drift from the page.
+   */
+  cueNow?: (state: SimState, ruleset: Ruleset, yard: Yard) => GhepCueNow;
   /**
    * The countdown to the one key that decides the stop, or null when this exercise has no stop line
    * to make. The road and the critical key are the exercise's own; the arithmetic is `stopAid`.
@@ -236,6 +242,7 @@ function park(lesson: ParkLesson, seed: bigint): Exercise {
       return adviceGhep(state, yard, ruleset, lesson);
     },
     cue: (state, ruleset, _centre, yard) => (yard ? cueGhep(state, yard, ruleset).steer : null),
+    cueNow: (state, ruleset, yard) => cueGhep(state, yard, ruleset),
     stop: () => null,
     signals: false,
     stops: false,
