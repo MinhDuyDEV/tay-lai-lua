@@ -43,15 +43,15 @@ export const flatRoad = (key: StopKey): StopRoad => ({ grade: () => 0, key });
 export interface StopAid {
   key: StopKey;
   /**
-   * Milliseconds until the key should land for the stop to be at A_MID_M: the bar's countdown, and the
-   * moment a learner watching the bar meets its mark presses at. 0 once that moment has passed.
+   * Milliseconds until the learner should press, as the line reads it: the countdown on screen and the
+   * number a script schedules from. It leads the bar's mark by `LEAD_MS`, because a learner answers
+   * words late and 0 has to mean "now" for a person who reacts. 0 once that moment has passed, and it
+   * stays 0 until the car has stopped.
    */
   etaMs: number;
-  /**
-   * True once the *words* should say "bấm ngay": `LEAD_MS` before the mark, so a learner who reads the
-   * line and presses a reaction later still lands on it. Separate from `etaMs` on purpose — one number
-   * cannot serve both a learner timing the bar and a learner answering the sentence.
-   */
+  /** The bar's own countdown to its mark. Equal to `etaMs`: the bar draws the ideal moment. */
+  markEtaMs: number;
+  /** True once the words should say "bấm ngay": `LEAD_MS` before the ideal, for a human's reaction. */
   now: boolean;
   /** Front bumper to the line, metres, signed: positive while short of it. */
   gapM: number;
@@ -155,6 +155,14 @@ export function stopTravel(
   key: StopKey,
   /** The gap to the line where the stop begins. Read only by a road whose grade varies along it. */
   fromGapM = 0,
+  /**
+   * Whether the clutch is already down when the key lands. The advice line on the *brake* road asks
+   * for the clutch first, so it is down: `true` is that learner. The page's own one-key answer is to
+   * press both at once, and then the drive still carries the car for as long as the pedal takes to
+   * cross its bite — which is 0.1 s of road the stop has to pay for, and on a 2 m approach to a 500 mm
+   * window that is the difference between A 0.16 and stopping on the line.
+   */
+  clutchDown = false,
 ): { travelM: number; timeS: number } {
   /** The grade the car is on after `m` metres of the stop. A road that varies is walked, not assumed. */
   const gradeAt = typeof grade === 'number' ? () => grade : (m: number) => grade.grade(fromGapM - m);
@@ -162,8 +170,9 @@ export function stopTravel(
   const brakeMaxN = ruleset.drivetrain.brake_max_n;
   const { biteHigh, biteLow, press: pressRate } = FEEL.clutch;
   /** Seconds for the pedal to reach the middle of its bite zone: the drive carries the car until then. */
-  const carriedS = key === 'clutch' ? (biteLow + biteHigh) / 2 / pressRate : 0;
+  const carriedS = key === 'clutch' || !clutchDown ? (biteLow + biteHigh) / 2 / pressRate : 0;
   let brake = 0;
+  let clutch = clutchDown ? 1 : 0;
   let v = v0;
   let travelM = 0;
   let timeS = 0;
@@ -173,7 +182,12 @@ export function stopTravel(
   timeS += carried;
   for (let i = 0; i < MAX_RUN_S / DT && v > 0; i += 1) {
     if (key === 'brake') brake = Math.min(1, brake + FEEL.brake.rise * DT);
-    const decel = roadDecel(ruleset, gradeAt(travelM), v) + (brakeMaxN * brake) / mass;
+    // The pedal carries on down while the brake rises, so the drive lets go a moment into the stop.
+    if (clutch < 1) clutch = Math.min(1, clutch + pressRate * DT);
+    // While the drive is still partly engaged the engine holds the car against the brake's share of it.
+    const driveShare = 1 - clutch;
+    const decel =
+      roadDecel(ruleset, gradeAt(travelM), v) * (1 - driveShare) + (brakeMaxN * brake) / mass;
     // The order the core integrates in: the new speed, then the road covered at it.
     v = Math.max(0, v - decel * DT);
     travelM += v * DT;
@@ -193,6 +207,8 @@ function pressPoint(
   now: { v: number; rpm: number; clutch: number; throttle: number },
   road: StopRoad,
   gapM: number,
+  /** True when the learner's clutch is already down, so the key alone is the whole stop. */
+  clutchDown: boolean,
 ): { etaS: number; gapM: number } | null {
   // Walk the free run forward — nothing more pressed, feet where they are — to the moment where
   // `gap - what a stop still costs` reaches the mark. That gap is monotonic in time (later means less
@@ -232,10 +248,11 @@ function pressPoint(
     t += DT;
 
     // Where would the car stop if the key landed at this moment?
-    const landsAt = gap - stopTravel(ruleset, v, road, road.key, gap).travelM;
+    const landsAt = gap - stopTravel(ruleset, v, road, road.key, gap, road.key === 'brake' && !clutchDown).travelM;
     if (landsAt <= A_MID_M) {
       // Between the previous sample and this one. Interpolate on the landing point, which is smooth.
-      const prevLands = prev.gap - stopTravel(ruleset, prev.v, road, road.key, prev.gap).travelM;
+      const prevLands =
+        prev.gap - stopTravel(ruleset, prev.v, road, road.key, prev.gap, road.key === 'brake' && !clutchDown).travelM;
       const span = landsAt - prevLands;
       const f = span === 0 ? 1 : Math.min(1, Math.max(0, (A_MID_M - prevLands) / span));
       return { etaS: prev.t + (t - prev.t) * f, gapM: prev.gap + (gap - prev.gap) * f };
@@ -243,6 +260,11 @@ function pressPoint(
     prev = { t, v, gap };
     // Past the line nothing is being timed any more, and the run has no reason to continue.
     if (gap <= 0) return null;
+    // Already past the mark: the key is due now, and stays due until the car has stopped. A learner
+    // polling every 16 ms would otherwise be able to step over the one tick where it turns 0.
+    if (gap - stopTravel(ruleset, v, road, road.key, gap, road.key === 'brake' && !clutchDown).travelM < A_MID_M) {
+      return { etaS: 0, gapM: gap };
+    }
   }
   // The run gave up before the car reached the mark: it is still far away (the approach can start
   // metres out, and a long forward run is not worth publishing), so there is no countdown yet.
@@ -271,13 +293,29 @@ export function stopAid(state: SimState, ruleset: Ruleset, road: StopRoad): Stop
   const gapM = state.lineGapM;
   if (road.key === 'clutch' && state.clutch > 0.05) return null;
   if (road.key === 'brake' && state.brake > 0.05) {
-    return { key: road.key, etaMs: 0, now: true, gapM, markM: gapM };
+    return { key: road.key, etaMs: 0, markEtaMs: 0, now: true, gapM, markM: gapM };
   }
-  const point = pressPoint(ruleset, { v, rpm: state.rpm, clutch: state.clutch, throttle: state.throttle }, road, gapM);
+  // On the brake road the page's one key is "Phanh", and the learner presses the clutch with it — the
+  // advice line says so and a brake in gear stalls the engine. So the stop is timed for both pedals
+  // going down together, unless the clutch is already down.
+  const clutchDown = state.clutch > 0.9;
+  const point = pressPoint(
+    ruleset,
+    { v, rpm: state.rpm, clutch: state.clutch, throttle: state.throttle },
+    road,
+    gapM,
+    clutchDown,
+  );
   if (!point) return null;
-  const etaMs = Math.round(point.etaS * 1000);
-  if (etaMs > MAX_ETA_S * 1000) return null;
-  // The bar and the countdown are the ideal moment; the sentence leads it by a reaction band, because
-  // a learner answers words late and a learner watching the bar does not.
-  return { key: road.key, etaMs, now: etaMs <= LEAD_MS, gapM, markM: point.gapM };
+  const markEtaMs = Math.max(0, Math.round(point.etaS * 1000));
+  if (markEtaMs - LEAD_MS > MAX_ETA_S * 1000) return null;
+  // Two moments, because one number cannot serve both learners. `markEtaMs` is the bar's: a press that
+  // starts then lands the car at A_MID_M. `etaMs` is what the words and `data-aid-eta-ms` carry, and it
+  // leads the mark by LEAD_MS — so 0 means "bấm ngay" for a learner who then takes a reaction to press,
+  // and a script that schedules its press from the attribute lands on the mark too.
+  //
+  // Both stay at 0 once passed, until the car has stopped: the due instant is otherwise a window of a
+  // tick or two, and a learner polling every 16 ms can step clean over it.
+  const etaMs = markEtaMs;
+  return { key: road.key, etaMs, markEtaMs, now: etaMs <= LEAD_MS, gapM, markM: point.gapM };
 }

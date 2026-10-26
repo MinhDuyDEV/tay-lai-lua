@@ -182,7 +182,7 @@ function drive(opts: {
           } else {
             // Replan from this read while the countdown is still running: the planned press is the
             // read time plus the countdown, an absolute moment that does not drift with the polling.
-            if (!aid.now) planMs = ms + aid.etaMs;
+            if (aid.etaMs > 0) planMs = ms + aid.etaMs;
             // A read that sees 0 does not move the plan later — "it keeps its plan, it does not
             // re-arm later" — it only gives a learner with no plan yet something to act on now.
             else if (!havePlan) planMs = ms;
@@ -273,7 +273,7 @@ const PAGES: ReadonlyArray<{ name: string; road: StopRoad; seed: bigint; lesson:
   { name: 'bài 2', road: flatRoad('brake'), seed: seedWord(2), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
   { name: 'bài 9', road: flatRoad('brake'), seed: seedWord(9), lesson: 2, maxA: ruleset.road!.max_a_m, clutchLeadMs: 600 },
   // Seed 1 is the red arrival the page opens on, so the light asks for the stop.
-  { name: 'bài 5 (red)', road: flatRoad('brake'), seed: seedWord(5, 1n), lesson: 2, maxA: ruleset.junction!.max_a_m, clutchLeadMs: 600 },
+  { name: 'bài 5 (red)', road: flatRoad('brake'), seed: seedWord(5, 1n), lesson: 2, maxA: ruleset.junction!.max_a_m },
 ];
 
 // (a) the anticipating learner: reads the countdown every P ms, plans the press at read + eta, and
@@ -378,12 +378,7 @@ test('the published countdown is smooth: no tick moves it by more than a frame a
 test('stopTravel is the car: the measured stop is within 40 mm of what the aid predicts', () => {
   // What the whole aid rests on, measured against the real core: press the clutch on bài 3's slope at
   // a state, and the road the car covers to a standstill has to be the number the aid planned with.
-  const cases: Array<{ bumper: number; key: 'clutch'; grade: number }> = [
-    { bumper: 3.0, key: 'clutch', grade: ruleset.hill!.grade },
-    { bumper: 4.0, key: 'clutch', grade: ruleset.hill!.grade },
-    { bumper: 4.6, key: 'clutch', grade: ruleset.hill!.grade },
-    { bumper: 5.5, key: 'clutch', grade: ruleset.hill!.grade },
-  ];
+  const cases: Array<{ bumper: number }> = [{ bumper: 3.0 }, { bumper: 4.0 }, { bumper: 4.6 }, { bumper: 5.5 }];
   for (const c of cases) {
     const session = openSession(bytes(), seedWord(3));
     const driver = createDriver();
@@ -408,7 +403,7 @@ test('stopTravel is the car: the measured stop is within 40 mm of what the aid p
       if (s.speedMps <= 0) break;
     }
     const measured = s.frontBumperM - x0;
-    const predicted = stopTravel(ruleset, v0, c.grade, c.key).travelM;
+    const predicted = stopTravel(ruleset, v0, hillRoad, 'clutch', s.lineGapM, true).travelM;
     session.dispose();
     assert.ok(Math.abs(measured - predicted) < 0.04, `at ${c.bumper} m, v ${v0.toFixed(2)}: measured ${measured.toFixed(3)} m, predicted ${predicted.toFixed(3)} m`);
   }
