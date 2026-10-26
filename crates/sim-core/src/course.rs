@@ -898,10 +898,16 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
 
 /// Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông (Hình 11), right turn only.
 ///
-/// Straight approach, stop line, crosswalk, then the turn: a quarter arc to the right out of the
-/// approach lane, followed by the exit lane. The arc's radius comes from the car's own tightest
-/// turn (`SaHinh::corner_radius_m`, the same rule as bài 4's bends), so the route is always
-/// drivable; `course.junction.arc_radius_m` overrides it when a real yard's radius is known.
+/// The frame: `+x` down the approach lane, `+y` to its left, so the approach lane's right-hand
+/// limit line is at `-half`. Straight approach to the stop line, the crosswalk, then a quarter arc
+/// to the right, and out along the exit lane — which runs on in `-y`, the heading the arc leaves the
+/// car on, not sideways in `+x`. The arc's radius comes from the car's own tightest turn
+/// (`SaHinh::corner_radius_m`, the same rule as bài 4's bends), so the route is always drivable;
+/// `course.junction.arc_radius_m` overrides it when a real yard's radius is known.
+///
+/// The exit lane is the mirror of the approach: it is entered at `x = arc_x` on the approach lane's
+/// right-hand line, so the turn is a lane-to-lane right turn and the two lanes are one road width
+/// apart, not overlapping.
 fn junction_figure(rs: &Ruleset) -> Option<Course> {
     let j = &rs.junction;
     let r = &rs.road;
@@ -916,17 +922,20 @@ fn junction_figure(rs: &Ruleset) -> Option<Course> {
     let radius = if j.arc_radius_m > 0.0 {
         j.arc_radius_m
     } else {
-        sh.corner_radius_m(v, 2.0 * (j.extent_m - half))
+        sh.corner_radius_m(v, 2.0 * j.extent_m)
     };
-    let c = (arc_x, -radius);
-    let exit_y = -radius;
-    let exit_end = arc_x + radius + j.extent_m;
+    // The arc's centre is `radius` to the right of where the arc starts, so a quarter turn to the
+    // right carries the car `radius` outboard: the exit lane's centreline is at `arc_x + radius`,
+    // and it runs on in −y — the heading the arc leaves the car on.
+    let centre_pt = (arc_x, -radius);
     let half_pi = 0.5 * core::f64::consts::PI;
+    let exit_x = arc_x + radius;
+    let exit_end_y = -(radius + j.extent_m);
 
     let mut p = Path::new((0.0, 0.0));
     p.line_to((arc_x, 0.0));
-    p.arc(c, radius, half_pi, -half_pi, sh.max_segment_m);
-    p.line_to((exit_end, exit_y));
+    p.arc(centre_pt, radius, half_pi, -half_pi, sh.max_segment_m);
+    p.line_to((exit_x, exit_end_y));
     let centre = p.points;
 
     let mut lines = vec![
@@ -935,13 +944,17 @@ fn junction_figure(rs: &Ruleset) -> Option<Course> {
     ];
     lines.extend(curbs(&centre, half, sh));
 
-    // The junction's other three arms, so the picture reads as a crossroads and not a bend: the
-    // opposite approach lane ends at the far side of the junction, and the left/right arms run
-    // across it. They are boundary lines like the route's own, so a wheel on them is SAI_VACH_KE.
-    let far = -(j.junction_depth_m + r.lane_width_m);
-    lines.push(painted(1, half_line, vec![(line_x, far), (arc_x + j.extent_m, far)]));
-    lines.push(painted(1, half_line, vec![(line_x, far + r.lane_width_m), (arc_x + j.extent_m, far + r.lane_width_m)]));
-    lines.push(painted(1, half_line, vec![(-j.extent_m, far), (-j.extent_m, far + r.lane_width_m)]));
+    // The rest of the crossroads, so the picture reads as a junction and not as a bend: the cross
+    // street's other two lane edges, running along −y on the far side of the exit lane, and the far
+    // side of the junction across the approach. They are boundary lines like the route's own, so a
+    // wheel on them is SAI_VACH_KE; none of them is on the route.
+    // The cross street's far kerb line runs along −y on the far side of the exit lane, and the far
+    // side of the junction runs across the approach: neither may cross the route, or the route's
+    // own width would be bounded twice and a car in the middle of the lane would be "on a line".
+    let cross_x = exit_x + r.lane_width_m;
+    lines.push(painted(1, half_line, vec![(cross_x, -radius + half), (cross_x, exit_end_y)]));
+    let far_y = -(radius + r.lane_width_m);
+    lines.push(painted(1, half_line, vec![(-j.extent_m, far_y), (exit_x - half, far_y)]));
 
     let mut marks: Vec<Mark> = Vec::new();
     marks.extend(across((0.0, 0.0), (arc_x, 0.0), line_x, r.stop_line_width_m, half, 1));
@@ -954,8 +967,9 @@ fn junction_figure(rs: &Ruleset) -> Option<Course> {
         r.crosswalk_stripe_gap_m,
         r,
     ));
-    // "Vạch kết thúc ngã tư": the end of the exercise, across the exit lane.
-    marks.extend(across((0.0, exit_y), (1.0, exit_y), exit_end - 2.0, r.stop_line_width_m, half, 2));
+    // "Vạch kết thúc ngã tư": the end of the exercise, across the exit lane a little before its
+    // end, so the car crosses it and still has road to stop on.
+    marks.extend(across((exit_x, -1.0), (exit_x, -2.0), -exit_end_y, r.stop_line_width_m, half, 2));
 
     let total = centre_length_of(&centre);
     let mut built = course_from(
@@ -972,7 +986,7 @@ fn junction_figure(rs: &Ruleset) -> Option<Course> {
             heading: 0.0,
             half_lane_m: half,
             entry_m: line_x,
-            exit_m: total,
+            exit_m: total - 2.0,
         },
     );
     built.marks = marks;

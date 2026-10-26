@@ -441,6 +441,303 @@ pub fn hill_messy() -> Golden {
     Golden { name: "dung_khoi_hanh_doc_messy", seed, inputs }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bài 2, bài 9 and bài 11 — the straight-road exercises. Same rule as the others: the trace is a
+// fixed script, recorded from a driver that reads the state it can see, so it says what to do at a
+// *place* ("brake to stop 0,3 m short of the line"), never at a tick number.
+// ---------------------------------------------------------------------------------------------
+
+const CROSSWALK: u64 = 2 << 56;
+const RAIL: u64 = 9 << 56;
+const FINISH: u64 = 11 << 56;
+
+/// Where the stop line and the finish line sit on the road scene's axis, from the ruleset, so the
+/// traces follow a layout change instead of quietly driving to a stale number.
+fn road_lines() -> (f64, f64) {
+    let rs = crate::rules::Ruleset::load();
+    (rs.road.stop_line_m(), rs.road.finish_m())
+}
+
+/// Parked as the exercise opens: clutch pressed, neutral, handbrake on, engine idling.
+fn road_park() -> TickInput {
+    TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() }
+}
+
+/// A clean bài 2 or bài 9: drive up, stop `stop_short_m` short of the line (negative: past it),
+/// hold two seconds, then pull away and out past the line. `flags` is whatever the car keeps on.
+fn road_stop(seed: u64, name: &'static str, stop_short_m: f64, flags: u8) -> Golden {
+    let (line, _) = road_lines();
+    let mut stopped_at: Option<u32> = None;
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if v.phase == crate::Phase::Stopped && stopped_at.is_none() {
+            stopped_at = Some(t);
+        }
+        match stopped_at {
+            None if t < 20 => road_park(),
+            None => {
+                // Decided once and kept: a car that has begun to brake does not let go again.
+                braking |= stopping_point(v) >= line - stop_short_m;
+                if braking {
+                    TickInput { gear: 1, clutch: 255, brake: 255, flags, ..Default::default() }
+                } else {
+                    TickInput { gear: 1, clutch: 168, throttle: 80, flags, ..Default::default() }
+                }
+            }
+            // Held at the line for two seconds, gear in, clutch pressed.
+            Some(at) if t - at < 120 => TickInput { gear: 1, clutch: 255, brake: 255, flags, ..Default::default() },
+            // Pull away and go on past the line: that is what ends the exercise.
+            Some(_) => TickInput { gear: 1, clutch: 150, throttle: 90, flags, ..Default::default() },
+        }
+    });
+    Golden { name, seed, inputs }
+}
+
+/// A messy bài 2 or bài 9: rev past 4000, a dead stall and a restart, then a stop at the line that
+/// is wrong in the way the exercise is about — short of the line for bài 2, past it for bài 9 — and
+/// the run still goes on and ends. Several different faults, each on the rule it belongs to.
+fn road_messy(seed: u64, name: &'static str, stop_short_m: f64) -> Golden {
+    let (line, _) = road_lines();
+    let mut stage = 0u8;
+    let mut braking = false;
+    let mut stopped_at: Option<u32> = None;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if v.phase == crate::Phase::Stopped && stopped_at.is_none() {
+            stopped_at = Some(t);
+        }
+        match stage {
+            0 if t >= 20 => stage = 1,
+            1 if v.rpm > 4300.0 => stage = 2,
+            2 if v.rpm < 900.0 => stage = 3,
+            3 if !v.engine_on => stage = 4,
+            4 if v.engine_on => stage = 5,
+            _ => {}
+        }
+        if stage < 5 {
+            return match stage {
+                0 => road_park(),
+                1 => TickInput { clutch: 255, throttle: 255, flags: HANDBRAKE, ..Default::default() },
+                2 => road_park(),
+                3 => TickInput { gear: 1, clutch: 0, ..Default::default() },
+                _ => TickInput { clutch: 255, flags: TickInput::FLAG_IGNITION, ..Default::default() },
+            };
+        }
+        match stopped_at {
+            None => {
+                braking |= stopping_point(v) >= line - stop_short_m;
+                if braking {
+                    TickInput { gear: 1, clutch: 255, brake: 255, ..Default::default() }
+                } else {
+                    TickInput { gear: 1, clutch: 150, throttle: 110, ..Default::default() }
+                }
+            }
+            Some(at) if t - at < 90 => TickInput { gear: 1, clutch: 255, brake: 255, ..Default::default() },
+            Some(_) => TickInput { gear: 1, clutch: 150, throttle: 90, ..Default::default() },
+        }
+    });
+    Golden { name, seed, inputs }
+}
+
+/// A clean bài 11: right signal on, drive over the finish line, stop. No rule fires.
+fn finish_clean(seed: u64, name: &'static str) -> Golden {
+    let (_, finish) = road_lines();
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if t < 20 {
+            return TickInput { clutch: 255, flags: HANDBRAKE | RIGHT, ..Default::default() };
+        }
+        // Brake so as to stop a couple of metres past the line: "lái xe qua vạch kết thúc và dừng
+        // xe" is the whole step.
+        braking |= stopping_point(v) >= finish + 2.0;
+        if braking {
+            TickInput { gear: 1, clutch: 255, brake: 255, flags: RIGHT, ..Default::default() }
+        } else {
+            TickInput { gear: 1, clutch: 150, throttle: 80, flags: RIGHT, ..Default::default() }
+        }
+    });
+    Golden { name, seed, inputs }
+}
+
+/// A messy bài 11: rev past 4000, a dead stall and a restart, then the finish line crossed with the
+/// right signal off — the one mistake this exercise is about — and the car stops past it.
+fn finish_messy(seed: u64, name: &'static str) -> Golden {
+    let (_, finish) = road_lines();
+    let mut stage = 0u8;
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        match stage {
+            0 if t >= 20 => stage = 1,
+            1 if v.rpm > 4300.0 => stage = 2,
+            2 if v.rpm < 900.0 => stage = 3,
+            3 if !v.engine_on => stage = 4,
+            4 if v.engine_on => stage = 5,
+            _ => {}
+        }
+        if stage < 5 {
+            return match stage {
+                0 => road_park(),
+                1 => TickInput { clutch: 255, throttle: 255, flags: HANDBRAKE, ..Default::default() },
+                2 => road_park(),
+                3 => TickInput { gear: 1, clutch: 0, ..Default::default() },
+                _ => TickInput { clutch: 255, flags: TickInput::FLAG_IGNITION, ..Default::default() },
+            };
+        }
+        braking |= stopping_point(v) >= finish + 2.0;
+        if braking {
+            TickInput { gear: 1, clutch: 255, brake: 255, ..Default::default() }
+        } else {
+            TickInput { gear: 1, clutch: 150, throttle: 90, ..Default::default() }
+        }
+    });
+    Golden { name, seed, inputs }
+}
+
+pub fn crosswalk_clean() -> Golden {
+    road_stop(CROSSWALK | 1, "dung_xe_nhuong_nguoi_di_bo_clean", 0.3, 0)
+}
+
+pub fn crosswalk_messy() -> Golden {
+    road_messy(CROSSWALK | 0x0123_4567_89ab, "dung_xe_nhuong_nguoi_di_bo_messy", 1.2)
+}
+
+pub fn rail_clean() -> Golden {
+    road_stop(RAIL | 1, "tam_dung_duong_sat_clean", 0.3, 0)
+}
+
+pub fn rail_messy() -> Golden {
+    road_messy(RAIL | 0x0123_4567_89ab, "tam_dung_duong_sat_messy", -0.6)
+}
+
+pub fn finish_golden_clean() -> Golden {
+    finish_clean(FINISH | 1, "ket_thuc_clean")
+}
+
+pub fn finish_golden_messy() -> Golden {
+    finish_messy(FINISH | 0x0123_4567_89ab, "ket_thuc_messy")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bài 5 — the light exercise. Its goldens are the seeds as much as the scripts: a seed whose phase
+// offset puts red in front of the car, one that puts green there, and one messy run with three
+// different faults in it.
+// ---------------------------------------------------------------------------------------------
+
+const JUNCTION: u64 = 5 << 56;
+
+/// The seed for bài 5 whose offset lands in `colour` (1 red, 2 yellow, 3 green).
+fn junction_seed(colour: u8) -> u64 {
+    let j = crate::rules::Ruleset::load().junction;
+    let cycle = u64::from(j.cycle_ticks());
+    for low in 1..cycle {
+        let seed = JUNCTION | low;
+        if j.light_at((seed % cycle) as u32) == colour {
+            return seed;
+        }
+    }
+    panic!("the light cycle has no colour {colour}");
+}
+
+/// Drive bài 5's route by the centreline the page draws. `obey` stops at the line for red and
+/// yellow; `signal_at` is the bumper distance at which the right indicator goes on (a huge number
+/// means it never does). `boundary` steers out onto the right-hand line once past the stop line,
+/// which is the SAI_VACH_KE run.
+fn junction_pass(seed: u64, name: &'static str, obey: bool, signal_at: f64, boundary: bool) -> Golden {
+    let mut s = Session::new(seed).expect("bài 5 runs");
+    let pts = centreline(&s.course_block());
+    let len = path_length(&pts);
+    let total = len;
+    let line = crate::rules::Ruleset::load().junction.stop_line_m();
+    let progress_of = |x: f64, y: f64| -> f64 {
+        let mut best = (f64::INFINITY, 0.0);
+        let mut travelled = 0.0;
+        for w in pts.windows(2) {
+            let (dx, dy) = (w[1].0 - w[0].0, w[1].1 - w[0].1);
+            let len2 = dx * dx + dy * dy;
+            let t = if len2 > 0.0 {
+                (((x - w[0].0) * dx + (y - w[0].1) * dy) / len2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let d = f64::sqrt((x - (w[0].0 + t * dx)).powi(2) + (y - (w[0].1 + t * dy)).powi(2));
+            let seg = f64::sqrt(len2);
+            if d < best.0 {
+                best = (d, travelled + t * seg);
+            }
+            travelled += seg;
+        }
+        best.1
+    };
+    let mut inputs = Vec::new();
+    let mut waiting = false;
+    for _ in 0..300 * 60u32 {
+        let snap = s.snapshot();
+        let p = progress_of(snap[4], snap[5]);
+        let signalling = snap[9] >= signal_at;
+        let flags = if signalling { RIGHT } else { 0 };
+        if obey && snap[46] != 3.0 && snap[46] != 0.0 && snap[9] < line - 0.2 {
+            let stop_distance = snap[7] * snap[7] / (2.0 * 6.9);
+            if snap[9] + stop_distance >= line - 0.3 {
+                waiting = true;
+            }
+        }
+        let input = if waiting && snap[46] != 3.0 {
+            TickInput { gear: 1, clutch: 255, brake: 255, flags, ..Default::default() }
+        } else {
+            waiting = false;
+            let (Some(a), Some(b), Some(c)) = (
+                point_at(&pts, (p - 0.5).max(0.0)),
+                point_at(&pts, p.min(total - 0.05)),
+                point_at(&pts, p + 0.5),
+            ) else {
+                break;
+            };
+            let steer = if boundary && snap[9] > line + 1.0 { -3000 } else { steer_for(curvature(a, b, c)) };
+            let want = if p < line { 3.0 } else { 15.0 / 3.6 };
+            TickInput {
+                steering: steer,
+                gear: 1,
+                clutch: 150,
+                throttle: if snap[7] < want - 0.3 { 90 } else if snap[7] > want + 0.4 { 0 } else { 40 },
+                brake: if snap[7] > want + 0.9 { 90 } else { 0 },
+                flags,
+                ..Default::default()
+            }
+        };
+        s.step(input);
+        inputs.push(input);
+        let v = s.view();
+        if v.phase == crate::Phase::Done || v.disqualified {
+            break;
+        }
+    }
+    let _ = len;
+    Golden { name, seed, inputs }
+}
+
+/// A clean bài 5 that arrives on red: it waits in A at the line and goes on when the light turns
+/// green. This is the run the exercise is for.
+pub fn junction_red_clean() -> Golden {
+    junction_pass(junction_seed(1), "qua_nga_tu_den_do_clean", true, 0.0, false)
+}
+
+/// A clean bài 5 that arrives on green: no stop is needed, and none is made.
+pub fn junction_green_clean() -> Golden {
+    junction_pass(junction_seed(3), "qua_nga_tu_den_xanh_clean", false, 0.0, false)
+}
+
+/// A messy bài 5: through the junction on red, with no turn signal. Two faults the law lists, on
+/// the run that shows both.
+pub fn junction_messy() -> Golden {
+    junction_pass(junction_seed(1), "qua_nga_tu_messy", false, 1.0e9, false)
+}
+
+/// A messy bài 5 with the third fault: the car drifts onto the right-hand boundary line on its way
+/// out of the turn, which is the suspension (SAI_VACH_KE) — a separate golden because the run ends
+/// on it, so it cannot share a trace with the deductions above.
+pub fn junction_line_messy() -> Golden {
+    junction_pass(junction_seed(3), "qua_nga_tu_de_vach_messy", false, 0.0, true)
+}
+
 pub fn vet_clean() -> Golden {
     figure_pass(VET | 1, "qua_vet_banh_xe_clean")
 }
@@ -457,7 +754,7 @@ pub fn curve_messy() -> Golden {
     figure_messy(CURVE | 0x0123_4567_89ab, "qua_duong_vong_quanh_co_messy")
 }
 
-pub fn all() -> [Golden; 8] {
+pub fn all() -> [Golden; 18] {
     [
         clean_pass(),
         messy_run(),
@@ -467,6 +764,16 @@ pub fn all() -> [Golden; 8] {
         vet_messy(),
         curve_clean(),
         curve_messy(),
+        crosswalk_clean(),
+        crosswalk_messy(),
+        rail_clean(),
+        rail_messy(),
+        finish_golden_clean(),
+        finish_golden_messy(),
+        junction_red_clean(),
+        junction_green_clean(),
+        junction_messy(),
+        junction_line_messy(),
     ]
 }
 
@@ -510,7 +817,7 @@ mod tests {
     /// Every golden's committed hash, in `all()` order. All eight, so `cargo test` pins every one of
     /// them: a zip against a shorter list would silently leave the tail unpinned, and a hash file
     /// full of ffff would still pass.
-    const COMMITTED: [(&str, &str); 8] = [
+    const COMMITTED: [(&str, &str); 18] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
         ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
@@ -519,6 +826,16 @@ mod tests {
         ("qua_vet_banh_xe_messy", include_str!("../../../golden/qua_vet_banh_xe_messy.hash")),
         ("qua_duong_vong_quanh_co_clean", include_str!("../../../golden/qua_duong_vong_quanh_co_clean.hash")),
         ("qua_duong_vong_quanh_co_messy", include_str!("../../../golden/qua_duong_vong_quanh_co_messy.hash")),
+        ("dung_xe_nhuong_nguoi_di_bo_clean", include_str!("../../../golden/dung_xe_nhuong_nguoi_di_bo_clean.hash")),
+        ("dung_xe_nhuong_nguoi_di_bo_messy", include_str!("../../../golden/dung_xe_nhuong_nguoi_di_bo_messy.hash")),
+        ("tam_dung_duong_sat_clean", include_str!("../../../golden/tam_dung_duong_sat_clean.hash")),
+        ("tam_dung_duong_sat_messy", include_str!("../../../golden/tam_dung_duong_sat_messy.hash")),
+        ("ket_thuc_clean", include_str!("../../../golden/ket_thuc_clean.hash")),
+        ("ket_thuc_messy", include_str!("../../../golden/ket_thuc_messy.hash")),
+        ("qua_nga_tu_den_do_clean", include_str!("../../../golden/qua_nga_tu_den_do_clean.hash")),
+        ("qua_nga_tu_den_xanh_clean", include_str!("../../../golden/qua_nga_tu_den_xanh_clean.hash")),
+        ("qua_nga_tu_messy", include_str!("../../../golden/qua_nga_tu_messy.hash")),
+        ("qua_nga_tu_de_vach_messy", include_str!("../../../golden/qua_nga_tu_de_vach_messy.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the
@@ -658,6 +975,90 @@ mod tests {
             }
             assert_ne!(s.view().phase, crate::Phase::Done, "{} runs on after the end", g.name);
         }
+    }
+
+    /// The bài 2, bài 9 and bài 11 goldens must be what their names say: the clean ones score
+    /// nothing, and each messy one carries the faults it exists for.
+    #[test]
+    fn road_goldens_are_what_they_claim() {
+        for g in [crosswalk_clean(), rail_clean(), finish_golden_clean()] {
+            let s = run(&g);
+            let v = s.view();
+            assert_eq!(v.fired_ids(), Vec::<&str>::new(), "{} must be clean", g.name);
+            assert_eq!(v.score, 100, "{}", g.name);
+            assert_eq!(v.phase, crate::Phase::Done, "{} must end at its own end mark", g.name);
+        }
+
+        // bài 2 stops short of the line: CHUA_DEN_VACH, on top of the two engine faults.
+        let v = run(&crosswalk_messy());
+        let v = v.view();
+        assert_eq!(
+            v.fired_ids(),
+            vec!["SH.X.RPM", "SH.X.CHET_MAY", "SH.02.CHUA_DEN_VACH"],
+            "bài 2's messy run"
+        );
+        assert_eq!(v.score, 85);
+        assert_eq!(v.phase, crate::Phase::Done, "and it still ends");
+
+        // bài 9 stops past the line: QUA_VACH.
+        let v = run(&rail_messy());
+        let v = v.view();
+        assert_eq!(
+            v.fired_ids(),
+            vec!["SH.X.RPM", "SH.X.CHET_MAY", "SH.DS.QUA_VACH"],
+            "bài 9's messy run"
+        );
+        assert_eq!(v.score, 85);
+
+        // bài 11 crosses the finish line with no right signal: KHONG_XI_NHAN_PHAI.
+        let v = run(&finish_golden_messy());
+        let v = v.view();
+        assert_eq!(
+            v.fired_ids(),
+            vec!["SH.X.RPM", "SH.X.CHET_MAY", "SH.KT.KHONG_XI_NHAN_PHAI"],
+            "bài 11's messy run"
+        );
+        assert_eq!(v.score, 85);
+        assert_eq!(v.phase, crate::Phase::Done, "it stops past the line and ends");
+    }
+
+    /// The bài 5 goldens must be what their names say, and the two clean ones must arrive on
+    /// different lights — that is the whole reason the phase offset is part of the seed.
+    #[test]
+    fn junction_goldens_are_what_they_claim() {
+        let red = run(&junction_red_clean());
+        let v = red.view();
+        assert_eq!(v.fired_ids(), Vec::<&str>::new(), "the red-light run is clean");
+        assert_eq!((v.score, v.phase), (100, crate::Phase::Done));
+        // It really did meet red and stop for it: the light was red on the approach tick, and the
+        // run recorded a stop.
+        assert!(red.snapshot()[24] >= 0.0, "the red run stopped at the line");
+
+        let green = run(&junction_green_clean());
+        let v = green.view();
+        assert_eq!(v.fired_ids(), Vec::<&str>::new(), "the green-light run is clean");
+        assert_eq!((v.score, v.phase), (100, crate::Phase::Done));
+        assert_eq!(green.snapshot()[24], -1.0, "and it never had to stop");
+
+        // The two clean runs must not be the same run with a different seed: they meet different
+        // lights, so their traces differ.
+        assert_ne!(hash_line(&red), hash_line(&green), "red and green are different runs");
+
+        let messy = run(&junction_messy());
+        let v = messy.view();
+        // Both faults, each exactly once. The order is where they happen — the turn signal is judged
+        // at the arc, the red-light run at the junction — so this asserts the set and the count, not
+        // an order that a layout tweak would legitimately change.
+        let mut ids = v.fired_ids();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["SH.05.KHONG_XI_NHAN", "SH.05.VUOT_DEN_DO"], "the messy run");
+        assert_eq!(v.score, 85);
+        assert_eq!(v.fired("SH.05.SAI_VACH_KE"), 0, "it stayed inside the route");
+
+        let v = run(&junction_line_messy());
+        let v = v.view();
+        assert_eq!(v.fired_ids(), vec!["SH.05.SAI_VACH_KE"], "the boundary run: {:?}", v.fired_ids());
+        assert!(v.disqualified, "a wheel on the route's line suspends the run");
     }
 
     /// The snapshot the web reads (`sim_state`) must say what the core actually consumed: feed a

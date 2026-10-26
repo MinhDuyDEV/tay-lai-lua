@@ -60,10 +60,24 @@ export const F = {
   contactEpisode: 37,
   /** Bài 4/6: the four wheel centres, FL FR RL RR, as (x, y) pairs. */
   wheels: 38,
+  /** Bài 5: light colour, 0 none | 1 red | 2 yellow | 3 green (0 until the car first moves). */
+  lightColour: 46,
+  /** Bài 5: milliseconds left in the current light phase, counting the tick in progress. */
+  lightLeftMs: 47,
+  /** Bài 5: milliseconds on the 20 s / 30 s clock, 0 until it is armed. */
+  clockMs: 48,
+  /**
+   * Which part of the scene the bumper is in: 0 start | 1 approach | 2 stop zone | 3 at the line |
+   * 4 past the stop line | 5 at the crosswalk/railway | 6 in the junction | 7 exit lane |
+   * 8 past the finish line. 0 in bài 1 and bài 3.
+   */
+  zone: 49,
+  /** Which route the session drives: 0 none | 1 straight road | 2 junction right turn | 3 figure. */
+  route: 50,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 46;
+export const STATE_LEN = 51;
 
 /**
  * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses

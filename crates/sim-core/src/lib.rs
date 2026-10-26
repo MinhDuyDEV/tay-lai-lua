@@ -24,6 +24,10 @@ mod scenarios;
 mod scenarios_sa_hinh;
 #[cfg(test)]
 mod scenarios_hill;
+#[cfg(test)]
+mod scenarios_road;
+#[cfg(test)]
+mod scenarios_junction;
 
 use exercise::{DT, Exercise, Signal, State};
 use hash::Hash;

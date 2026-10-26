@@ -146,11 +146,25 @@ pub struct Light {
     pub armed_at: Option<u32>,
     /// The car has been in the stop zone since `armed_at`.
     pub arrived: bool,
+    /// The bumper's position on the tick the current colour began: what decides whether a yellow
+    /// found the car short of the line (stop) or at/past it (through).
+    pub bumper_at_colour_start: f64,
+    /// Where the stop line is on the approach axis, so the light can answer that question without
+    /// borrowing the ruleset every tick.
+    pub stop_line_m: f64,
 }
 
 impl Light {
     fn dark() -> Self {
-        Self { clock: 0, colour: 0, left: 0, armed_at: None, arrived: false }
+        Self {
+            clock: 0,
+            colour: 0,
+            left: 0,
+            armed_at: None,
+            arrived: false,
+            bumper_at_colour_start: 0.0,
+            stop_line_m: 0.0,
+        }
     }
 }
 
@@ -194,6 +208,8 @@ pub struct State {
     pub finish_signal: Option<Signal>,
     /// Bài 11: the car has stopped after crossing the finish line; the run is over.
     pub finished: bool,
+    /// Bài 2 and bài 9: KHONG_DUNG has been charged, so the run has its verdict and can end.
+    pub no_stop_charged: bool,
     /// Bài 4 and bài 6: one contact episode per painted line, indexed like `course.lines`.
     episodes: Vec<Episode>,
     /// Bài 4 and bài 6: metres along the centreline of the furthest point reached, for the
@@ -289,7 +305,11 @@ impl State {
         // Bài 5: the cycle's phase offset is the seed proper, so the same trace always meets the
         // same light and a different attempt meets a different one.
         let light = if exercise == Exercise::Junction {
-            Light { clock: phase_offset(seed, &rs.junction), ..Light::dark() }
+            Light {
+                clock: phase_offset(seed, &rs.junction),
+                stop_line_m: rs.junction.stop_line_m(),
+                ..Light::dark()
+            }
         } else {
             Light::dark()
         };
@@ -311,6 +331,7 @@ impl State {
             arc_start_m,
             finish_signal: None,
             finished: false,
+            no_stop_charged: false,
             episodes,
             furthest_m: 0.0,
             clock_s: 0.0,
@@ -1027,16 +1048,26 @@ impl State {
         let r = &rs.road;
         let bumper = self.front_bumper_x(rs);
         let line = StopLine { line_m: r.stop_line_m(), max_a_m: r.max_a_m };
-        if self.stop.is_none() {
+        let no_stop_mark = line.line_m + r.no_stop_beyond_m;
+        // The stop verdict is judged while the car is still inside the stretch a stop of this
+        // exercise can happen in: from the near edge of the stop zone to the no-stop mark past the
+        // line. Past that mark and still rolling, the car is not stopping at the line and the
+        // charge is KHONG_DUNG, not QUA_VACH — one act, one charge, whichever of the two it is.
+        if self.stop.is_none() && bumper < no_stop_mark {
             let in_zone = bumper >= line.line_m - r.stop_zone_length_m;
             self.check_stop_at_line(rs, line, bumper, in_zone, fired);
-            // "Không dừng xe ở vạch dừng quy định": the car went through the line and on past the
-            // no-stop mark without ever stopping for it.
-            if self.stop.is_none() && -line.a_m(bumper) >= r.no_stop_beyond_m {
-                self.charge(rs, self.exercise.id("KHONG_DUNG"), fired);
+        }
+        if self.stop.is_none() && -line.a_m(bumper) >= r.no_stop_beyond_m {
+            // "Không dừng xe ở vạch dừng quy định": through the line and on past the no-stop mark
+            // without ever stopping for it.
+            if self.charge(rs, self.exercise.id("KHONG_DUNG"), fired) {
+                self.no_stop_charged = true;
             }
         }
-        if !self.disqualified && bumper >= line.line_m + r.end_past_line_m {
+        // Done once the car is past the line after its stop — or after the no-stop charge, since a
+        // run that never stopped still has to end somewhere.
+        let past = bumper >= line.line_m + r.end_past_line_m;
+        if !self.disqualified && past && (self.stop.is_some() || self.no_stop_charged) {
             self.phase = Phase::Done;
         }
         if !self.disqualified && bumper >= line.line_m + r.run_end_past_line_m {
@@ -1127,6 +1158,13 @@ impl State {
         }
     }
 
+    /// Whether the running yellow began while the car was still short of the stop line. The tick a
+    /// colour starts is `clock - (ticks into the colour)`, so the answer is a function of the clock
+    /// and the line, not of what the driver did: `bumper_at_colour_start` is recorded each tick.
+    fn yellow_began_short(&self) -> bool {
+        self.light.bumper_at_colour_start < self.light.stop_line_m
+    }
+
     /// First movement under the car's own power, the same 0,1 m/s as bài 1 and bài 3.
     fn note_movement(&mut self) {
         if !self.moved && self.car.speed_mps > 0.1 {
@@ -1138,16 +1176,22 @@ impl State {
     /// tick 0: a learner who spends a minute cranking the engine should not find the light already
     /// most of the way through its cycle when they finally reach the line.
     fn tick_light(&mut self, rs: &Ruleset) {
-        if self.light.colour == 0 {
-            if self.moved {
-                self.light.colour = rs.junction.light_at(self.light.clock);
-            } else {
-                return;
-            }
+        if self.light.colour == 0 && !self.moved {
+            return;
         }
         let j = &rs.junction;
+        let bumper = self.front_bumper_x(rs);
+        if self.light.colour == 0 {
+            // The first moving tick: the colour it starts on counts as having begun here.
+            self.light.colour = j.light_at(self.light.clock);
+            self.light.bumper_at_colour_start = bumper;
+        }
+        let before = self.light.colour;
         self.light.clock = self.light.clock.wrapping_add(1);
         self.light.colour = j.light_at(self.light.clock);
+        if self.light.colour != before {
+            self.light.bumper_at_colour_start = bumper;
+        }
         let into = self.light.clock % j.cycle_ticks().max(1);
         self.light.left = match self.light.colour {
             1 => j.red_ticks - into,
@@ -1215,10 +1259,18 @@ impl State {
         }
 
         // Through the junction: the tick the bumper enters it, on a colour that forbids it.
-        if bumper >= line.line_m + j.junction_depth_m {
+        if bumper >= line.line_m + j.junction_depth_m && self.light.colour != 0 {
+            // Red forbids it outright. Yellow forbids it only if the car was still short of the
+            // line when that yellow began — "nếu chưa đến vạch dừng phải dừng lại"; a yellow that
+            // began once the bumper was at or past the line is a through-move the law allows.
+            // The yellow question is only asked while the light is yellow: what a yellow that
+            // once found the car short of the line means afterwards is nothing — by then the car
+            // is through the junction on a colour the law allows.
             let red = self.light.colour == 1;
-            self.charge(rs, "SH.05.SAI_VACH_KE", fired);
-            let _ = red;
+            let yellow_from_short = self.light.colour == 2 && self.yellow_began_short();
+            if red || yellow_from_short {
+                self.charge(rs, "SH.05.VUOT_DEN_DO", fired);
+            }
         }
 
         // The route's own lines: a wheel patch on a boundary line is SAI_VACH_KE (đình chỉ).
@@ -1229,8 +1281,22 @@ impl State {
             }
         }
 
-        if !self.disqualified && bumper >= line.line_m + j.end_past_line_m + j.extent_m {
-            self.phase = Phase::Done;
+        // The 20 s / 30 s clock: from the light the car actually has to the end line of the
+        // junction, which ends the exercise.
+        if let Some(from) = self.light.armed_at {
+            let progress = course.project(self.car.x_m, self.car.y_m).progress_m;
+            if progress >= course.exit_m {
+                self.phase = Phase::Done;
+            } else {
+                // The later mark outranks the earlier one, as bài 1 reads its own pair: 30 s is a
+                // suspension, so charging 20 s as well would add five points to a dead run.
+                let elapsed = self.tick.saturating_sub(from);
+                if elapsed > t.junction_30_ticks {
+                    self.charge(rs, "SH.05.QUA_30S", fired);
+                } else if elapsed > t.junction_20_ticks {
+                    self.charge(rs, "SH.05.QUA_20S", fired);
+                }
+            }
         }
         self.course = Some(course);
     }
