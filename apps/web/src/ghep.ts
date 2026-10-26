@@ -153,6 +153,7 @@ function clearance(yard: Yard, x: number, y: number): number {
  * charges on, and a plan is only clean while it stays above zero.
  */
 export function patchMargin(p: Pose, yard: Yard, ruleset: Ruleset): number {
+  work += 1;
   const sh = ruleset.sa_hinh;
   if (!sh) return 0;
   const c = Math.cos(p.h);
@@ -315,6 +316,8 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0
   const pose: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const parked = s.hullInside && Math.abs(s.speedMps) < 0.05;
   if (parked) return { steer: 'straight', pedal: 'hold', gear: 0, parked: true, plan: null };
+  // While the learner is still starting the car (clutch, gear, handbrake) the first plan is worked out.
+  if (s.gear === 0 || s.handbrake) runFor(pose, false, yard, ruleset);
   // The start order the driving school teaches, and the one `PARK_STEPS` lists: clutch, first gear, then
   // the handbrake. Saying "release the brake" while the lever is still in neutral is the wrong order: the
   // car would roll with nothing engaged.
@@ -383,21 +386,26 @@ let runYard = '';
 /** How often the car has stood at each (rounded) pose: standing in one place three times is a loop. */
 let visits = new Map<string, number>();
 
+/** Clearance checks done so far: the planner's measure of work, which is the same on every machine. */
+let work = 0;
+export const plannerWork = (): number => work;
+
 /** Wall-clock milliseconds one frame may give to planning: the frame's budget is 16, drawing needs most. */
 const SLICE_MS = 5;
-/** Tests count steps instead of milliseconds so a sweep is the same on every machine. */
-let sliceSteps: number | null = null;
-export function setSliceSteps(n: number | null): void {
-  sliceSteps = n;
+/** Tests count clearance checks instead of milliseconds so a sweep is the same on every machine. */
+let sliceWork: number | null = null;
+export function setSliceWork(n: number | null): void {
+  sliceWork = n;
 }
 
-/** Give a job one frame's share of work. Returns its result once it is finished, otherwise undefined. */
+/** Give a job one frame's share of work. Returns its result once it is finished, otherwise null. */
 function advance<T>(job: Job<T>): { value: T } | null {
   const t0 = performance.now();
-  for (let n = 1; ; n += 1) {
+  const w0 = work;
+  for (;;) {
     const r = job.next();
     if (r.done) return { value: r.value };
-    if (sliceSteps !== null ? n >= sliceSteps : performance.now() - t0 >= SLICE_MS) return null;
+    if (sliceWork !== null ? work - w0 >= sliceWork : performance.now() - t0 >= SLICE_MS) return null;
   }
 }
 
@@ -888,6 +896,43 @@ export function dubins(from: Pose, to: Pose, radius: number): Leg[][] {
 }
 
 /** A forward lead-in from `from` to one of the launch poses, clean all the way, shortest first. */
+/** How many clear lead-ins are compared for the roominess of their launch pose. */
+const FUNNEL_CANDIDATES = 8;
+/** Metres of lead-in worth giving up to raise the share of scattered stops the reverse phase can finish from to 1. */
+const FUNNEL_PRICE_M = 15;
+/**
+ * How far a stop lands from where it was aimed, metres: the reaction and the brake's rise at the creep
+ * speed. Measured by core on the real car: ±0.22 m at 1.74 m/s and ±0.07 m at 0.52 m/s, both 0.13 s of travel.
+ */
+const SCATTER_S = 0.13;
+const scatterM = (ruleset: Ruleset): number => SCATTER_S * reverseCreepMps(ruleset);
+const funnels = new WeakMap<Launch, Map<number, number>>();
+
+/**
+ * The share of stops near launch pose `i` that a reverse phase can still finish from. A stop lands a
+ * couple of decimetres and a few degrees from where it was aimed, so a pose with a clean line but no room
+ * either side of it is a pose the car never actually parks from. Solved with the reverse solver itself,
+ * once per pose.
+ */
+function* funnelJob(set: Launch, i: number, yard: Yard, ruleset: Ruleset): Job<number> {
+  let memo = funnels.get(set);
+  if (!memo) funnels.set(set, (memo = new Map()));
+  const hit = memo.get(i);
+  if (hit !== undefined) return hit;
+  let ok = 0;
+  let n = 0;
+  const e = scatterM(ruleset);
+  for (const [dx, dy] of [[0, 0], [e, 0], [-e, 0], [0, e], [0, -e]] as const) {
+    for (const dh of [-0.35 * e, 0, 0.35 * e]) {
+      n += 1;
+      const r = yield* reverseSJob({ x: set.x[i] + dx, y: set.y[i] + dy, h: set.h[i] + dh }, yard, ruleset, COMMITTED_MARGIN);
+      if (r) ok += 1;
+    }
+  }
+  memo.set(i, ok / n);
+  return ok / n;
+}
+
 function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const radius = ruleset.vehicle.wheelbase_m / Math.tan(lock);
@@ -908,33 +953,37 @@ function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Po
     cand.push({ len: len + ROOM_PRICE * Math.max(0, ROOMY_M - set.margin[i]) + INNER_PRICE * (1 - set.inner[i]) - keep, legs, i });
   }
   cand.sort((u, v) => u.len - v.len);
+  // The cheapest lead-ins that clear the paint; among them the one whose launch pose the reverse phase can
+  // still finish from after the scatter of a real stop, which is the roomy pose and not always the nearest.
+  const ok: Array<{ plan: Plan; cost: number }> = [];
   let tried = 0;
   for (const c of cand) {
-    if (tried >= 600) break;
+    if (tried >= 600 || ok.length >= FUNNEL_CANDIDATES) break;
     tried += 1;
     if (tried % 8 === 0) yield;
     let p = from;
     let margin = Infinity;
-    let ok = true;
+    let clear = true;
     for (const leg of c.legs) {
       const w = walkLeg(p, leg, yard, ruleset);
       if (!w || w.margin < MIN_MARGIN) {
-        ok = false;
+        clear = false;
         break;
       }
       p = w.end;
       margin = Math.min(margin, w.margin);
     }
-    if (!ok) continue;
-    return {
-      legs: c.legs,
-      end: p,
-      margin,
-      shunts: 0,
-      length: c.legs.reduce((t, w) => t + w.len, 0),
-      launch: { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] },
-    };
+    if (!clear) continue;
+    // Candidates that land beside one already compared add nothing to the comparison.
+    if (ok.some((o) => close(o.plan.launch!, { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] }, 0.6, 0.25))) continue;
+    const launch = { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] };
+    const f = yield* funnelJob(set, c.i, yard, ruleset);
+    ok.push({
+      plan: { legs: c.legs, end: p, margin, shunts: 0, length: c.legs.reduce((t, w) => t + w.len, 0), launch },
+      cost: c.len + FUNNEL_PRICE_M * (1 - f),
+    });
   }
+  if (ok.length) return ok.reduce((b, c) => (c.cost < b.cost ? c : b)).plan;
   return null;
 }
 
