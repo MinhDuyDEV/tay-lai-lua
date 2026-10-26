@@ -144,7 +144,7 @@ function driveForce(ruleset: Ruleset, torqueNm: number): number {
  *
  * The clutch is out of the stop by then. On the brake road the page's key is "Côn + phanh" and both
  * go down together, and measured against the core (`stop-aid-feel.test.ts`, bài 2 and bài 5's real
- * scenes) that stop is the brake alone, within 20 mm — the drive does not hold the car against it.
+ * scenes) that stop is the brake alone, within 40 mm — the drive does not hold the car against it.
  * On the clutch road the pedal takes `(biteLow + biteHigh) / 2 / press` seconds to reach its bite,
  * until then the engine still holds the car at `v0`, and after that the road alone has it. Both pedal
  * rates come from `FEEL`, the same numbers the driver presses with.
@@ -152,13 +152,13 @@ function driveForce(ruleset: Ruleset, torqueNm: number): number {
 export function stopTravel(
   ruleset: Ruleset,
   v0: number,
-  grade: number | StopRoad,
+  road: StopRoad,
   key: StopKey,
-  /** The gap to the line where the stop begins. Read only by a road whose grade varies along it. */
+  /** The gap to the line where the stop begins, for a road whose grade varies along it. */
   fromGapM = 0,
 ): { travelM: number; timeS: number } {
   /** The grade the car is on after `m` metres of the stop. A road that varies is walked, not assumed. */
-  const gradeAt = typeof grade === 'number' ? () => grade : (m: number) => grade.grade(fromGapM - m);
+  const gradeAt = (m: number) => road.grade(fromGapM - m);
   const mass = ruleset.vehicle.mass_kg;
   const brakeMaxN = ruleset.drivetrain.brake_max_n;
   const { biteHigh, biteLow, press: pressRate } = FEEL.clutch;

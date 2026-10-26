@@ -16,8 +16,8 @@
 //
 // The two roads are the two the aid has to serve, and neither is bài 3-specific:
 //   * bài 3's slope, where the clutch is the critical key (gravity on the grade does the slowing);
-//   * bài 2's own scene, on the flat, where the brake is. The learner presses the clutch first, as the
-//     advice line says — a brake in gear stalls the engine — and the countdown only times the brake.
+//   * bài 2's own scene, on the flat, where the brake is. The learner presses clutch and brake together,
+//     as the bar's "Côn + phanh" says — a brake in gear stalls the engine.
 //     This runs against the real core's bài 2 session (its own stop line, stop zone and codes), not a
 //     stand-in line: the earlier version of this test used bài 1's world with a made-up gap, and it
 //     would not have noticed the real scene charging CHUA_DEN_VACH for a stop the aid thought was fine.
@@ -111,15 +111,12 @@ function setUpFor(lesson: 2 | 3): (s: SimState) => { keys: Set<string>; ready: b
 
 /**
  * The polling learner, exactly as the brief models it. `setup` runs the learner's keys until the car
- * is in gear 1 with the handbrake off; `lineAt` is where the stop line is when the world has none of
- * its own (the flat road), and `clutchAt` is the extra key the flat road needs pressing first.
+ * is in gear 1 with the handbrake off.
  */
 function drive(opts: {
   seed: bigint;
   lesson: 2 | 3;
   road: StopRoad;
-  /** Where the stop line is, metres of `frontBumperM`, when the world has no line of its own. */
-  lineAt?: (start: SimState) => number;
   pollMs: number;
   phaseMs: number;
   errorMs: number;
@@ -134,9 +131,6 @@ function drive(opts: {
   const driver = createDriver();
   let held = new Set<string>();
   let s: SimState = session.state;
-  const lineAt = opts.lineAt?.(s) ?? null;
-  /** The state the page would publish: the core's own, with the stand-in line where one is needed. */
-  const view = (state: SimState): SimState => (lineAt === null ? state : { ...state, lineGapM: lineAt - state.frontBumperM });
 
   // A read every `every` ticks, the first `phaseMs` after the learner is ready, so a poll of 50 ms is
   // tried at three alignments with the moment the page flips to "bấm ngay", not three times at one.
@@ -150,7 +144,6 @@ function drive(opts: {
   let due = false;
   /** The literal learner's own clock: when the page first said "bấm ngay". */
   let nowAtMs = Infinity;
-  let aidSeen = false;
   let presses = 0;
   const codes: number[] = [];
   /**
@@ -173,8 +166,7 @@ function drive(opts: {
       if (readyTick < 0) readyTick = tick;
       const sinceFirstRead = tick - readyTick - phaseTicks;
       if (sinceFirstRead >= 0 && sinceFirstRead % every === 0) {
-        const aid = stopAid(view(s), ruleset, opts.road);
-        if (aid) aidSeen = true;
+        const aid = stopAid(s, ruleset, opts.road);
         const literal = opts.learner === 'literal';
         if (aid && !due) {
           if (literal) {
@@ -211,7 +203,7 @@ function drive(opts: {
     if (s.disqualified) break;
   }
 
-  const A = lineAt === null ? s.stopGapAM : lineAt - s.frontBumperM;
+  const A = s.stopGapAM;
   const out = { A, stalled: !s.engineOn, codes, presses };
   session.dispose();
   return out;
@@ -230,12 +222,13 @@ function codeOf(before: SimState, after: SimState): number[] {
 /** Every poll period at three phases and every error, against one road. */
 function sweep(
   road: StopRoad,
-  extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; learner?: 'plan' | 'literal' },
+  extra: { seed: bigint; lesson: 2 | 3; learner?: 'plan' | 'literal' },
   maxErrorMs: number,
   /** The law's window, from the ruleset: A must land in 0..maxA. */
   maxA: number,
   stepMs = 25,
   polesMs: readonly number[] = POLES_MS,
+  fromErrorMs = -maxErrorMs,
 ) {
   const failures: string[] = [];
   /** Every run's A, so a test can report the extent of the band it gates and not only its failures. */
@@ -245,7 +238,7 @@ function sweep(
   let high = -Infinity;
   for (const pollMs of polesMs) {
     for (const phaseMs of [0, pollMs / 3, (2 * pollMs) / 3]) {
-      for (let errorMs = -maxErrorMs; errorMs <= maxErrorMs; errorMs += stepMs) {
+      for (let errorMs = fromErrorMs; errorMs <= maxErrorMs; errorMs += stepMs) {
         const r = drive({ ...extra, road, pollMs, phaseMs, errorMs });
         runs += 1;
         rows.push({ pollMs, errorMs, A: r.A });
@@ -309,16 +302,12 @@ for (const page of PAGES) {
       page.maxA,
       25,
       LITERAL_POLES_MS,
+      150,
     );
-    // Only the reaction band is the gate: the sweep also covers 0 to 350 ms, and a 0 ms reaction is a
-    // learner who presses exactly when the words change, which is not a person. The band's own extent
-    // is reported from the runs it actually made, so it cannot be wider than what was gated.
-    const band = failures.filter((line) => {
-      const m = /error (-?\d+) ms/.exec(line);
-      return m !== null && Number(m[1]) >= 150 && Number(m[1]) <= 350;
-    });
-    // The extent of the band, over every run in it: how much of the window the reaction band leaves.
-    const inBand = rows.filter((r) => r.errorMs >= 150 && r.errorMs <= 350);
+    // The sweep is the reaction band and nothing else, so every failure is a band failure and the
+    // extent reported below is the extent that was gated.
+    const band = failures;
+    const inBand = rows;
     const lo = Math.min(...inBand.map((r) => r.A));
     const hi = Math.max(...inBand.map((r) => r.A));
     const at = (poll: number, error: number) => {
@@ -445,12 +434,4 @@ test('stopTravel is the car: the measured stop is within 40 mm of what the aid p
     session.dispose();
     assert.ok(Math.abs(measured - predicted) < 0.04, `${c.name}, v ${v0.toFixed(2)}: measured ${measured.toFixed(3)} m, predicted ${predicted.toFixed(3)} m`);
   }
-});
-
-test('the clutch is the critical key on the slope and the brake on the flat: the brake in gear stalls', () => {
-  // The two roads' choices are not taste. A brake with the drive still closed pulls the engine down
-  // on the flat and stalls it (`SH.X.CHET_MAY`), which is why the countdown on the brake road is
-  // preceded by the clutch, and why the slope's countdown is the clutch itself.
-  assert.equal(hillRoad.key, 'clutch');
-  assert.equal(flatRoad('brake').key, 'brake');
 });
