@@ -364,6 +364,7 @@ docs/
 | 6 | Có được dùng bộ 600 câu trong sản phẩm thu phí không? | Luật sư | Chưa đưa lý thuyết vào bản thu phí |
 | 7 | Có bắt buộc lưu dữ liệu tại Việt Nam không? Có phải nộp hồ sơ chuyển dữ liệu ra nước ngoài không? | Luật sư | Đặt dữ liệu cá nhân tại Việt Nam |
 | 8 | Thời gian đèn vàng (QCVN 41 không quy định) | — | Giả định 3 s, cho chỉnh được |
+| 9 | Bài 5: 20 s / 30 s tính từ lúc đèn xanh bật, hay từ lúc xe vào vùng dừng nếu xe đến sau? | Trung tâm sát hạch | Tính từ mốc muộn hơn của hai mốc, ghi ở `assumptions` (`bai_5_clock_20_30`) |
 
 ## 15. Thuật ngữ
 
