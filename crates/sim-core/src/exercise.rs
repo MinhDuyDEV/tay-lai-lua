@@ -908,9 +908,12 @@ fn sa_hinh_id(exercise: Exercise, name: &str) -> &'static str {
 // ---------------------------------------------------------------------------------------------
 
 impl State {
-    /// Snapshot fields 27..46: contact, progress, clock and the wheel centres. Zero when the
-    /// exercise has no figure, so the fields mean one thing only.
-    pub fn sa_hinh_snapshot(&self, rs: &Ruleset, out: &mut crate::Snapshot) {
+    /// Snapshot fields 27..46: contact, progress and the wheel centres, read off the session's own
+    /// figure. Writes nothing when the exercise has no figure, so the fields mean one thing only.
+    /// bài 4 and bài 6 fill all of them; bài 5 fills the ones its route can answer (contact,
+    /// progress, lateral, heading error, wheels) and leaves the named parts, the bài 4/6 clock and
+    /// the contact episodes at 0 — its place on the scene is field 49 and its clock is field 48.
+    pub fn figure_snapshot(&self, rs: &Ruleset, out: &mut crate::Snapshot) {
         let Some(course) = &self.course else { return };
         let wheels = course.wheel_centres(rs, self.car.x_m, self.car.y_m, self.car.heading_rad);
         for (i, w) in wheels.iter().enumerate() {
