@@ -478,14 +478,17 @@ body {
   }
 }
 
-/* Bài 4 / bài 6: the top-down inset. It sits in the grid, in the column the key legend uses, so it
-   cannot cover the advice line (column 2, row 1), the penalty panel (column 3, row 2) or the pedal
-   bars (column 2, row 3) — those are other cells at every window size. */
+/* Bài 4 / bài 6: the top-down inset. It is a grid cell of its own: the free middle row (the 3D view),
+   right-aligned and top-aligned so the car, which the camera keeps low in the middle, stays clear. The advice line is row 1,
+   the pedal bars row 3, the checklist and key legend column 1, the penalty panel column 3, so no other
+   panel can share its cell at any window size. */
 
 .hud-inset {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 2;
-  align-self: end;
+  justify-self: end;
+  align-self: start;
+  width: min(190px, 28vh);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -495,27 +498,27 @@ body {
 .hud-inset canvas {
   width: 100%;
   aspect-ratio: 1 / 1;
-  max-height: 30vh;
   border-radius: 6px;
   background: #2b2f35;
   display: block;
 }
 
 .hud-inset .legend {
+  white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   margin: 0;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
 }
 
 .hud-inset .legend span {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   display: inline-block;
-  margin-left: 6px;
+  margin-left: 4px;
 }
 
 .hud-inset .legend span[data-wheel='clear'] {
@@ -534,6 +537,8 @@ body {
   .hud-inset {
     grid-column: 1;
     grid-row: auto;
+    justify-self: stretch;
+    width: auto;
   }
   .hud-inset canvas {
     max-height: 22vh;

@@ -2,11 +2,12 @@
 // driver.
 // Run `task build` first (it writes build/sim.wasm).
 //
-// The guarantee: a learner who does what the advice line says — `slow` when it says slow, the arrow
-// key the cue names, `straight` when it says hold — with 100, 250 or 400 ms of lag on each key
-// group, finishes both figures without touching a painted line and scores 100. Each exercise also
-// has a control that must fail: the cue law removed (a learner who never steers, or never slows),
-// so the sweep proves something about the technique and not about the car.
+// The guarantee: a learner who does what the advice line says — hold the arrow key the cue names, let
+// go on `straight`, never touch the throttle (the car creeps at idle) — with 100 to 400 ms of lag on
+// the steering (seven lags, 50 ms apart) and 100, 250 or 400 ms on the clutch, gear and handbrake,
+// finishes both figures without touching a painted line and scores 100. Each figure also has a control
+// that must fail (a learner who never steers), so the sweep proves something about the cue and not
+// about the car.
 //
 // The steering is the page's own `cueFigure`, read exactly as the HUD publishes it in `data-cue`.
 // The learner's hands are the real `createDriver`, so the self-centring lock, the pedal rates and
@@ -25,7 +26,8 @@ const data = JSON.parse(readFileSync(RULESET_FILE, 'utf8'));
 const ruleset: Ruleset = { ...data, steer: steerFeel };
 const wasmBytes = readFileSync(WASM);
 
-const LATENCY = [6, 15, 24] as const; // ticks: 100, 250, 400 ms from the cue to the key
+const STEER_LAG = [6, 9, 12, 15, 18, 21, 24] as const; // ticks: 100 to 400 ms in 50 ms steps
+const PEDAL_LAG = [6, 15, 24] as const; // 100, 250, 400 ms for the clutch, gear and handbrake
 const WHEELS_CLEAR = '0000';
 
 interface Latency {
@@ -87,16 +89,8 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
       if (rolling && s.speedMps > pace + 0.15) k.add('ArrowDown');
     }
     wanted.push(k);
-    // Only the driving keys carry the measured reaction lag. The set-up keys do not: the page names
-    // each step in the advice line ("đạp côn hết cỡ... bấm 1") and the learner does it while reading,
-    // with no time pressure and nothing to miss. Lagging them modelled a learner who watches the car
-    // rather than the line, and stalled the engine during the launch for reasons the page never
-    // asked for.
-    const SETUP = new Set(['Space', 'Digit1', 'KeyP']);
-    const latOf = (code: string) => {
-      if (SETUP.has(code)) return 0;
-      return code === 'ArrowLeft' || code === 'ArrowRight' ? latency.steer : latency.pedals;
-    };
+    // Steering carries the steer lag; the clutch, gear lever and handbrake carry the pedal lag.
+    const latOf = (code: string) => (code === 'ArrowLeft' || code === 'ArrowRight' ? latency.steer : latency.pedals);
     const down = new Set<string>();
     for (const code of ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyP', 'Digit1']) {
       if (wanted[t - latOf(code)]?.has(code)) down.add(code);
@@ -119,8 +113,8 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
 /** Every lag combination; returns what went wrong, in a form the failure message can print. */
 function sweep(lesson: 4 | 6, options: { followCue?: boolean; steer?: boolean } = {}): string[] {
   const failures: string[] = [];
-  for (const steerLag of LATENCY) {
-    for (const pedalLag of LATENCY) {
+  for (const steerLag of STEER_LAG) {
+    for (const pedalLag of PEDAL_LAG) {
       const r = drive(lesson, { steer: steerLag, pedals: pedalLag }, options);
       const clean = r.finished && r.score === 100 && r.contact === WHEELS_CLEAR;
       if (!clean) {

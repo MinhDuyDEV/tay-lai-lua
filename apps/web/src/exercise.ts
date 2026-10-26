@@ -65,7 +65,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
     mark: markFigure,
     advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 4),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
-    introKeys: 6,
+    introKeys: 5,
   },
   6: {
     lesson: 6,
@@ -75,7 +75,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
     mark: markFigure,
     advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 6),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
-    introKeys: 6,
+    introKeys: 5,
   },
 };
 

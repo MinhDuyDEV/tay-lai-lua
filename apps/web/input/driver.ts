@@ -95,7 +95,7 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** One source for the on-screen legend. */
-export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: true }> = [
+export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: true; noFigure?: true }> = [
   { keys: 'E', does: 'Nổ máy (cần về số 0 hoặc đạp côn)' },
   { keys: 'B', does: 'Thắt / tháo dây an toàn', bai1Only: true },
   { keys: 'Enter', does: 'Giám khảo phát lệnh xuất phát (đèn xanh)', bai1Only: true },
@@ -103,13 +103,18 @@ export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: 
   { keys: 'P', does: 'Phanh tay nhả / kéo' },
   { keys: 'Space hoặc Shift', does: 'Côn: giữ để đạp, nhả từ từ để vào điểm bắt' },
   { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)' },
-  { keys: '↑', does: 'Ga: giữ càng lâu càng sâu' },
-  { keys: '↓', does: 'Phanh' },
+  { keys: '↑', does: 'Ga: giữ càng lâu càng sâu', noFigure: true },
+  { keys: '↓', does: 'Phanh', noFigure: true },
   { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
 ];
 
-/** The legend for one lesson: bài 3, 4 and 6 have no belt, start order or signal. */
-export const legendFor = (lesson: 1 | 3 | 4 | 6) => KEY_LEGEND.filter((entry) => lesson === 1 || !entry.bai1Only);
+/**
+ * The legend for one lesson: bài 3, 4 and 6 have no belt, start order or signal, and bài 4 and 6 are
+ * driven at the car's own idle creep, so they use neither throttle nor brake (measured: both clean
+ * with neither pressed).
+ */
+export const legendFor = (lesson: 1 | 3 | 4 | 6) =>
+  KEY_LEGEND.filter((entry) => (lesson === 1 || !entry.bai1Only) && (lesson < 4 || !entry.noFigure));
 
 /** What the driver needs to know about the car; read from the sim state of the previous tick. */
 export interface DriveView {

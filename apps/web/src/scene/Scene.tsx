@@ -352,7 +352,8 @@ function Polyline({
     return g;
   }, [points, width]);
   return (
-    <mesh geometry={geometry} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+    // The vertices are already in the ground plane (x, 0, -y): no rotation, or the ribbon stands up.
+    <mesh geometry={geometry} position={[0, y, 0]}>
       <meshBasicMaterial color={colour} side={THREE.DoubleSide} />
     </mesh>
   );

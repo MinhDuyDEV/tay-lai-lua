@@ -240,7 +240,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
               <span ref={steerLabel}>0.00</span>
             </dd>
           </div>
-          {bai3 ? null : (
+          {bai3 || figure ? null : (
             <div>
               <dt>Qua vạch</dt>
               <dd>

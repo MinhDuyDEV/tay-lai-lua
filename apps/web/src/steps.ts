@@ -83,9 +83,9 @@ export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset): 
 /** Bài 4/6 checklist: pass the entry gate, keep the wheels off the painted lines, pass the exit. */
 export const FIGURE_STEPS: readonly Step[] = [
   { id: 'gear', label: 'Côn + số 1, nhả phanh tay', key: 'Space, 1, P' },
-  { id: 'entry', label: 'Qua vạch vào hình', key: '↑' },
+  { id: 'entry', label: 'Nhả côn, để xe tự bò qua vạch vào hình', key: 'Space' },
   { id: 'line', label: 'Giữ bánh xe trong làn, không đè vạch', key: '← →' },
-  { id: 'finish', label: 'Qua vạch kết thúc', key: '↑' },
+  { id: 'finish', label: 'Qua vạch kết thúc', key: '← →' },
 ];
 
 export function markFigure(done: Set<StepId>, state: SimState): void {
