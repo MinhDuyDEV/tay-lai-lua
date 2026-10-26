@@ -496,6 +496,111 @@ fn sai_vach_ke_does_not_trigger_on_the_clean_route() {
 // The stop verdict of bài 5 is charged only for a stop the light asked for.
 // ---------------------------------------------------------------------------------------------
 
+/// Drive at a real pace and brake on a predicted stopping point, decided once. `stop_target` is a
+/// bumper position; returns the session after the car has stood still there for `hold` ticks.
+fn stop_at(seed: u64, stop_target: f64, hold: u32, flags: u8) -> Session {
+    let mut s = Session::new(seed).unwrap();
+    let mut braking = false;
+    let mut still = 0;
+    for t in 0..120 * TICKS_PER_S {
+        let snap = s.snapshot();
+        if t >= 10 {
+            let stop_distance = snap[7] * snap[7] / (2.0 * 6.9);
+            braking |= snap[7] > 0.0 && snap[BUMPER] + stop_distance >= stop_target;
+        }
+        if braking && snap[7].abs() < 1e-9 {
+            still += 1;
+        }
+        if still > hold {
+            break;
+        }
+        s.step(TickInput {
+            gear: 1,
+            clutch: if braking { 255 } else { 150 },
+            // Throttle off only while braking: cutting it on the first ticks, with the clutch part
+            // way out and first gear in, dead-stalls the engine and turns the probe into a test
+            // about the starter instead of about the light.
+            throttle: if braking { 0 } else { 90 },
+            brake: if braking { 255 } else { 0 },
+            flags: flags | if t < 10 { HANDBRAKE } else { 0 },
+            ..Default::default()
+        });
+        if s.view().disqualified || s.view().phase == Phase::Done {
+            break;
+        }
+    }
+    s
+}
+
+/// P1 (reviewer): a car that runs the junction on red and only then stops, 6 m past the line, must
+/// be charged VUOT_DEN_DO alone. The stop is past the junction, so it is not a stop of this
+/// exercise at all — it must not also be "dừng quá vạch".
+#[test]
+fn a_stop_six_metres_past_the_line_on_red_is_vuot_den_do_alone() {
+    let seed = seed_in(1);
+    let line = rules().junction.stop_line_m();
+    let s = stop_at(seed, line + 6.0, 30, RIGHT);
+    let v = s.view();
+    assert_eq!(v.fired("SH.05.VUOT_DEN_DO"), 1, "{:?}", v.fired_ids());
+    assert_eq!(v.fired("SH.05.QUA_VACH"), 0, "a stop inside the junction is not dừng quá vạch: {:?}", v.fired_ids());
+    assert_eq!(v.score, 90, "ten points for running the red, and nothing else");
+}
+
+/// P2 (reviewer): a car that enters the junction on green and *then* the light turns yellow and red
+/// must not be charged for it. The law allows it through on the colour it entered on; standing
+/// still inside the junction afterwards is what the 20 s / 30 s clock is for, not VUOT_DEN_DO.
+#[test]
+fn a_car_that_entered_on_green_is_never_charged_for_the_yellow_or_red_it_sat_through() {
+    // A seed with plenty of green left when the run starts, so the car is through the line on green.
+    let j = rules().junction;
+    let seed = (1..j.cycle_ticks())
+        .map(|low| JUNCTION | u64::from(low))
+        .find(|seed| {
+            let into = offset_of(*seed);
+            j.light_at(into) == 3 && j.red_ticks + j.green_ticks - into > 600
+        })
+        .expect("a seed with over 10 s of green left");
+    let line = j.stop_line_m();
+    // Stop inside the junction, then hold until the light has gone yellow and red under the car —
+    // that is the reviewer's probe: the car sits through a whole red without moving.
+    let mut s = Session::new(seed).unwrap();
+    let mut braking = false;
+    let mut saw_red_after_stopping = false;
+    let mut stopped = false;
+    for t in 0..240 * TICKS_PER_S {
+        let snap = s.snapshot();
+        let stop_distance = snap[7] * snap[7] / (2.0 * 6.9);
+        braking |= snap[7] > 0.0 && snap[BUMPER] + stop_distance >= 19.2;
+        if braking && snap[7].abs() < 1e-9 {
+            stopped = true;
+        }
+        if stopped && snap[LIGHT] == 1.0 {
+            saw_red_after_stopping = true;
+        }
+        s.step(TickInput {
+            gear: 1,
+            clutch: if braking { 255 } else { 150 },
+            throttle: if braking { 0 } else { 90 },
+            brake: if braking { 255 } else { 0 },
+            flags: RIGHT | if t < 10 { HANDBRAKE } else { 0 },
+            ..Default::default()
+        });
+        if saw_red_after_stopping || s.view().disqualified || s.view().phase == Phase::Done {
+            break;
+        }
+    }
+    let v = s.view();
+    let snap = s.snapshot();
+    assert!(snap[BUMPER] > line + 4.0, "the car is inside the junction, bumper {:.2}", snap[BUMPER]);
+    assert!(saw_red_after_stopping, "the probe must sit through the red to mean anything");
+    assert_eq!(v.fired("SH.05.VUOT_DEN_DO"), 0, "it entered on green: {:?}", v.fired_ids());
+    assert_eq!(v.fired("SH.05.QUA_VACH"), 0, "and its stop is not this exercise's stop: {:?}", v.fired_ids());
+    assert_eq!(v.fired("SH.05.CHUA_DEN_VACH"), 0, "{:?}", v.fired_ids());
+    // What is left is the clock the law actually names for this: 20 s on the green it was given.
+    assert_eq!(v.fired("SH.05.QUA_20S") + v.fired("SH.05.QUA_30S"), 1, "the clock, and only the clock: {:?}", v.fired_ids());
+}
+
+
 #[test]
 fn a_stop_short_of_the_line_is_charged_only_when_the_light_asked_for_it() {
     // On green the car does not have to stop, so a stop short of the line is not this exercise's

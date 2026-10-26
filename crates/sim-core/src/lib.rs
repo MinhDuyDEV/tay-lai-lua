@@ -455,7 +455,7 @@ impl Session {
         let bumper = out[9];
         out[21] = line_m - bumper;
         if let Some(stop) = s.stop {
-            out[22] = stop.at.a_m;
+            out[22] = stop.a_m;
             out[24] = f64::from(s.tick - stop.tick);
         }
         out[49] = zone_code(bumper, line_m, zone_m, crosswalk_m, junction_m, finish_m);
@@ -531,9 +531,12 @@ impl Session {
             h.u32(s.light.clock);
             h.opt_f64(s.light.armed_at.map(f64::from));
             h.bool(s.light.arrived);
+            // The "entered the junction" edge reads last tick's bumper, so it is state the next
+            // tick's behaviour depends on.
+            h.f64(s.prev_bumper_m);
         }
         if s.exercise.is_road() {
-            h.opt_f64(s.stop.map(|p| p.at.a_m));
+            h.opt_f64(s.stop.map(|p| p.a_m));
             h.u32(s.stop.map_or(0, |p| p.tick));
             h.bool(s.finished);
             h.opt_f64(s.finish_signal.map(|sig| f64::from(signal_code(sig))));

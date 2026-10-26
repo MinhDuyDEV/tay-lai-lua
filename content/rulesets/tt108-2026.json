@@ -1072,8 +1072,8 @@
     },
     {
       "field": "stop_detector",
-      "value": "one detector for bài 2, 3, 5, 9. It returns withinA / short / past / neverStopped for the first stop after the car has moved; each exercise maps the verdict to its own codes. bài 3 calls the same code with the same numbers, so its eight golden hashes do not move.",
-      "why": "‘Dừng xe’ không được định nghĩa trong văn bản, mà bài 2, 3, 5 và 9 đều hỏi cùng một câu: xe có dừng đúng vạch không. Một bộ dò chung thì bốn bài không thể lệch nhau về định nghĩa ‘đã dừng’. Khác nhau chỉ ở mã lỗi, và ở chỗ bài 5 chỉ tính khi dừng trên đèn đỏ hoặc vàng.",
+      "value": "one detector for bài 2, 3, 5, 9. For a stop the exercise has already decided is one of its own, it returns withinA / short / past — the answer to \"was distance A within 500 mm, short of it, or past the line?\". Each exercise maps the verdict to its own codes. The caller owns \"is this stop mine?\", because that is the one thing that differs between the exercises. bài 3 calls the same code with the same numbers, so its golden hashes do not move.",
+      "why": "‘Dừng xe’ không được định nghĩa trong văn bản, mà bài 2, 3, 5 và 9 đều hỏi cùng một câu: xe có dừng đúng vạch không. Một bộ dò chung thì bốn bài không thể lệch nhau về định nghĩa ‘đã dừng’. Khác nhau chỉ ở mã lỗi, ở chỗ bài 5 chỉ tính khi dừng trên đèn đỏ hoặc vàng, và ở chỗ mỗi bài tự cắt vùng mà một cú dừng còn thuộc về bài đó (bài 3: từ chân dốc; bài 2/9: 12 m trước vạch; bài 5: tới hết chiều sâu nút giao).",
       "quote": "Dừng xe để khoảng cách từ hình chiếu thanh cản phía trước của xe xuống mặt đường đến vạch dừng (khoảng cách A) không quá 500mm."
     },
     {
@@ -1155,7 +1155,7 @@
     },
     {
       "field": "bai_5_clock_20_30",
-      "value": "bài 5: the 20 s / 30 s clock starts at the later of two events — the onset of the first green at or after the car's arrival in the stop zone (or the green already running when it arrives), and the tick the bumper enters the stop zone. It stops when the bumper passes the end line. QUA_20S and QUA_30S are charged off that clock; 30 s is the disqualification, so only the later charge matters.",
+      "value": "bài 5: the 20 s / 30 s clock starts at the later of two events — the onset of the first green at or after the car's arrival in the stop zone (or the green already running when it arrives), and the tick the bumper enters the stop zone. It stops when the bumper passes the end line. QUA_20S and QUA_30S are both charged off that clock, each once: a car that sits past 20 s takes −5, and one that sits past 30 s takes the suspension as well, exactly as bài 1 reads its own 20 s / 30 s pair.",
       "why": "Văn bản: ‘Quá 20 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư’. Đọc theo nghĩa đen thì người tới muộn trong một đèn xanh dài đã bị trừ điểm cho phần đèn xanh trôi qua trước khi họ tới — không phải điều văn bản muốn nói. Nên đồng hồ đếm từ đèn xanh mà người học thực sự có, và không sớm hơn lúc họ vào bài. Đây là cách đọc của chúng tôi: phần mềm của sân thật không kiểm chứng được, và nó có thể ‘nạp’ đồng hồ ngay khi xe vào vùng cảm biến.",
       "quote": "Quá 20 giây từ khi đèn tín hiệu màu xanh bật sáng không lái xe qua được vạch kết thúc ngã tư, trừ 05 điểm."
     },

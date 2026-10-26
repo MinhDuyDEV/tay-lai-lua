@@ -29,7 +29,7 @@
 
 use crate::course::{Course, Figure};
 use crate::rules::{Penalty, Repeat, Ruleset, Thresholds};
-use crate::stop::{StopAt, StopLine, Verdict};
+use crate::stop::{StopLine, Verdict};
 use crate::vehicle::{Car, Controls, StepOutcome};
 
 /// Fixed step. `step` never receives a `dt`.
@@ -76,7 +76,6 @@ impl Exercise {
             (Exercise::Rail, "KHONG_DUNG") => "SH.DS.KHONG_DUNG",
             (Exercise::Rail, "CHUA_DEN_VACH") => "SH.DS.CHUA_DEN_VACH",
             (Exercise::Rail, "QUA_VACH") => "SH.DS.QUA_VACH",
-            (Exercise::Junction, "KHONG_DUNG") => "SH.05.KHONG_DUNG",
             (Exercise::Junction, "CHUA_DEN_VACH") => "SH.05.CHUA_DEN_VACH",
             (Exercise::Junction, "QUA_VACH") => "SH.05.QUA_VACH",
             (Exercise::Junction, "KHONG_XI_NHAN") => "SH.05.KHONG_XI_NHAN",
@@ -127,8 +126,8 @@ pub struct Stop {
     pub tick: u32,
     /// Front-bumper centre at the stop, on the approach axis.
     pub front_bumper_m: f64,
-    /// The detector's verdict and distance A at that stop.
-    pub at: StopAt,
+    /// Distance A at the stop: positive short of the line, negative past it.
+    pub a_m: f64,
 }
 
 /// The light of bài 5, as the snapshot and the hash read it. `None` until the car first moves: the
@@ -210,6 +209,9 @@ pub struct State {
     pub finished: bool,
     /// Bài 2 and bài 9: KHONG_DUNG has been charged, so the run has its verdict and can end.
     pub no_stop_charged: bool,
+    /// Bài 5: the front bumper's position on the previous tick, so "the bumper entered the
+    /// junction" is an edge and not a level.
+    pub prev_bumper_m: f64,
     /// Bài 4 and bài 6: one contact episode per painted line, indexed like `course.lines`.
     episodes: Vec<Episode>,
     /// Bài 4 and bài 6: metres along the centreline of the furthest point reached, for the
@@ -332,6 +334,7 @@ impl State {
             finish_signal: None,
             finished: false,
             no_stop_charged: false,
+            prev_bumper_m: 0.0,
             episodes,
             furthest_m: 0.0,
             clock_s: 0.0,
@@ -623,12 +626,8 @@ impl State {
         let h = &rs.hill;
         let line = StopLine { line_m: h.stop_line_x_m(), max_a_m: h.max_a_m };
         if self.moved && self.car.speed_mps <= 0.0 && bumper >= h.foot_x_m {
-            let verdict = line.verdict(bumper, true);
-            self.stop = Some(Stop {
-                tick: self.tick,
-                front_bumper_m: bumper,
-                at: StopAt { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper), verdict },
-            });
+            let verdict = line.verdict(bumper);
+            self.stop = Some(Stop { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper) });
             self.phase = Phase::Stopped;
             match verdict {
                 Verdict::Past { .. } => {
@@ -637,7 +636,7 @@ impl State {
                 Verdict::Short { .. } => {
                     self.charge(rs, "SH.03.CHUA_DEN_VACH", fired);
                 }
-                Verdict::WithinA | Verdict::NotInZone => {}
+                Verdict::WithinA => {}
             }
         } else if -line.a_m(bumper) >= h.no_stop_beyond_m {
             self.charge(rs, "SH.03.KHONG_DUNG", fired);
@@ -1058,7 +1057,9 @@ impl State {
         // charge is KHONG_DUNG, not QUA_VACH — one act, one charge, whichever of the two it is.
         if self.stop.is_none() && bumper < no_stop_mark {
             let in_zone = bumper >= line.line_m - r.stop_zone_length_m;
-            self.check_stop_at_line(rs, line, bumper, in_zone, fired);
+            if in_zone {
+                self.check_stop_at_line(rs, line, bumper, fired);
+            }
         }
         if self.stop.is_none() && -line.a_m(bumper) >= r.no_stop_beyond_m {
             // "Không dừng xe ở vạch dừng quy định": through the line and on past the no-stop mark
@@ -1127,31 +1128,24 @@ impl State {
         }
     }
 
-    /// The shared stop, priced in the running exercise's own codes. `in_zone` is the exercise's
-    /// answer to "is this stop one of mine?" — bài 3's slope foot, the road's stop zone.
+    /// The shared stop, priced in the running exercise's own codes. The caller has already decided
+    /// that this stop is one of the exercise's — bài 3's slope foot, the road's stop zone, the
+    /// junction's cap — so nothing here asks where the car is.
     fn check_stop_at_line(
         &mut self,
         rs: &Ruleset,
         line: StopLine,
         bumper: f64,
-        in_zone: bool,
         fired: &mut Vec<FiredRule>,
     ) {
         if !self.moved || self.car.speed_mps > 0.0 {
             return;
         }
-        let verdict = line.verdict(bumper, in_zone);
-        if verdict == Verdict::NotInZone {
-            return;
-        }
-        self.stop = Some(Stop {
-            tick: self.tick,
-            front_bumper_m: bumper,
-            at: StopAt { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper), verdict },
-        });
+        let verdict = line.verdict(bumper);
+        self.stop = Some(Stop { tick: self.tick, front_bumper_m: bumper, a_m: line.a_m(bumper) });
         self.phase = Phase::Stopped;
         match verdict {
-            Verdict::WithinA | Verdict::NotInZone => {}
+            Verdict::WithinA => {}
             Verdict::Short { .. } => {
                 self.charge(rs, self.exercise.id("CHUA_DEN_VACH"), fired);
             }
@@ -1253,16 +1247,26 @@ impl State {
             }
         }
 
-        // A stop the light asked for.
-        if self.stop.is_none() && in_zone && self.car.speed_mps <= 0.0 && self.moved {
+        // A stop the light asked for, and only inside the stretch where a stop of this exercise
+        // can happen: the stop zone before the line, up to the far side of the junction. A stop
+        // deeper than that is not "dừng quá vạch" — it is a car that has already run the light,
+        // and VUOT_DEN_DO below is the code for that. Capping it here is what keeps one act from
+        // being charged twice.
+        let entry_m = line.line_m + j.junction_depth_m;
+        let stop_gate = bumper < entry_m;
+        if self.stop.is_none() && in_zone && stop_gate && self.car.speed_mps <= 0.0 && self.moved {
             let light_asks = self.light.colour == 1 || self.light.colour == 2;
             if light_asks {
-                self.check_stop_at_line(rs, line, bumper, in_zone, fired);
+                self.check_stop_at_line(rs, line, bumper, fired);
             }
         }
 
-        // Through the junction: the tick the bumper enters it, on a colour that forbids it.
-        if bumper >= line.line_m + j.junction_depth_m && self.light.colour != 0 {
+        // Through the junction: *the tick the bumper enters it*, on a colour that forbids it. The
+        // edge is what makes this one act rather than one per tick: the bumper was short of the
+        // entry last tick and is at or past it now. A red read every tick would keep charging the
+        // whole way through the junction.
+        let entered = self.prev_bumper_m < entry_m && bumper >= entry_m;
+        if self.stop.is_none() && entered && self.light.colour != 0 {
             // Red forbids it outright. Yellow forbids it only if the car was still short of the
             // line when that yellow began — "nếu chưa đến vạch dừng phải dừng lại"; a yellow that
             // began once the bumper was at or past the line is a through-move the law allows.
@@ -1301,6 +1305,7 @@ impl State {
                 }
             }
         }
+        self.prev_bumper_m = bumper;
         self.course = Some(course);
     }
 }
