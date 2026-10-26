@@ -4,7 +4,7 @@
 // The words it acts on are the ones the HUD paints; it never reads the snapshot to decide what to do.
 import { readFileSync } from 'node:fs';
 import { exerciseFor, type Lesson } from '../src/exercise.ts';
-import { yardOf } from '../src/ghep.ts';
+import { setSliceSteps, yardOf } from '../src/ghep.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { openSession, parkRects, seedWord, type SimState } from '../src/sim/session.ts';
 import { createDriver, steerFeel } from './driver.ts';
@@ -19,6 +19,8 @@ const bytes = () => wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteO
 /** The reaction band the brief names, and how often the learner re-reads the page. */
 export const REACT_MS = [150, 300, 400] as const;
 export const POLL_MS = 50;
+/** Planner steps one frame may run: about the 5 ms the page gives it (see `SLICE_STEPS` calibration in ghep.ts). */
+export const SLICE_STEPS = 40;
 
 export interface Outcome {
   finished: boolean;
@@ -49,9 +51,12 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let tick = 0;
   let lastPedal = '';
   let parkPressTick = -Infinity;
+  // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
+  setSliceSteps(SLICE_STEPS);
+  let c = ex.cueNow!(s, ruleset, yard);
   while (s.phase !== 'done' && !s.disqualified && tick < maxS * 60) {
+    c = ex.cueNow!(s, ruleset, yard);
     if (tick % pollTicks === 0) {
-      const c = ex.cueNow!(s, ruleset, yard);
       const next = new Set<string>();
       if (c.steer === 'left') next.add('ArrowLeft');
       if (c.steer === 'right') next.add('ArrowRight');

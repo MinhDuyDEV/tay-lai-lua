@@ -102,10 +102,9 @@ export function hullOutside(yard: Yard, ruleset: Ruleset, p: Pose): number {
  * rectangles with the nearest one winning.
  */
 /** The free space's walls as flat segments [x0,y0,x1,y1…], cached per figure: this runs millions of times. */
-const wallCache = new Map<string, Float64Array>();
+const wallCache = new WeakMap<Yard, Float64Array>();
 function wallsOf(yard: Yard): Float64Array {
-  const key = `${yard.area.join(',')}|${yard.bay.join(',')}`;
-  let w = wallCache.get(key);
+  let w = wallCache.get(yard);
   if (!w) {
     const [ax0, ay0, ax1, ay1] = yard.area;
     const [bx0, by0, bx1, by1] = yard.bay;
@@ -121,7 +120,7 @@ function wallsOf(yard: Yard): Float64Array {
       bx1, by1, bx1, by0,
       bx0, by0, bx1, by0,
     ]);
-    wallCache.set(key, w);
+    wallCache.set(yard, w);
   }
   return w;
 }
@@ -162,12 +161,16 @@ export function patchMargin(p: Pose, yard: Yard, ruleset: Ruleset): number {
   const halfTrack = sh.track_m / 2;
   const hl = sh.patch_length_m / 2;
   const hw = sh.tyre_width_m / 2;
+  const reach = Math.hypot(hl, hw);
   let worst = Infinity;
   for (let i = 0; i < 4; i += 1) {
     const lx = i < 2 ? halfBase : -halfBase;
     const ly = i % 2 === 0 ? halfTrack : -halfTrack;
     const wx = p.x + lx * c - ly * s;
     const wy = p.y + lx * s + ly * c;
+    // Clearance changes no faster than the point moves: a wheel whose centre is further from every wall
+    // than the patch is wide, plus what the worst so far already is, cannot lower the minimum.
+    if (clearance(yard, wx, wy) - reach >= worst) continue;
     for (let j = -1; j <= 1; j += 1) {
       for (let k = -1; k <= 1; k += 1) {
         const dx = j * hl;
@@ -308,6 +311,7 @@ export function stoppingLeadM(ruleset: Ruleset, speedMps: number, reactionS: num
  * `reactionS` is the read-and-press the page is built for; the brake is asked for that much road early.
  */
 export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0.3): GhepCueNow {
+  warmUp(yard, ruleset);
   const pose: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const parked = s.hullInside && Math.abs(s.speedMps) < 0.05;
   if (parked) return { steer: 'straight', pedal: 'hold', gear: 0, parked: true, plan: null };
@@ -333,10 +337,10 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0
   const steer: GhepCue = leg.steerRad > 0.06 ? 'left' : leg.steerRad < -0.06 ? 'right' : 'straight';
   if (moving) {
     // Rolling on the leg: the brake word comes when the road still to run equals the road the stop needs.
-    // A reverse leg is driven in pulses: one tap moves the car at most `PULSE_M`, then the car stops and the
+    // A reverse leg is driven in pulses: one tap moves the car at most `pulseM`, then the car stops and the
     // cue is solved again from where it stands. At the reverse creep a late reader's error is a speed times
     // a reaction, and only a car that is still slow when the brake word lands keeps the S inside its band.
-    const reach = leg.dir === -1 ? Math.min(leg.len, PULSE_M) : leg.len;
+    const reach = leg.dir === -1 ? Math.min(leg.len, pulseM(ruleset)) : leg.len;
     const left = reach - legProgress(run!.anchor, pose, leg, ruleset);
     return { steer, pedal: left <= stoppingLeadM(ruleset, speed, reactionS) ? 'brake' : 'creep', gear: 0, parked, plan };
   }
@@ -379,15 +383,40 @@ let runYard = '';
 /** How often the car has stood at each (rounded) pose: standing in one place three times is a loop. */
 let visits = new Map<string, number>();
 
-function runFor(pose: Pose, moving: boolean, yard: Yard, ruleset: Ruleset): Run | null {
-  if (moving && lastRun) return lastRun;
-  const key = [
-    yard.bay.join(','),
-    Math.round(pose.x / 0.04),
-    Math.round(pose.y / 0.04),
-    Math.round(pose.h / (Math.PI / 360)),
-  ].join('|');
-  if (lastRun && lastRun.key === key) return lastRun;
+/** Wall-clock milliseconds one frame may give to planning: the frame's budget is 16, drawing needs most. */
+const SLICE_MS = 5;
+/** Tests count steps instead of milliseconds so a sweep is the same on every machine. */
+let sliceSteps: number | null = null;
+export function setSliceSteps(n: number | null): void {
+  sliceSteps = n;
+}
+
+/** Give a job one frame's share of work. Returns its result once it is finished, otherwise undefined. */
+function advance<T>(job: Job<T>): { value: T } | null {
+  const t0 = performance.now();
+  for (let n = 1; ; n += 1) {
+    const r = job.next();
+    if (r.done) return { value: r.value };
+    if (sliceSteps !== null ? n >= sliceSteps : performance.now() - t0 >= SLICE_MS) return null;
+  }
+}
+
+/** The plan being worked out for a stop, and the stop it is for. */
+let pending: { key: string; job: Job<Run> } | null = null;
+let warm: { key: string; job: Job<Launch> } | null = null;
+
+/** True while the cue is waiting on the planner: the car is held still and the HUD says so. */
+export let thinking = false;
+
+/** Build the launch table while the learner is still getting the car going, so no stop ever pays for it. */
+function warmUp(yard: Yard, ruleset: Ruleset): void {
+  const key = `${yard.area.join(',')}|${yard.bay.join(',')}|${ruleset.vehicle.wheelbase_m}`;
+  if (launchCache.has(key)) return;
+  if (!warm || warm.key !== key) warm = { key, job: launchSetJob(yard, ruleset) };
+  if (advance(warm.job)) warm = null;
+}
+
+function* solveJob(pose: Pose, key: string, yard: Yard, ruleset: Ruleset): Job<Run> {
   const yardKey = yard.bay.join(',');
   if (yardKey !== runYard) {
     runYard = yardKey;
@@ -398,7 +427,7 @@ function runFor(pose: Pose, moving: boolean, yard: Yard, ruleset: Ruleset): Run 
   // Arrived where the last plan aimed and still no S from here: that aim does not work, choose another.
   const aimed = lastRun?.plan?.launch ?? null;
   if (aimed && close(pose, aimed, 0.45, 0.15) && !failedLaunch.some((f) => close(f, aimed, 0.01, 0.01))) {
-    const direct = reverseWithShunt(pose, yard, ruleset);
+    const direct = yield* reverseWithShuntJob(pose, yard, ruleset);
     if (!direct) failedLaunch = [...failedLaunch.slice(-11), aimed];
   }
   const spot = `${Math.round(pose.x / 0.2)},${Math.round(pose.y / 0.2)},${Math.round(pose.h / 0.06)}`;
@@ -407,7 +436,34 @@ function runFor(pose: Pose, moving: boolean, yard: Yard, ruleset: Ruleset): Run 
   // The third time the car stands in the same place the shunts are not working: aim somewhere else.
   const looping = seen >= 3;
   if (looping && aimed) failedLaunch = [...failedLaunch.slice(-11), aimed];
-  lastRun = { key, anchor: pose, plan: planPark(pose, yard, ruleset, failedLaunch, aimed, looping) };
+  const plan = yield* planParkJob(pose, yard, ruleset, failedLaunch, aimed, looping);
+  return { key, anchor: pose, plan };
+}
+
+/**
+ * The run for this stop. While the car rolls it is the plan made at the last stop; at a new stop the plan
+ * is worked out a slice per call, and until it is done the answer is null (the cue says "hold still").
+ */
+function runFor(pose: Pose, moving: boolean, yard: Yard, ruleset: Ruleset): Run | null {
+  thinking = false;
+  if (moving && lastRun) return lastRun;
+  const key = [
+    yard.bay.join(','),
+    Math.round(pose.x / 0.04),
+    Math.round(pose.y / 0.04),
+    Math.round(pose.h / (Math.PI / 360)),
+  ].join('|');
+  // The car creeping off at under 0.05 m/s is still the same stop: the plan is for where it stood, not for
+  // each centimetre it gives while the clutch bites.
+  if (lastRun && (lastRun.key === key || (lastRun.plan && close(pose, lastRun.anchor, 0.1, 0.03)))) return lastRun;
+  if (!pending || pending.key !== key) pending = { key, job: solveJob(pose, key, yard, ruleset) };
+  const done = advance(pending.job);
+  if (!done) {
+    thinking = true;
+    return null;
+  }
+  pending = null;
+  lastRun = done.value;
   return lastRun;
 }
 
@@ -465,6 +521,7 @@ export function adviceGhep(
       return `Còn ${m(outside)} thân xe ngoài ô: lùi thêm thật chậm (R, giữ côn ở điểm bắt) cho hết thân xe vào, rồi giữ phanh ↓.`;
     }
   }
+  if (thinking) return 'Giữ phanh ↓ và côn: đang tính đường lùi từ chỗ xe đứng.';
   if (!plan || !leg) {
     return `Chưa tìm được đường từ chỗ này: giữ phanh ↓ và côn, bấm Esc để làm lại. ${name} rộng ${m(bayW)}, sâu ${m(bayD)}.`;
   }
@@ -484,6 +541,18 @@ export function adviceGhep(
     return 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
   }
   return `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
+}
+
+
+/** A job the planner can run a slice at a time: it yields between units of work and returns its result. */
+type Job<T> = Generator<void, T, void>;
+
+/** Run a job to the end now. The planner's tests and tools use this; the page slices instead. */
+export function drain<T>(job: Job<T>): T {
+  for (;;) {
+    const r = job.next();
+    if (r.done) return r.value;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -538,6 +607,10 @@ function straightIn(
  * then the shortest. The legs are exact path lengths; the caller brakes early by the stopping lead.
  */
 export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset, floor = MIN_MARGIN): Plan | null {
+  return drain(reverseSJob(from, yard, ruleset, floor));
+}
+
+function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floor: number): Job<Plan | null> {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const axis = holdPose(yard).h;
   // The bay stretched along its long axis: a pose that fits this fits across the bay, wherever along it.
@@ -563,22 +636,34 @@ export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset, floor = MIN_M
     let p1 = from;
     let m1 = start;
     for (let s1 = ARC_STEP; s1 <= MAX_ARC_M; s1 += ARC_STEP) {
+      yield;
       p1 = endPose(p1, [{ dir: -1, steerRad: a, len: ARC_STEP }], ruleset);
       m1 = Math.min(m1, patchMargin(p1, yard, ruleset));
       if (m1 < floor) break;
       let p2 = p1;
       let m2 = m1;
+      let off = Infinity;
       for (let s2 = 0; s2 <= MAX_ARC_M; s2 += ARC_STEP) {
         if (s2 > 0) {
           p2 = endPose(p2, [{ dir: -1, steerRad: -a, len: ARC_STEP }], ruleset);
           m2 = Math.min(m2, patchMargin(p2, yard, ruleset));
           if (m2 < floor) break;
         }
-        if (Math.abs(wrap(p2.h - axis)) > 0.1) continue;
+        // The heading turns one way at a constant lock: once it is leaving the axis it does not come back.
+        const was = off;
+        off = Math.abs(wrap(p2.h - axis));
+        if (off > 0.1) {
+          if (off > was) break;
+          continue;
+        }
         // Cheap cut before the long straight walk: across the bay's short axis the hull must already fit.
         if (!hullInsideBay(p2, longBay, ruleset, HULL_INSET)) continue;
         const fin = straightIn(p2, yard, ruleset, m2, floor);
         if (!fin) continue;
+        // A clutch tap cannot place a leg shorter than it moves the car: a 0.15 m first arc is not a leg the
+        // car can drive, it is a way for the solver to shift where the second arc starts.
+        const tap = minTapM(ruleset);
+        if (s1 < tap || (s2 > 0 && s2 < tap)) continue;
         const legs: Leg[] = [{ dir: -1, steerRad: a, len: s1 }];
         if (s2 > 0) legs.push({ dir: -1, steerRad: -a, len: s2 });
         legs.push({ dir: -1, steerRad: 0, len: fin.len });
@@ -619,7 +704,7 @@ interface Launch {
 export /** Metres of lead-in a launch pose is worth giving up for being surrounded by other launch poses. */
 const INNER_PRICE = 12;
 /** The launch pose a plan was already driving at is worth this much shorter: do not change aim between stops. */
-const KEEP_BONUS_M = 3;
+const KEEP_BONUS_M = 6;
 const close = (a: Pose, b: Pose, metres: number, rad: number): boolean =>
   Math.hypot(a.x - b.x, a.y - b.y) <= metres && Math.abs(wrap(a.h - b.h)) <= rad;
 
@@ -635,10 +720,17 @@ const STOP_PRICE_M = 1.5;
 const SHORT_LEG_M = 1.2;
 const SHORT_PRICE = 4;
 
-/** The least one clutch tap moves the car, metres. */
-const MIN_TAP_M = 0.4;
-/** The furthest one tap of a reverse leg may go, metres. */
-const PULSE_M = 0.6;
+/**
+ * What one clutch tap does at the reverse creep, as time at the creep speed. Measured on the real car at
+ * 1.74 m/s: the least tap moved it 0.36 m (0.21 s) and a tap kept to 0.6 m (0.35 s). They are times, not
+ * metres, so a taller reverse gear (a slower creep) shrinks both with no change here.
+ */
+const MIN_TAP_S = 0.21;
+const PULSE_S = 0.35;
+/** The least one tap moves the car, metres; never below one arc step, which the solver cannot resolve. */
+const minTapM = (ruleset: Ruleset): number => Math.max(ARC_STEP, MIN_TAP_S * reverseCreepMps(ruleset));
+/** The furthest one tap of a reverse leg is asked to go, metres. */
+const pulseM = (ruleset: Ruleset): number => Math.max(2 * ARC_STEP, PULSE_S * reverseCreepMps(ruleset));
 
 /** Shortest leg worth driving, metres. */
 const MIN_LEG_M = 0.15;
@@ -651,6 +743,10 @@ const launchCache = new Map<string, Launch>();
 
 /** Launch poses for a figure: the reverse S driven backwards (forwards, with the same locks) from the bay. */
 export function launchSet(yard: Yard, ruleset: Ruleset): Launch {
+  return drain(launchSetJob(yard, ruleset));
+}
+
+function* launchSetJob(yard: Yard, ruleset: Ruleset): Job<Launch> {
   const key = `${yard.area.join(',')}|${yard.bay.join(',')}|${ruleset.vehicle.wheelbase_m}`;
   const hit = launchCache.get(key);
   if (hit) return hit;
@@ -690,6 +786,7 @@ export function launchSet(yard: Yard, ruleset: Ruleset): Launch {
         let p2 = p3;
         let m2 = m3;
         for (let s2 = 0; s2 <= MAX_ARC_M; s2 += ARC_STEP) {
+          yield;
           if (s2 > 0) {
             p2 = endPose(p2, [{ dir: 1, steerRad: -a, len: ARC_STEP }], ruleset);
             m2 = Math.min(m2, patchMargin(p2, yard, ruleset));
@@ -791,12 +888,13 @@ export function dubins(from: Pose, to: Pose, radius: number): Leg[][] {
 }
 
 /** A forward lead-in from `from` to one of the launch poses, clean all the way, shortest first. */
-function leadIn(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Plan | null {
+function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const radius = ruleset.vehicle.wheelbase_m / Math.tan(lock);
-  const set = launchSet(yard, ruleset);
+  const set = yield* launchSetJob(yard, ruleset);
   const cand: Array<{ len: number; legs: Leg[]; i: number }> = [];
   for (let i = 0; i < set.n; i += 1) {
+    if (i % 1500 === 0) yield;
     if (set.margin[i] < 0.09) continue;
     const to: Pose = { x: set.x[i], y: set.y[i], h: set.h[i] };
     if (avoid.some((a) => close(a, to, 0.35, 0.14))) continue;
@@ -806,7 +904,7 @@ function leadIn(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[]
     const legs = word.map((w) => ({ ...w, steerRad: w.steerRad * lock })).filter((w) => w.len > MIN_LEG_M);
     const len = legs.reduce((t, w) => t + w.len, 0) + stopCost(legs);
     // Roomier launch poses win over shorter ones: the lead-in lands a few centimetres and degrees off.
-    const keep = prefer && close(prefer, to, 0.3, 0.12) ? KEEP_BONUS_M : 0;
+    const keep = prefer && close(prefer, to, 0.5, 0.2) ? KEEP_BONUS_M : 0;
     cand.push({ len: len + ROOM_PRICE * Math.max(0, ROOMY_M - set.margin[i]) + INNER_PRICE * (1 - set.inner[i]) - keep, legs, i });
   }
   cand.sort((u, v) => u.len - v.len);
@@ -814,6 +912,7 @@ function leadIn(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[]
   for (const c of cand) {
     if (tried >= 600) break;
     tried += 1;
+    if (tried % 8 === 0) yield;
     let p = from;
     let margin = Infinity;
     let ok = true;
@@ -847,7 +946,7 @@ function leadIn(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[]
  * the one chosen is the middle of the longest unbroken run of them: the tap can land either side of it
  * and the S still closes. The first one found (the shortest shunt) is on the band's edge half the time.
  */
-function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null {
+function* reverseWithShuntJob(from: Pose, yard: Yard, ruleset: Ruleset): Job<Plan | null> {
   // Committed to the S the floor is the paint itself plus a small buffer; the roomy 0.05 is for choosing
   // where to start, not for giving up once the car is a few centimetres off the line it was aimed at.
   const floor = COMMITTED_MARGIN;
@@ -861,7 +960,7 @@ function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null
     const d = Math.abs(k) * STEP_M;
     // A clutch tap cannot move the car less than about this far (measured 0.36 m at the creep): a shunt
     // shorter than that is not one the car can make, and asking for it makes the car oscillate about it.
-    if (k !== 0 && d < MIN_TAP_M) continue;
+    if (k !== 0 && d < minTapM(ruleset)) continue;
     const shunt: Leg = { dir: k >= 0 ? 1 : -1, steerRad: 0, len: d };
     let p = from;
     let m = m0;
@@ -871,7 +970,7 @@ function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null
       p = w.end;
       m = Math.min(m, w.margin);
     }
-    const r = reverseS(p, yard, ruleset, floor);
+    const r = yield* reverseSJob(p, yard, ruleset, floor);
     if (!r) continue;
     found.set(k, {
       legs: k !== 0 ? [shunt, ...r.legs] : r.legs,
@@ -904,13 +1003,13 @@ function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null
  * Stuck: no lead-in from here (nose into a wall, say). Back out or move on in a straight line until one
  * exists, shortest first. The legs returned are the straight run plus the lead-in found after it.
  */
-function escape(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Plan | null {
+function* escapeJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
   for (let d = 1; d <= 6; d += 1) {
     for (const dir of [-1 as const, 1 as const]) {
       const run: Leg = { dir, steerRad: 0, len: d };
       const w = walkLeg(from, run, yard, ruleset);
       if (!w || w.margin < MIN_MARGIN) continue;
-      const lead = leadIn(w.end, yard, ruleset, avoid, prefer);
+      const lead = yield* leadInJob(w.end, yard, ruleset, avoid, prefer);
       if (!lead) continue;
       return { legs: [run, ...lead.legs], end: lead.end, margin: Math.min(w.margin, lead.margin), shunts: 1, length: d + lead.length, launch: lead.launch };
     }
@@ -922,22 +1021,22 @@ function escape(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[]
  * The plan from a stopped pose: parked already (no legs), a reverse S (after a shunt if need be), or a
  * forward lead-in to a launch pose followed by the S from there. Null when none is found.
  */
-export function planPark(
+export function* planParkJob(
   from: Pose,
   yard: Yard,
   ruleset: Ruleset,
   avoid: readonly Pose[] = [],
   prefer: Pose | null = null,
   skipDirect = false,
-): Plan | null {
+): Job<Plan | null> {
   if (hullInsideBay(from, yard, ruleset, HULL_INSET)) {
     return { legs: [], end: from, margin: patchMargin(from, yard, ruleset), shunts: 0, length: 0 };
   }
-  const direct = skipDirect ? null : reverseWithShunt(from, yard, ruleset);
+  const direct = skipDirect ? null : yield* reverseWithShuntJob(from, yard, ruleset);
   if (direct) return direct;
-  const lead = leadIn(from, yard, ruleset, avoid, prefer) ?? escape(from, yard, ruleset, avoid, prefer);
+  const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
   if (!lead) return null;
-  const tail = reverseWithShunt(lead.end, yard, ruleset);
+  const tail = yield* reverseWithShuntJob(lead.end, yard, ruleset);
   if (!tail) return lead;
   return {
     legs: [...lead.legs, ...tail.legs],
@@ -947,4 +1046,16 @@ export function planPark(
     length: lead.length + tail.length,
     launch: lead.launch,
   };
+}
+
+/** The plan from a stopped pose, solved now. The page slices `planParkJob` instead. */
+export function planPark(
+  from: Pose,
+  yard: Yard,
+  ruleset: Ruleset,
+  avoid: readonly Pose[] = [],
+  prefer: Pose | null = null,
+  skipDirect = false,
+): Plan | null {
+  return drain(planParkJob(from, yard, ruleset, avoid, prefer, skipDirect));
 }
