@@ -1,26 +1,19 @@
-// A pose list driven as data: gives a line of poses to the learner model and it drives them with real
-// key events through the real driver and the real core. This is the half of the harness that does not
-// depend on the page having a planner: the lead's search writes a line, this replays it.
+// A line given as data, driven with real key events through the real driver and the real core.
 //
-// A "line" here is the shape the lead's search emits: a list of legs, each `dir` (+1 forward, −1
-// reverse), a `steer` fraction of full lock (−1..+1), and how far to go. The follower does what the
-// brief fixes for the real car and what the page's advice line tells a person to do:
-//   * stop completely at every leg boundary;
-//   * set the lock while the car is still, then let go of the wheel;
-//   * one measured tap to travel the leg, clutch up in the creep and back down to stop.
-// The leg's `len` is the *travel* the search priced; the follower does not trust it blindly — it stops
-// when the car has gone that far, and reports the residual pose error so a bad line is visible rather
-// than silently absorbed.
-//
-// It is deliberately free of any planner: `driveLine` just takes poses. That is what makes it usable as
-// the arbiter for the lead's search, for the page's planner, and for a recorded human run.
+// A line is what a search emits: legs of (from pose, to pose, direction, lock fraction). The runner
+// does what the page tells a person to do and what the core's own golden does:
+//   * stop completely at every leg boundary and set the lock while the car stands;
+//   * hold the lock arrow through the leg (the driver centres the wheel the moment it is let go);
+//   * travel the leg's PATH length, which is recomputed from its two poses so it does not inherit the
+//     search's grid, braking early by the distance the pedal and the car need to stop;
+//   * close the last leg on the core's own condition (hull inside the bay), not on a planned length.
+// It never re-scores geometry: contact, rule ids and the finish signal are the core's.
 import { readFileSync } from 'node:fs';
 import type { Leg, Pose } from '../src/ghep.ts';
-import { endPose, wheelAt, reverseCreepMps } from '../src/ghep.ts';
-import { FEEL } from './driver.ts';
+import { endPose, reverseCreepMps, wheelAt } from '../src/ghep.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { openSession, seedWord, type Session, type SimState } from '../src/sim/session.ts';
-import { createDriver, DT, steerFeel } from './driver.ts';
+import { createDriver, FEEL, steerFeel } from './driver.ts';
 
 const WASM = new URL('../../../build/sim.wasm', import.meta.url);
 const RULESET_FILE = new URL('../../../content/rulesets/tt108-2026.json', import.meta.url);
@@ -29,283 +22,250 @@ export const ruleset: Ruleset = { ...rulesetData, steer: steerFeel };
 const wasmBytes = readFileSync(WASM);
 const bytes = () => wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength);
 
-/** One leg as the search writes it: direction, lock fraction of full lock, and travel in metres. */
+/** One leg: direction, lock fraction (−1..1; the keyboard only has −1, 0, +1), and path length, metres. */
 export interface LineLeg {
   dir: 1 | -1;
-  /** −1 = full lock one way, +1 = full lock the other, 0 = straight. Any fraction in between is allowed. */
   steer: number;
   len: number;
+  /**
+   * Signed heading change the leg is for, radians. A keyboard has no half lock: the wheel runs to full
+   * at 2/s while the key is down and back to centre at 3/s once it is up. So a leg priced at a part lock
+   * is driven by holding the arrow until the HEADING has turned this far, then letting go.
+   */
+  turn?: number;
 }
 
-/** A whole line: the legs, and where the search says it should end. */
 export interface Line {
   legs: readonly LineLeg[];
-  /** The end pose the search claims. The follower drives the legs; this is only compared, never aimed at. */
-  end?: Pose;
 }
 
-/** A leg as `endPose` wants it, in radians of wheel. */
+/** A leg as a search writes it: the two poses (heading in degrees), the direction and the lock fraction. */
+export interface PoseLeg {
+  from: readonly [number, number, number];
+  to: readonly [number, number, number];
+  dir: 1 | -1;
+  steer: number;
+}
+
+const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+
+/** Path length of a pose leg: |Δθ·L / tan δ| on a lock, the chord on a straight. */
+export function pathLength(leg: PoseLeg, rs: Ruleset): number {
+  const tanD = Math.tan(leg.steer * wheelAt(rs, reverseCreepMps(rs)));
+  if (Math.abs(tanD) < 1e-9) return Math.hypot(leg.to[0] - leg.from[0], leg.to[1] - leg.from[1]);
+  const dTheta = wrap(((leg.to[2] - leg.from[2]) * Math.PI) / 180);
+  return Math.abs((dTheta * rs.vehicle.wheelbase_m) / tanD);
+}
+
+/** A pose-leg list as a line. */
+export function lineOf(poses: readonly PoseLeg[], rs: Ruleset = ruleset): Line {
+  return {
+    legs: poses.map((p) => ({
+      dir: p.dir,
+      steer: p.steer,
+      len: pathLength(p, rs),
+      turn: wrap(((p.to[2] - p.from[2]) * Math.PI) / 180),
+    })),
+  };
+}
+
+/** A leg as `endPose` wants it. */
 export function toLeg(leg: LineLeg, rs: Ruleset): Leg {
   return { dir: leg.dir, steerRad: leg.steer * wheelAt(rs, reverseCreepMps(rs)), len: leg.len };
 }
 
 export interface LineOutcome {
-  /** Where the car actually ended, for comparing against the search's claim. */
   end: Pose;
-  /** Metres between the actual end and `line.end`, when the line makes a claim. */
-  endErrorM: number | null;
-  /** The pose the search's own algebra predicts for the same legs, and the error against it. */
-  predicted: Pose;
-  algebraErrorM: number;
-  /**
-   * Whether any wheel touched paint or curb at any tick, from the core's own per-wheel `contact` field.
-   * This is the core's verdict, not a second opinion: the harness never re-scores geometry the core
-   * already scored.
-   */
+  /** The core's own verdict, per wheel and per tick: did any wheel ever sit on paint or curb. */
   touched: boolean;
   inside: boolean;
   signal: boolean;
   disqualified: boolean;
   score: number;
+  /** Seconds of simulated time from the first tick to the end, as a person would feel the run. */
+  runS: number;
+  /** The core's exam clock at the end. */
   clockS: number;
-  /** Rules the core charged, by id. */
   pents: string[];
-  /** True when every leg finished within `STOP_TOL_M` of where the algebra said it would. */
-  legsHeld: boolean;
-  /**
-   * True when the run was cut short by the exam's own cap rather than by the finish. A partial line (one
-   * leg, for a control test) always ends this way: it never gets inside the bay, so it waits out the cap.
-   * Distinguishing it keeps "this leg did not work" from "this line was never meant to finish".
-   */
-  timedOut: boolean;
-  /** Per-leg residual, metres: actual end minus the algebra's end. */
+  /** Per-leg distance between where the car stopped and where the algebra says the leg ends. */
   legErrorsM: number[];
-  /** Total forward and reverse distance the car actually covered, metres. */
   travelledM: { forward: number; back: number };
+  /** The finish wait ran out with no signal and no disqualification. */
+  timedOut: boolean;
 }
 
-/** How far a leg may finish from the algebra's end before the line counts as "not held". */
 export const STOP_TOL_M = 0.25;
+const SETTLE_TICKS = 240;
+const FINISH_WAIT_S = 8;
+/** A tap shorter than this is not worth a clutch release: the car cannot be placed that finely. */
+const MIN_TAP_M = 0.05;
+const MAX_TAPS = 4;
+
 /**
- * The follower brakes when the distance still to go equals the distance the car will cover while the
- * brake goes down — its speed times the pedal's rise, plus its own stopping distance at that speed.
- * Written as a prediction rather than a constant because no constant can be right for both a 0.5 m tap
- * (where a 0.5 m lead means never starting) and a 4 m leg (where it means overshooting by half a metre).
- * Both were measured: a constant lead never moved the car on the short leg, and none at all overshot
- * every leg by up to 0.50 m, which is the brake's own stopping distance at the creep.
+ * Road the car still covers once the brake is asked for: the pedal's rise at the present speed, plus the
+ * stop itself. A prediction, not a constant — a constant lead cannot suit both a 0.5 m tap and a 4 m leg.
  */
-const brakeLead = (rs: Ruleset, speedMps: number): number => {
+const brakeLead = (rs: Ruleset, speedMps: number, lateS = 0): number => {
   const v = Math.abs(speedMps);
   const decel = rs.drivetrain.brake_max_n / rs.vehicle.mass_kg;
-  // The pedal's state is *read* one tick late by the driver and the brake only bites once it is off its
-  // rest position, so the car keeps rolling for `rise` ticks before any deceleration exists at all.
-  const pedalS = 1 / FEEL.brake.rise;
-  return v * pedestalS(v, pedalS) + (v * v) / (2 * Math.max(1, decel));
+  return v * (0.17 + lateS) + (v * v) / (2 * Math.max(1, decel));
 };
 
-/**
- * The car cannot brake until the pedal reaches it, and the driver's pedal is one tick behind the key.
- * Measured braking lag is about three ticks before the deceleration shows; two of those are inside the
- * rise, one is the driver's own delay.
- */
-const pedestalS = (v: number, riseS: number): number => riseS + 1 / 60;
-/** Ticks the car is given to come to rest at a leg boundary before the follower insists. */
-const SETTLE_TICKS = 180;
-/** How close to the leg's end pose a tap must land before the follower calls the leg done. */
-const TAP_TOL_M = 0.10;
-/** The longest single tap the follower will ask for; beyond this the creep overshoots the brake. */
-const MAX_TAP_M = 1.2;
+export interface DriveOpts {
+  trace?: (note: string) => void;
+  finishWaitS?: number;
+  /** Close the last leg on the core's hull-inside condition (default), or on its path length. */
+  closeLast?: boolean;
+  /**
+   * The reader's lateness: every key change reaches the car this many ms after it was decided, plus the
+   * poll's own phase. The brake lead grows by the road covered in that time, exactly as the page's cue
+   * (`stoppingLeadM`) asks the brake early by `reactionS`.
+   */
+  reactMs?: number;
+  phaseMs?: number;
+}
 
-/**
- * Drive a line, from the exercise's own start pose, with nothing but key events.
- *
- * `opts.lesson` picks the seed; the line is the only thing that steers.
- */
-/** How long the finish is waited for before the harness gives up, seconds. The core's own cap is longer. */
-const FINISH_WAIT_S = 8;
-
-export function driveLine(
-  lesson: 7 | 8,
-  line: Line,
-  opts: { trace?: (s: SimState, note: string) => void; /** Waits for the finish signal for this long. */ finishWaitS?: number } = {},
-): LineOutcome {
-  const session: Session = openSession(bytes(), seedWord(lesson));
+export function driveLine(lesson: 7 | 8, line: Line, opts: DriveOpts = {}): LineOutcome {
+  const session: Session = openSession(bytes(), seedWord(lesson, 1n));
   const driver = createDriver();
-  const ruleList = (JSON.parse(readFileSync(RULESET_FILE, 'utf8')) as { rules: { code: number; id: string }[] })
-    .rules;
-  const idOf = new Map(ruleList.map((r) => [r.code, r.id]));
-
+  const idOf = new Map(rulesetData.rules.map((r: { code: number; id: string }) => [r.code, r.id]));
   let s: SimState = session.state;
   const held = new Set<string>();
   const pents: string[] = [];
   const legErrors: number[] = [];
   let touched = false;
-  let travelledForward = 0;
-  let travelledBack = 0;
-  let lastX = s.carX;
-  let lastY = s.carY;
+  let ticks = 0;
+  const travelled = { forward: 0, back: 0 };
+  let lx = s.carX;
+  let ly = s.carY;
 
-  /** One tick of the real sim, with whatever keys are held now. */
+  const lateTicks = Math.round((((opts.reactMs ?? 0) + (opts.phaseMs ?? 0)) / 1000) * 60);
+  const lateS = lateTicks / 60;
+  /** What the learner decided, `lateTicks` ago: the car only ever sees this. */
+  const queue: { held: Set<string>; pressed: string[] }[] = [];
   const tick = (pressed: readonly string[] = []): void => {
-    const input = driver.step(held, [...pressed], { speedMps: s.speedMps, engineOn: s.engineOn });
-    const r = session.step(input);
+    queue.push({ held: new Set(held), pressed: [...pressed] });
+    const seen = queue.length > lateTicks ? queue.shift()! : { held: new Set<string>(['Space']), pressed: [] };
+    const r = session.step(driver.step(seen.held, seen.pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
     s = r.state;
+    ticks += 1;
     for (const e of r.events) {
       const id = idOf.get(e.code);
       if (id) pents.push(id);
     }
-    const d = Math.hypot(s.carX - lastX, s.carY - lastY);
-    if (d > 0) {
-      // Which way the car moved along its own nose tells forward from reverse.
-      const along = (s.carX - lastX) * Math.cos(s.heading) + (s.carY - lastY) * Math.sin(s.heading);
-      if (along >= 0) travelledForward += d;
-      else travelledBack += d;
-    }
-    lastX = s.carX;
-    lastY = s.carY;
+    const d = Math.hypot(s.carX - lx, s.carY - ly);
+    const along = (s.carX - lx) * Math.cos(s.heading) + (s.carY - ly) * Math.sin(s.heading);
+    if (along >= 0) travelled.forward += d;
+    else travelled.back += d;
+    lx = s.carX;
+    ly = s.carY;
     if (s.contact.some((c) => c !== 0)) touched = true;
   };
-
-  /** Hold keys until the predicate holds or we give up, so a leg can never hang the harness. */
-  const until = (pred: () => boolean, maxTicks: number): boolean => {
-    for (let i = 0; i < maxTicks; i += 1) {
-      if (pred()) return true;
-      tick();
-    }
+  const until = (pred: () => boolean, max: number): boolean => {
+    for (let i = 0; i < max && !pred(); i += 1) tick();
     return pred();
   };
-
-  // ---- the start: clutch, first gear, handbrake off, all while standing still -------------------
-  // The gear press is retried until the lever actually moves. `until` above can see the clutch at 0.96
-  // while the pedal is still travelling and the driver has not yet latched it, and a press that lands a
-  // tick early is silently dropped — measured: the car then sits in neutral and every later leg fails.
-  const selectGear = (want: 1 | -1): void => {
-    for (let i = 0; i < 240 && s.gear !== want; i += 1) {
-      held.add('Space');
-      // Press on the tick after the pedal is fully down, so the driver's own copy of the travel agrees.
+  const stand = (): void => {
+    held.add('Space');
+    held.add('ArrowDown');
+    until(() => Math.abs(s.speedMps) < 0.02, SETTLE_TICKS);
+  };
+  /** The gear goes in only with the pedal at the floor; the press is repeated until the lever moves. */
+  const selectGear = (want: number): void => {
+    held.add('Space');
+    for (let i = 0; i < 300 && s.gear !== want; i += 1) {
       tick(s.clutch >= 0.97 ? [want === 1 ? 'Digit1' : 'KeyR'] : []);
     }
   };
+
+  // The start: clutch, first gear, handbrake off.
   held.add('Space');
-  until(() => s.clutch >= 0.99, 240);
   selectGear(1);
   tick(['KeyP']);
   until(() => !s.handbrake, 60);
 
-  /**
-   * One measured tap: clutch up into the creep, stop at `distM` of travel (braking by prediction), and
-   * settle. The wheel is held only while it is short of the lock the leg was priced with.
-   */
-  const tapOnce = (distM: number, arrow: string | null, lockSign: number, wantLock: number): void => {
+  /** One tap: clutch up into the creep, stop `dist` of path later (or when `stopWhen` holds). */
+  const tap = (dist: number, arrow: string | null, stopWhen?: () => boolean, turn?: { h0: number; rad: number }): number => {
     held.delete('ArrowDown');
     held.delete('Space');
+    const odo0 = travelled.forward + travelled.back;
     let moved = 0;
-    let lastTapX = s.carX;
-    let lastTapY = s.carY;
+    let px = s.carX;
+    let py = s.carY;
     let rolling = false;
     for (let i = 0; i < 60 * 40; i += 1) {
-      if (arrow && lockSign * (wantLock - s.steerRad) > 0.04) held.add(arrow);
-      else if (arrow) held.delete(arrow);
+      if (arrow && turn) {
+        // Part lock: hold the arrow only while the heading is still short of the wanted turn.
+        if (Math.abs(wrap(s.heading - turn.h0)) < Math.abs(turn.rad) - 0.02) held.add(arrow);
+        else held.delete(arrow);
+      } else if (arrow) held.add(arrow);
       tick();
-      const d = Math.hypot(s.carX - lastTapX, s.carY - lastTapY);
-      lastTapX = s.carX;
-      lastTapY = s.carY;
+      moved += Math.hypot(s.carX - px, s.carY - py);
+      px = s.carX;
+      py = s.carY;
       if (!rolling && Math.abs(s.speedMps) > 0.02) rolling = true;
-      if (rolling) {
-        moved += d;
-        if (moved + brakeLead(ruleset, s.speedMps) >= distM) break;
-      }
+      if (!rolling) continue;
+      if (stopWhen ? stopWhen() : moved + brakeLead(ruleset, s.speedMps, lateS) >= dist) break;
     }
-    held.add('Space');
-    held.add('ArrowDown');
+    stand();
+    // The path covered includes the stop itself: the brake does not bite at once.
+    return travelled.forward + travelled.back - odo0;
   };
 
-  // ---- the legs -------------------------------------------------------------------------------
   let predicted: Pose = { x: s.carX, y: s.carY, h: s.heading };
-  let legsHeld = true;
-  for (const raw of line.legs) {
+  line.legs.forEach((raw, i) => {
     const leg = toLeg(raw, ruleset);
-    const predictedBeforeLeg: Pose = predicted;
-    // Stop fully and set the lock with the car still, then release the wheel: the real car cannot be
-    // steered *through* a leg at creep speed, and the brief says every lock change happens stationary.
-    held.add('Space');
-    held.add('ArrowDown');
-    until(() => Math.abs(s.speedMps) < 0.02, SETTLE_TICKS);
-
-    if (s.gear !== leg.dir) selectGear(leg.dir);
-
-    // The wheel: hold the arrow while the car stands until the lock reads where the leg wants it, and
-    // KEEP HOLDING IT for the whole leg. The driver centres the wheel as soon as no arrow is held
-    // (`FEEL.steer.centre`) and shrinks the lock with speed, so releasing before the tap turns every
-    // arc into a straight line — measured: the car drove dead straight and h never changed.
-    const wantLock = leg.steerRad;
-    held.delete('ArrowLeft');
-    held.delete('ArrowRight');
-    const arrow = wantLock > 0 ? 'ArrowLeft' : wantLock < 0 ? 'ArrowRight' : null;
-    const lockSign = wantLock > 0 ? 1 : -1;
-    if (arrow) held.add(arrow);
-
-    // The tap. One tap rarely lands the leg exactly: the creep speed, the brake's lag and the wheel's
-    // lock all move with speed, so the follower closes the loop on the *pose* the search priced rather
-    // than on a dead-reckoned length. It taps, stops, measures the distance still to go, and taps again —
-    // bounded, so a leg the car cannot reach is reported as a residual rather than looping forever.
-    const want = endPose(predictedBeforeLeg, [leg], ruleset);
-    for (let tap = 0; tap < 6; tap += 1) {
-      const remaining = Math.hypot(want.x - s.carX, want.y - s.carY);
-      if (remaining < TAP_TOL_M) break;
-      // A very short remaining distance is a reason to steer the last of it, not to give up.
-      const throttleTo = Math.min(remaining, MAX_TAP_M);
-      tapOnce(throttleTo, arrow, lockSign, leg.steerRad);
-      // Stop, and let the brake settle before measuring again.
-      until(() => Math.abs(s.speedMps) < 0.02, SETTLE_TICKS);
-    }
-    held.delete('ArrowLeft');
-    held.delete('ArrowRight');
-    const closed = Math.hypot(want.x - s.carX, want.y - s.carY);
-    opts.trace?.(
-      s,
-      `leg ${raw.dir > 0 ? 'F' : 'R'} lock ${raw.steer.toFixed(2)} want ${raw.len.toFixed(2)} m → ` +
-        `posed ${(Math.hypot(want.x - predictedBeforeLeg.x, want.y - predictedBeforeLeg.y)).toFixed(2)} m, ` +
-        `off by ${closed.toFixed(2)} m`,
+    const last = (opts.closeLast ?? true) && i === line.legs.length - 1;
+    stand();
+    if (s.gear !== raw.dir) selectGear(raw.dir);
+    // Set the lock with the car standing, and wait for it to arrive: a lock change from one side to the
+    // other takes a second on the keyboard, and a leg started before it is there is a different arc.
+    for (const a of ['ArrowLeft', 'ArrowRight']) held.delete(a);
+    const arrow = raw.steer > 0 ? 'ArrowLeft' : raw.steer < 0 ? 'ArrowRight' : null;
+    const part = raw.turn !== undefined && Math.abs(raw.steer) > 0 && Math.abs(raw.steer) < 0.95;
+    if (arrow && !part) held.add(arrow);
+    // Sign-aware: a wheel at full lock the OTHER way is also "past" the wanted magnitude, and a leg
+    // started from there is a different arc (measured: the lock-change legs came out 2-3 degrees short).
+    const sign = Math.sign(leg.steerRad);
+    until(
+      () => (sign === 0 || part ? Math.abs(s.steerRad) < 0.02 : sign * (s.steerRad - leg.steerRad) >= -0.02),
+      240,
     );
-
+    let done = 0;
+    const turnGoal = part ? { h0: s.heading, rad: raw.turn as number } : undefined;
+    for (let n = 0; n < MAX_TAPS; n += 1) {
+      const left = raw.len - done;
+      if (!last && left < MIN_TAP_M) break;
+      const got = tap(left, arrow, last ? () => s.hullInside : undefined, turnGoal);
+      done += got;
+      if (last) break;
+    }
+    for (const a of ['ArrowLeft', 'ArrowRight']) held.delete(a);
     predicted = endPose(predicted, [leg], ruleset);
-    const err = Math.hypot(s.carX - predicted.x, s.carY - predicted.y);
-    legErrors.push(err);
-    if (err > STOP_TOL_M) legsHeld = false;
-  }
+    legErrors.push(Math.hypot(s.carX - predicted.x, s.carY - predicted.y));
+    opts.trace?.(`${touched ? '[TOUCHED] ' : ''}${s.disqualified ? '[DQ] ' : ''}leg ${i + 1} ${raw.dir > 0 ? 'F' : 'R'} lock ${raw.steer} want ${raw.len.toFixed(2)} did ${done.toFixed(2)} → off ${legErrors[i].toFixed(2)} m, at ${s.carX.toFixed(2)} ${s.carY.toFixed(2)} ${((s.heading * 180) / Math.PI).toFixed(1)}° vs ${predicted.x.toFixed(2)} ${predicted.y.toFixed(2)} ${((predicted.h * 180) / Math.PI).toFixed(1)}°`);
+  });
 
-  // ---- the finish: stand on the brake and press Enter -------------------------------------------
-  held.add('Space');
-  held.add('ArrowDown');
-  // The core needs the car inside and exactly still before it signals; then Enter ends the run. The wait
-  // is bounded: a control line that never reaches the bay must not sit out the core's whole exam cap, or
-  // every such test would take four minutes and charge a rule that says nothing about the line.
-  const waitTicks = Math.round(60 * (opts.finishWaitS ?? FINISH_WAIT_S));
-  const signalled = until(() => s.finishSignal || s.disqualified, waitTicks);
+  // The finish: stand on the brake until the core signals, then Enter.
+  stand();
+  const signalled = until(() => s.finishSignal || s.disqualified, Math.round(60 * (opts.finishWaitS ?? FINISH_WAIT_S)));
   if (signalled && s.finishSignal) {
     tick(['Enter']);
     until(() => s.phase === 'done' || s.disqualified, 120);
   }
-  const timedOut = !s.finishSignal && !s.disqualified;
-
-  const end: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const out: LineOutcome = {
-    end,
-    endErrorM: line.end ? Math.hypot(end.x - line.end.x, end.y - line.end.y) : null,
-    predicted,
-    algebraErrorM: Math.hypot(end.x - predicted.x, end.y - predicted.y),
+    end: { x: s.carX, y: s.carY, h: s.heading },
     touched,
     inside: s.hullInside,
     signal: s.finishSignal,
     disqualified: s.disqualified,
     score: s.score,
+    runS: ticks / 60,
     clockS: s.clockMs / 1000,
     pents: [...new Set(pents)],
-    legsHeld,
-    timedOut,
     legErrorsM: legErrors,
-    travelledM: { forward: travelledForward, back: travelledBack },
+    travelledM: travelled,
+    timedOut: !s.finishSignal && !s.disqualified,
   };
   session.dispose();
   return out;
