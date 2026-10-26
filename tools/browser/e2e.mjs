@@ -216,6 +216,63 @@ async function driveHill(page, { finish, allowed, throttle = false }) {
   }
 }
 
+/**
+ * Bài 4 and bài 6 from the keyboard, acting on what the page says.
+ *
+ * The learner never presses ← or → on a guess: the direction comes from `data-cue` on the advice
+ * line, read every tick, and the key is held exactly as long as the line keeps naming that direction.
+ * Nothing is pressed before the page asks for it, so a cue the page never shows fails here rather
+ * than being papered over. `throttle` is the learner who keeps the throttle down: the line must tell
+ * them so in words.
+ */
+async function driveFigure(page, { allowed, throttle = false }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  await key.press('KeyE');
+  await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
+
+  // Set-off exactly as the advice line words it: clutch to the floor, gear 1, handbrake off.
+  const tick = Number((await readStage(page)).tick);
+  await key.down('Space');
+  await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
+  await key.press('Digit1');
+  await until(page, 'gear 1', `d.gear === '1'`, allowed);
+  await key.press('KeyP');
+  await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+  await key.up('Space');
+  if (throttle) await key.down('ArrowUp');
+
+  // Hold the arrow key the line names, and only that one, changing it when the line changes.
+  let heldDir = null;
+  let heldCue = null;
+  const finishAt = Date.now() + WAIT_MS;
+  while (Date.now() < finishAt) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} at progress ${d.progress} m (contact ${d.contact})\nstate: ${JSON.stringify(d)}`);
+    if (d.phase === 'done' || d.disqualified === 'yes') break;
+
+    const name = await page.$eval('.advice', (el) => el.dataset.cue ?? '');
+    if (name !== heldCue) {
+      // The advice line's own words, printed once per change: this is what the Learner would read.
+      console.log(`     at ${Number(d.progress).toFixed(1)} m the line says: ${(await page.$eval('.advice', (el) => el.textContent)).trim()}`);
+      heldCue = name;
+    }
+    const dir = name === 'left' ? 'ArrowLeft' : name === 'right' ? 'ArrowRight' : null;
+    if (dir !== heldDir) {
+      if (heldDir) await key.up(heldDir);
+      heldDir = dir;
+      if (dir) await key.down(dir);
+    }
+    await page.waitForTimeout(REACTION_MS);
+  }
+  if (heldDir) await key.up(heldDir);
+  if (throttle) await key.up('ArrowUp');
+  await until(page, 'end of the figure', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
+}
+
 let failures = 0;
 const check = async (name, fn) => {
   try {
@@ -361,6 +418,66 @@ try {
     if (problems.length) throw new Error(problems.join('\n'));
     await page.close();
   });
+
+  // ---- bài 4 and bài 6: the figure pages ------------------------------------------------------
+  for (const lesson of [4, 6]) {
+    const page4 = `/thi/${lesson}`;
+    const figure = `bài ${lesson}`;
+    let figClean;
+    await check(`${figure} clean run: follow the advice line, no line touched, score 100`, async () => {
+      const { page, problems } = await fresh(page4);
+      await driveFigure(page, { allowed: [] });
+      const d = await readStage(page);
+      if (d.exercise !== String(lesson)) throw new Error(`the page says exercise ${d.exercise}`);
+      if (d.phase !== 'done' || d.disqualified !== 'no') throw new Error(`not finished cleanly: ${JSON.stringify(d)}`);
+      if (d.score !== '100') throw new Error(`score ${d.score}, penalties ${d.penalties}`);
+      if (d.contact !== '0000') throw new Error(`a wheel finished on contact ${d.contact}`);
+      console.log(`     ${figure}: finished ${d.courseLen} m of figure, last lateral offset ${d.lateral} m, clock ${d.clock} s`);
+      // The inset is the picture of where the wheels are; it must be on the page and painted.
+      const inset = await page.$eval('canvas[data-inset]', (c) => ({ w: c.width, h: c.height }));
+      if (!(inset.w > 0 && inset.h > 0)) throw new Error(`the inset canvas has no size: ${JSON.stringify(inset)}`);
+      if (problems.length) throw new Error(problems.join('\n'));
+      figClean = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+      const exerciseId = Buffer.from(figClean.trace, 'base64')[7];
+      if (exerciseId !== lesson) throw new Error(`the trace header carries exercise id ${exerciseId}, not ${lesson}`);
+      await page.close();
+    });
+
+    await check(`the ${figure} trace replays to the hash the page shows`, () => replays(figClean));
+
+    // One failure path per figure, taken by the learner nobody told to steer: the page must name the
+    // rule, its points or "Đình chỉ", and print the ruleset's own quotation.
+    await check(`${figure} with nobody steering: a line is hit, the page names the code and prints the quote`, async () => {
+      const { page, problems } = await fresh(page4);
+      const key = page.keyboard;
+      await pageReady(page);
+      await key.press('KeyX');
+      await until(page, 'enter the car', `d.entered === 'yes'`, []);
+      await key.press('KeyE');
+      await until(page, 'engine on', `d.engineOn === 'yes'`, []);
+      const tick = Number((await readStage(page)).tick);
+      await key.down('Space');
+      await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, []);
+      await key.press('Digit1');
+      await until(page, 'gear 1', `d.gear === '1'`, []);
+      await key.press('KeyP');
+      await until(page, 'handbrake released', `d.handbrake === 'no'`, []);
+      await key.up('Space');
+      // Only the throttle: the wheel is never touched, which is the whole mistake.
+      const code = lesson === 4 ? 'SH.04.DE_VACH' : 'SH.06.DE_VACH';
+      await until(page, `${figure}: a wheel on the paint`, `d.penalties.includes('${code}')`, [code, 'SH.X.VIA_HE']);
+      const d = await readStage(page);
+      const rule = ruleset.rules.find((r) => r.id === code);
+      const shown = await page.$eval(`[data-penalty="${code}"] blockquote`, (e) => e.textContent);
+      if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+      const shownPoints = await page.$eval(`[data-penalty="${code}"] .points`, (e) => e.textContent);
+      const want = `−${rule.penalty.points} điểm`;
+      if (shownPoints !== want) throw new Error(`the HUD says "${shownPoints}", the ruleset says ${want}`);
+      console.log(`     ${figure} without steering: ${code} (${shownPoints}) at ${d.progress} m, contact ${d.contact}`);
+      if (problems.length) throw new Error(problems.join('\n'));
+      await page.close();
+    });
+  }
 
 } finally {
   await browser.close();

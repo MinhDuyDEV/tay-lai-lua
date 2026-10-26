@@ -21,7 +21,7 @@ export type StepId =
   | 'start'
   | 'line'
   // bài 4 / bài 6
-  | 'start-line'
+  | 'entry'
   | 'vet'
   | 'finish';
 
@@ -83,14 +83,14 @@ export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset): 
 /** Bài 4/6 checklist: pass the entry gate, keep the wheels off the painted lines, pass the exit. */
 export const FIGURE_STEPS: readonly Step[] = [
   { id: 'gear', label: 'Côn + số 1, nhả phanh tay', key: 'Space, 1, P' },
-  { id: 'start-line', label: 'Qua vạch vào hình', key: '↑' },
+  { id: 'entry', label: 'Qua vạch vào hình', key: '↑' },
   { id: 'line', label: 'Giữ bánh xe trong làn, không đè vạch', key: '← →' },
   { id: 'finish', label: 'Qua vạch kết thúc', key: '↑' },
 ];
 
 export function markFigure(done: Set<StepId>, state: SimState): void {
   if (state.gear === 1 && state.clutch < 0.1) done.add('gear');
-  if (state.clockS > 0) done.add('start-line');
+  if (state.clockS > 0) done.add('entry');
   if (state.progressM > 0 && state.contact.every((c) => c === 0)) done.add('line');
   if (state.phase === 'done' && !state.disqualified) done.add('finish');
 }
