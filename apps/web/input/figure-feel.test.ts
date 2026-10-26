@@ -76,7 +76,7 @@ function drive(lesson: 4 | 6, latency: Latency, { followCue = true, steer = true
     if (s.gear === 1 && s.handbrake) k.add('KeyP');
     const rolling = s.gear === 1 && !s.handbrake && s.clutch < 0.05;
 
-    const cue = followCue ? cueFigure(s, centre) : null;
+    const cue = followCue ? cueFigure(s, centre, ruleset) : null;
     if (cue && cues.at(-1) !== cue) cues.push(cue);
     if (followCue) {
       // A person holds the arrow key while the line keeps naming that direction, and lets go when it

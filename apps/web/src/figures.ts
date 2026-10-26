@@ -101,28 +101,45 @@ export function maxSpeedForRadius(radiusM: number, ruleset: Ruleset): number {
 }
 
 /**
+ * The pace a figure is driven at, m/s: the bend's own limit.
+ *
+ * It is published beside the cue and printed in the advice line, so the speed the learner is asked
+ * for is the speed the test drives at. It is *not* floored at the car's idle creep: below creep the
+ * car will not go slower without riding the clutch, and braking to a slower speed in gear stalls the
+ * engine, so the advice says "lift off" rather than naming a speed the car cannot hold.
+ */
+
+/**
  * The steering law, and why it is shaped like this.
  *
- * A keyboard has no wheel to hold at an angle: the arrow key is a *rate* toward lock and letting go
- * centres it (`FEEL.steer`). So a cue that re-decides every tick makes the learner pump the key, and
- * the car weaves — measured: the 15 m bend on bài 4 swung from 0.6 m one side to 0.6 m the other.
- * What a bend needs is one instruction held for the length of the bend.
+ * A keyboard wheel is a *rate*, not an angle: holding ← moves the wheel toward full lock at
+ * `FEEL.steer.rate`, letting go centre-s itself at `FEEL.steer.centre`. So the cue must not name the
+ * angle to end up at — measuring that was the mistake: the cue said `left` for the whole of a bend,
+ * the learner held the key, the wheel sat at full lock, and the car cut 9 % inside a 4.30 m arc and
+ * clipped the curb with its rear corner. Instead the cue names the direction to move the wheel *now*,
+ * relative to where the wheel already is, and `straight` means let go and let it centre.
  *
- * So the cue is computed from where the car is on the path and what the path does next:
+ * What the wheel should end up at is still computed from the path, in three parts:
  *   * heading: turn back toward the path's own direction (`headingErrRad`);
  *   * cross-track: turn toward the centreline in proportion to how far off it the car is, scaled by
  *     speed so a slow car corrects sooner (`lateralM`);
- *   * feed-forward: the path's own turn over the next stretch, so the bend is entered, not
- *     discovered.
- * The sum is compared against a band wide enough that a small error does not change the answer, and
- * the answer is held until it genuinely changes — the cue names a key and a direction, and `straight`
- * means "let go, the wheel centres itself".
+ *   * feed-forward: the path's own turn over the next stretch, so a bend is entered, not discovered.
+ * The difference between that and the wheel's present angle, with a dead band, is the cue. All of it
+ * is in the snapshot, so the page, the test and the Supervisor read the same answer.
  */
 const CROSS_TRACK_GAIN = 1.15;
 /** How far ahead the bend is anticipated, metres: what the car covers in about a reaction. */
 const FEED_FORWARD_M = 2.2;
-/** The dead zone on the wanted steer, radians. Inside it the line says `straight`. */
-const STEER_BAND_RAD = 0.055;
+/**
+ * The dead band on the wanted wheel angle, radians. Inside it the line says `straight`.
+ *
+ * Measured on bài 4 (41.7 m, one right bend, one left bend) over steer lags of 100–400 ms: 0.03 rad
+ * clipped the curb at three of seven lags, 0.10 kept all seven off the paint with the worst lateral
+ * error 0.52 m. The band is wide because the wheel is a *rate*: `straight` means "let go and the
+ * wheel unwinds", which is itself a half-second of the car turning.
+ */
+const STEER_BAND_RAD = 0.10;
+
 /** The turn the centreline takes over the `span` metres from `at`, radians (+ = left). */
 function turnAhead(points: Centreline, at: number, span: number): number {
   const a = pointAt(points, at);
@@ -130,26 +147,36 @@ function turnAhead(points: Centreline, at: number, span: number): number {
   return Math.atan2(a.tx * b.ty - a.ty * b.tx, a.tx * b.tx + a.ty * b.ty);
 }
 
-/** The steer the car needs now, radians (+ = left), from the snapshot. */
-function wantSteer(s: SimState, centre: Centreline): number {
+/**
+ * The wheel angle the car needs now, radians (+ = left), from the snapshot.
+ *
+ * The heading term is *predicted*: a key let go now leaves the wheel to unwind at
+ * `FEEL.steer.centre` rad/s, so the car keeps yawing for `|steer| / centre` seconds after the learner
+ * stops pressing. Without that term the cue asks for the wheel to be held after the bend is already
+ * done, and the car leaves the far side of the bend wide — measured on bài 6 as the rear wheel on the
+ * paint at 26 m.
+ */
+export function wantSteer(s: SimState, centre: Centreline, ruleset: Ruleset): number {
   const v = Math.max(s.speedMps, 0.6);
+  const unwind = Math.abs(s.steerRad) / ruleset.steer.centre;
+  const yawRate = (v * Math.tan(s.steerRad)) / ruleset.vehicle.wheelbase_m;
   const cross = -Math.atan2(CROSS_TRACK_GAIN * s.lateralM, v);
   const feed = turnAhead(centre, s.progressM, FEED_FORWARD_M);
-  return -s.headingErrRad + cross + feed;
+  return -(s.headingErrRad + yawRate * unwind) + cross + feed;
 }
 
 /**
- * The steering cue for a figure run, from the snapshot alone: which arrow key to hold, or `straight`
- * to let go and let the wheel centre itself. Pure, so the page, the test and the Supervisor read the
- * same answer.
+ * The steering cue for a figure run, from the snapshot alone: which way to move the wheel now, or
+ * `straight` to let go and let it centre. Pure, so the page, the test and the Supervisor read the same
+ * answer.
  *
- * Speed is a *separate* channel (`paceFigure`), not a value of this cue: a learner who is told `go`
- * would let go of the steering key to press the throttle, and the car would swing wide. One key per
- * cue, and the speed in the advice line's words.
+ * Speed is a *separate* channel (`paceFigure`), not a value of this cue: a learner told to speed up
+ * would let go of the steering key to reach for the throttle, and the car would swing wide. One key
+ * per cue; the speed is in the advice line's words.
  */
-export function cueFigure(s: SimState, centre: Centreline): FigureCue {
+export function cueFigure(s: SimState, centre: Centreline, ruleset: Ruleset): FigureCue {
   if (centre.length < 2) return 'straight';
-  const want = wantSteer(s, centre);
+  const want = wantSteer(s, centre, ruleset);
   if (want > STEER_BAND_RAD) return 'left';
   if (want < -STEER_BAND_RAD) return 'right';
   return 'straight';
@@ -164,9 +191,6 @@ export function paceFigure(centre: Centreline, ruleset: Ruleset): number {
   const r = tightestRadiusM(centre);
   return Number.isFinite(r) ? maxSpeedForRadius(r, ruleset) : ruleset.steer.speedScaleMps;
 }
-
-/** The band the cue uses, exported so a learner model in a test can hold a key the same way. */
-export const CUE_BAND_RAD = STEER_BAND_RAD;
 
 const m = (v: number) => `${Math.round(v * 100) / 100} m`;
 
@@ -195,7 +219,7 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
   }
   if (s.clockS === 0 && s.progressM < 1) return 'Nhả phanh tay P, vào số 1 rồi nhấn ga ↑ nhẹ đi qua vạch vào hình.';
 
-  const cue = cueFigure(s, centre);
+  const cue = cueFigure(s, centre, ruleset);
   const side = s.lateralM;
   const off = Math.abs(side);
   if (cue === 'left') {

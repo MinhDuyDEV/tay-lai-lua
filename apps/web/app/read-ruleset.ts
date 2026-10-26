@@ -15,5 +15,12 @@ export function readRuleset(): Ruleset {
   const data = JSON.parse(fs.readFileSync(RULESET_FILE, 'utf8')) as Omit<Ruleset, 'steer'>;
   // The keyboard's steering model lives in the run loop, which is the one place it should live; the
   // ruleset carries it so the advice line's speed bound is computed from the same numbers.
-  return { ...data, steer: { speedScaleMps: FEEL.steer.speedScaleMps, minLock: FEEL.steer.minLock } };
+  return {
+    ...data,
+    steer: {
+      speedScaleMps: FEEL.steer.speedScaleMps,
+      minLock: FEEL.steer.minLock,
+      centre: FEEL.steer.centre,
+    },
+  };
 }

@@ -71,6 +71,9 @@ export interface Drivetrain {
   /** Newtons of rolling resistance; with `mass_kg` it sets the coast deceleration. */
   rolling_n: number;
   brake_max_n: number;
+  final_drive: number;
+  /** Gear ratios by gear name; `gears['1']` is first. */
+  gears: Record<string, number>;
 }
 
 export interface Vehicle {
@@ -91,6 +94,8 @@ export interface SteerFeel {
   /** `lock(v) = max(minLock, 1 / (1 + (v / speedScaleMps)^2))` of full lock. */
   speedScaleMps: number;
   minLock: number;
+  /** How fast the wheel unwinds toward centre when the key is released, rad/s of full lock. */
+  centre: number;
 }
 
 export interface Ruleset {
@@ -120,6 +125,18 @@ export const GRAVITY_MPS2 = 9.81;
 export function coastDecel(ruleset: Ruleset, grade: number): number {
   const sinSlope = grade / Math.sqrt(1 + grade * grade);
   return GRAVITY_MPS2 * sinSlope + ruleset.drivetrain.rolling_n / ruleset.vehicle.mass_kg;
+}
+
+/**
+ * The speed the car holds in first gear with the clutch up and no throttle, m/s: idle rpm through the
+ * gearbox, so the engine's own idle control sets it. This is the slowest a learner can drive without
+ * riding the clutch, and the advice line must never ask for less (braking below it in gear stalls the
+ * engine — `SH.X.CHET_MAY`).
+ */
+export function creepSpeedMps(ruleset: Ruleset): number {
+  const { idle_target_rpm: idle, final_drive: final, gears } = ruleset.drivetrain;
+  const wheel = ruleset.vehicle.wheel_radius_m;
+  return ((idle / gears['1']) / final) * 2 * Math.PI * wheel / 60;
 }
 
 /** Bài 3's numbers, or a clear error: the page was built against a ruleset that has no slope. */
