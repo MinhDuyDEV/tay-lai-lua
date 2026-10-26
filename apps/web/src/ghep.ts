@@ -497,6 +497,8 @@ export function adviceGhep(
 const PATH_STEP = 0.1;
 /** The wheel-patch clearance a plan must keep everywhere, metres. Core's executed lines keep 0.10-0.18. */
 export const MIN_MARGIN = 0.05;
+/** The clearance an S already under way must still keep, metres: off the paint, with a little to spare. */
+const COMMITTED_MARGIN = 0.02;
 /** A hull corner this far inside the bay line counts as inside: a rotated hull passes a centre test with a corner out. */
 const HULL_INSET = 0.02;
 const MAX_ARC_M = 6;
@@ -507,14 +509,20 @@ const MAX_STRAIGHT_M = 8;
 const OVER_ROLL_M = 0.1;
 
 /** The straight reverse from a pose square to the bay: its length until the hull is inside, if it is clean. */
-function straightIn(from: Pose, yard: Yard, ruleset: Ruleset, margin0: number): { len: number; margin: number } | null {
+function straightIn(
+  from: Pose,
+  yard: Yard,
+  ruleset: Ruleset,
+  margin0: number,
+  floor: number,
+): { len: number; margin: number } | null {
   let p = from;
   let margin = margin0;
   let inside = -1;
   for (let d = 0; d <= MAX_STRAIGHT_M + OVER_ROLL_M; d += PATH_STEP) {
     if (d > 0) p = endPose(p, [{ dir: -1, steerRad: 0, len: PATH_STEP }], ruleset);
     margin = Math.min(margin, patchMargin(p, yard, ruleset));
-    if (margin < MIN_MARGIN) return null;
+    if (margin < floor) return null;
     const ok = hullInsideBay(p, yard, ruleset, HULL_INSET);
     if (inside < 0 && ok) inside = d;
     if (inside >= 0) {
@@ -529,7 +537,7 @@ function straightIn(from: Pose, yard: Yard, ruleset: Ruleset, margin0: number): 
  * The best reverse S from a stopped pose, or null. "Best" is the roomiest (largest worst wheel clearance),
  * then the shortest. The legs are exact path lengths; the caller brakes early by the stopping lead.
  */
-export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null {
+export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset, floor = MIN_MARGIN): Plan | null {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const axis = holdPose(yard).h;
   // The bay stretched along its long axis: a pose that fits this fits across the bay, wherever along it.
@@ -540,11 +548,11 @@ export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null 
     bay: alongX ? [bx0 - 100, by0, bx1 + 100, by1] : [bx0, by0 - 100, bx1, by1 + 100],
   };
   const start = patchMargin(from, yard, ruleset);
-  if (start < MIN_MARGIN) return null;
+  if (start < floor) return null;
   // Already square to the bay and across it: just back straight in. This is also where every S ends up,
   // and without it the solver keeps cutting the last 20 cm into two arcs.
   if (Math.abs(wrap(from.h - axis)) <= 0.1 && hullInsideBay(from, longBay, ruleset, HULL_INSET)) {
-    const fin = straightIn(from, yard, ruleset, start);
+    const fin = straightIn(from, yard, ruleset, start, floor);
     if (fin) {
       const leg: Leg = { dir: -1, steerRad: 0, len: fin.len };
       return { legs: [leg], end: endPose(from, [leg], ruleset), margin: fin.margin, shunts: 0, length: fin.len };
@@ -557,19 +565,19 @@ export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null 
     for (let s1 = ARC_STEP; s1 <= MAX_ARC_M; s1 += ARC_STEP) {
       p1 = endPose(p1, [{ dir: -1, steerRad: a, len: ARC_STEP }], ruleset);
       m1 = Math.min(m1, patchMargin(p1, yard, ruleset));
-      if (m1 < MIN_MARGIN) break;
+      if (m1 < floor) break;
       let p2 = p1;
       let m2 = m1;
       for (let s2 = 0; s2 <= MAX_ARC_M; s2 += ARC_STEP) {
         if (s2 > 0) {
           p2 = endPose(p2, [{ dir: -1, steerRad: -a, len: ARC_STEP }], ruleset);
           m2 = Math.min(m2, patchMargin(p2, yard, ruleset));
-          if (m2 < MIN_MARGIN) break;
+          if (m2 < floor) break;
         }
         if (Math.abs(wrap(p2.h - axis)) > 0.1) continue;
         // Cheap cut before the long straight walk: across the bay's short axis the hull must already fit.
         if (!hullInsideBay(p2, longBay, ruleset, HULL_INSET)) continue;
-        const fin = straightIn(p2, yard, ruleset, m2);
+        const fin = straightIn(p2, yard, ruleset, m2, floor);
         if (!fin) continue;
         const legs: Leg[] = [{ dir: -1, steerRad: a, len: s1 }];
         if (s2 > 0) legs.push({ dir: -1, steerRad: -a, len: s2 });
@@ -840,6 +848,9 @@ function leadIn(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[]
  * and the S still closes. The first one found (the shortest shunt) is on the band's edge half the time.
  */
 function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null {
+  // Committed to the S the floor is the paint itself plus a small buffer; the roomy 0.05 is for choosing
+  // where to start, not for giving up once the car is a few centimetres off the line it was aimed at.
+  const floor = COMMITTED_MARGIN;
   const START_M = 2.4;
   const STEP_M = 0.2;
   const n = Math.round(START_M / STEP_M);
@@ -856,11 +867,11 @@ function reverseWithShunt(from: Pose, yard: Yard, ruleset: Ruleset): Plan | null
     let m = m0;
     if (k !== 0) {
       const w = walkLeg(from, shunt, yard, ruleset);
-      if (!w || w.margin < MIN_MARGIN) continue;
+      if (!w || w.margin < floor) continue;
       p = w.end;
       m = Math.min(m, w.margin);
     }
-    const r = reverseS(p, yard, ruleset);
+    const r = reverseS(p, yard, ruleset, floor);
     if (!r) continue;
     found.set(k, {
       legs: k !== 0 ? [shunt, ...r.legs] : r.legs,
