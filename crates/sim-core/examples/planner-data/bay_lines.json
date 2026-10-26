@@ -1,0 +1,327 @@
+{
+  "note": "Bay lines for the web planner. Poses are (x_m, y_m, heading_deg) in the core's frame. A leg is a maximal run at one direction and one steering lock, driven from a full stop with the wheel set while stationary. 'lock' is a fraction of full lock (-1..1). arc_m is recomputed from the two poses via d\u03b8 = dir\u00b7tan(\u03b4)/L\u00b7s, so it does not inherit the planner's grid. Clearances are EXECUTED in the real Session, not lattice estimates.",
+  "vehicle": {
+    "wheelbase_m": 2.4,
+    "max_steer_rad": 0.55,
+    "length_m": 4.2,
+    "width_m": 1.6
+  },
+  "bays": {
+    "ghep_doc": {
+      "seed_hi": 7,
+      "bay_rect": [
+        -2.2,
+        -5.2,
+        0.0,
+        0.0
+      ],
+      "area_rect": [
+        -7.24,
+        0.0,
+        15.24,
+        5.04
+      ],
+      "park_heading_deg": 90.0,
+      "compact_recipe": {
+        "legs": [
+          {
+            "from": [
+              10.14,
+              2.52,
+              180.0
+            ],
+            "to": [
+              11.226,
+              2.366,
+              163.9
+            ],
+            "dir": -1,
+            "lock": 1.0,
+            "arc_m": 1.1
+          },
+          {
+            "from": [
+              11.226,
+              2.366,
+              163.9
+            ],
+            "to": [
+              12.461,
+              2.216,
+              182.2
+            ],
+            "dir": -1,
+            "lock": -1.0,
+            "arc_m": 1.25
+          },
+          {
+            "from": [
+              12.461,
+              2.216,
+              182.2
+            ],
+            "to": [
+              0.32,
+              1.75,
+              182.2
+            ],
+            "dir": 1,
+            "lock": 0.0,
+            "arc_m": 12.15
+          },
+          {
+            "from": [
+              0.32,
+              1.75,
+              182.2
+            ],
+            "to": [
+              -1.7,
+              2.223,
+              151.5
+            ],
+            "dir": 1,
+            "lock": -1.0,
+            "arc_m": 2.1
+          },
+          {
+            "from": [
+              -1.7,
+              2.223,
+              151.5
+            ],
+            "to": [
+              -1.041,
+              1.772,
+              139.7
+            ],
+            "dir": -1,
+            "lock": 1.0,
+            "arc_m": 0.8
+          },
+          {
+            "from": [
+              -1.041,
+              1.772,
+              139.7
+            ],
+            "to": [
+              -1.798,
+              2.632,
+              122.9
+            ],
+            "dir": 1,
+            "lock": -1.0,
+            "arc_m": 1.15
+          },
+          {
+            "from": [
+              -1.798,
+              2.632,
+              122.9
+            ],
+            "to": [
+              -1.17,
+              0.554,
+              90.7
+            ],
+            "dir": -1,
+            "lock": 1.0,
+            "arc_m": 2.2
+          },
+          {
+            "from": [
+              -1.17,
+              0.554,
+              90.7
+            ],
+            "to": [
+              -1.136,
+              -2.196,
+              90.7
+            ],
+            "dir": -1,
+            "lock": 0.0,
+            "arc_m": 2.75
+          }
+        ],
+        "executed": {
+          "score": 100,
+          "penalties": 0,
+          "signal": 1,
+          "min_clearance_m": 0.181,
+          "ticks": 1382,
+          "seconds": 23.0
+        },
+        "note": "8 legs: two shuffle legs at the start because the search only had full locks available there. The REVERSE phase is only the last two legs (a reverse S into the bay)."
+      },
+      "launch_region": {
+        "note": "Poses from which the reverse phase (reverse S to the bay axis, then straight in) is clean with >= 0.08 m of lattice clearance. Sampled on a 0.25 m grid at 5-degree heading bands.",
+        "total_area_m2": 126.75,
+        "sensitivity_margin": {
+          "dx_0p1_m": -0.029,
+          "dy_0p1_m": -0.023,
+          "dh_3_deg": -0.024
+        },
+        "best_launch_pose": [
+          -0.99,
+          2.3,
+          1.4
+        ],
+        "best_clearance_m": 0.276
+      }
+    },
+    "ghep_ngang": {
+      "seed_hi": 8,
+      "bay_rect": [
+        0.0,
+        -2.0,
+        6.3,
+        0.0
+      ],
+      "area_rect": [
+        -10.2,
+        0.0,
+        16.86,
+        3.52
+      ],
+      "park_heading_deg": 0.0,
+      "compact_recipe": {
+        "legs": [
+          {
+            "from": [
+              -5.1,
+              1.76,
+              0.0
+            ],
+            "to": [
+              3.7,
+              1.76,
+              0.0
+            ],
+            "dir": 1,
+            "lock": 0.0,
+            "arc_m": 8.8
+          },
+          {
+            "from": [
+              3.7,
+              1.76,
+              0.0
+            ],
+            "to": [
+              6.355,
+              1.335,
+              -18.2
+            ],
+            "dir": 1,
+            "lock": -0.5,
+            "arc_m": 2.7
+          },
+          {
+            "from": [
+              6.355,
+              1.335,
+              -18.2
+            ],
+            "to": [
+              7.484,
+              1.141,
+              -1.4
+            ],
+            "dir": 1,
+            "lock": 1.0,
+            "arc_m": 1.15
+          },
+          {
+            "from": [
+              7.484,
+              1.141,
+              -1.4
+            ],
+            "to": [
+              4.781,
+              0.144,
+              41.8
+            ],
+            "dir": -1,
+            "lock": -1.0,
+            "arc_m": 2.95
+          },
+          {
+            "from": [
+              4.781,
+              0.144,
+              41.8
+            ],
+            "to": [
+              2.128,
+              -0.853,
+              -0.6
+            ],
+            "dir": -1,
+            "lock": 1.0,
+            "arc_m": 2.9
+          }
+        ],
+        "executed": {
+          "score": 100,
+          "penalties": 0,
+          "signal": 1,
+          "min_clearance_m": 0.131,
+          "ticks": 1010,
+          "seconds": 16.8
+        },
+        "note": "5 legs. ONE straight lead-in replaces the six wiggly full-lock legs: a full-lock-only lattice cannot hold a gentle lane angle (-18.2 degrees needs a half lock)."
+      },
+      "launch_region": {
+        "note": "Same reverse phase, >= 0.08 m lattice clearance, 0.25 m grid, 5-degree bands.",
+        "total_area_m2": 5.19,
+        "sensitivity_margin": {
+          "dx_0p1_m": -0.035,
+          "dy_0p1_m": -0.023,
+          "dh_3_deg": -0.024
+        },
+        "best_launch_pose": [
+          8.8,
+          2.3,
+          -0.1
+        ],
+        "best_clearance_m": 0.198
+      },
+      "executed_sensitivity": {
+        "note": "Perturbing the launch pose in the EXECUTED run. The straight lead-in leg re-aims at the launch point, so lateral (y) error is absorbed; error along the lane (x) and in heading is not.",
+        "dx_plus_0p10": {
+          "clear_m": 0.106,
+          "ok": true
+        },
+        "dx_plus_0p20": {
+          "clear_m": 0.027,
+          "ok": false
+        },
+        "dx_plus_0p30": {
+          "clear_m": -0.049,
+          "ok": false
+        },
+        "dx_minus_0p10": {
+          "clear_m": 0.131,
+          "ok": false,
+          "why": "the car stops short of the bay"
+        },
+        "dy_pm_0p30": {
+          "clear_m": 0.131,
+          "ok": true,
+          "why": "absorbed by the straight lead-in"
+        },
+        "dh_minus_3deg": {
+          "clear_m": 0.056,
+          "ok": false
+        },
+        "dh_plus_3deg": {
+          "clear_m": -0.05,
+          "ok": false
+        }
+      }
+    }
+  }
+}
