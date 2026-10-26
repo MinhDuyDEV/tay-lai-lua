@@ -1,3 +1,6 @@
+// PENDING: not in `pnpm test` (its glob is input/*.test.ts) until every cell passes. Run it with:
+//   node --test input/park-feel.pending.ts
+// Rename to park-feel.test.ts when bài 7 and bài 8 are green for every reaction and phase.
 // Can a keyboard learner finish bài 7 and bài 8 by reading only what the page shows? Each cell is one
 // run of the learner in `park-model.ts` (reads `data-cue` / `data-pedal` / `data-gear-wanted`, re-reads
 // every 50 ms at a phase, every key change late by the reaction) on the real sim.wasm and the real driver.
