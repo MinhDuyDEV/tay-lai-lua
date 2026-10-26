@@ -425,6 +425,200 @@ try {
     await page.close();
   });
 
+
+// ---- bài 2, bài 9 and bài 11: the straight road -----------------------------------------------
+//
+// These three are one manoeuvre on one scene: come up at the car's own pace, stop inside A at the
+// line, then go on past it. The keys come from what the page publishes, never from a clock:
+//  * the stop is the aid's countdown (`data-aid-eta-ms`): read it every 50 ms, and when it reaches 0
+//    put the clutch and the brake down — the same learner the feel test models;
+//  * the throttle is pulsed on `data-line-gap`, so the car keeps rolling without over-revving;
+//  * bài 11 is crossed with the right signal, which the page's own legend names.
+const ROAD_POLL_MS = 50;
+
+/** Set the car going as the checklist words it: clutch, gear 1, handbrake off, clutch up. */
+async function roadSetOff(page, allowed) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  const tick = Number((await readStage(page)).tick);
+  await key.down('Space');
+  await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
+  await key.press('Digit1');
+  await until(page, 'gear 1', `d.gear === '1'`, allowed);
+  await key.press('KeyP');
+  await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+  await key.up('Space');
+}
+
+/**
+ * Creep up to the line and stop on the aid's countdown, then hold with the handbrake.
+ * Returns the state at the stop. `pressAt` overrides the aid (a learner who brakes on a guess).
+ *
+ * The learner never touches the throttle: the car idles along at its own creep, which is the speed
+ * the aid is built for, and the advice line's "để xe tự bò" is the instruction they followed.
+ */
+async function roadStop(page, { allowed, pressAt = null }) {
+  const key = page.keyboard;
+  const deadline = Date.now() + WAIT_MS;
+  let pressed = false;
+  while (Date.now() < deadline) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} while approaching: ${JSON.stringify(d)}`);
+    if (d.phase === 'stopped' || d.phase === 'done' || d.disqualified === 'yes') break;
+    const gated = pressAt === null ? d.aidKey !== '' && d.aidEtaMs !== '' && Number(d.aidEtaMs) === 0 : Number(d.lineGap) <= pressAt;
+    if (gated && !pressed) {
+      await key.down('Space');
+      await key.down('ArrowDown');
+      pressed = true;
+      console.log(`     the aid said now at ${d.aidGapMm} mm (gap ${d.lineGap} m, speed ${d.speed} m/s, zone ${d.zone})`);
+    }
+    await page.waitForTimeout(ROAD_POLL_MS);
+  }
+  await until(page, 'stopped at the line', `d.phase === 'stopped'`, allowed);
+  // Hold the car with the handbrake, as the checklist says. The clutch stays down through the hold:
+  // letting it up in gear with the handbrake on would stall the engine against a stationary car.
+  await key.press('KeyP');
+  await until(page, 'handbrake on', `d.handbrake === 'yes'`, allowed);
+  await key.up('ArrowDown');
+  return readStage(page);
+}
+
+/**
+ * Drive on until `cond` holds, then stop. Works from a stop at the line (gear 1 in, clutch down, held
+ * by the handbrake: handbrake off and let the pedal up) and from the start of bài 11, which has no
+ * stop before its finish line.
+ */
+async function roadGo(page, { allowed, cond, signal = false }) {
+  const key = page.keyboard;
+  const now = await readStage(page);
+  if (now.handbrake === 'yes') {
+    await key.press('KeyP');
+    await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
+  }
+  if (now.clutch !== '0.00') await key.up('Space');
+  // From a cold start the checklist's own way: clutch, gear 1, handbrake off, clutch up.
+  if (now.gear !== '1') {
+    await key.down('Space');
+    await until(page, 'clutch down', `Number(d.clutch) > 0.9`, allowed);
+    await key.press('Digit1');
+    await until(page, 'gear 1', `d.gear === '1'`, allowed);
+    if (now.handbrake === 'yes') {
+      await key.press('KeyP');
+      await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
+    }
+    await key.up('Space');
+  }
+  if (signal) {
+    await key.press('KeyW');
+    await until(page, 'right signal on', `d.signal === 'right'`, allowed);
+  }
+  await until(page, 'rolling', `Number(d.speed) > 0.4`, allowed);
+  await until(page, `driven on to ${cond}`, cond, allowed);
+  // Stop past the line: clutch and brake. A run the exercise has already ended (bài 11 ends on the
+  // tick the car stops past the finish line) needs nothing more, and a handbrake press after that
+  // would never be seen by the core.
+  await key.down('Space');
+  await key.down('ArrowDown');
+  await page
+    .waitForFunction(() => {
+      const d = document.querySelector('#stage').dataset;
+      return d.phase === 'done' || d.disqualified === 'yes' || Number(d.speed) < 0.05;
+    }, null, { timeout: WAIT_MS, polling: 'raf' })
+    .catch(async (err) => {
+      throw new Error(`stuck stopping past the line\nstate: ${JSON.stringify(await readStage(page))}\n${err.message.split('\n')[0]}`);
+    });
+  const atStop = await readStage(page);
+  if (atStop.phase !== 'done' && atStop.disqualified !== 'yes') {
+    await key.press('KeyP');
+    await until(page, 'held after the line', `d.handbrake === 'yes'`, allowed);
+  }
+  await key.up('ArrowDown');
+  await key.up('Space');
+  return readStage(page);
+}
+
+let roadClean = {};
+for (const lesson of [2, 9]) {
+  const path = `/thi/${lesson}`;
+  const figure = `bài ${lesson}`;
+  await check(`${figure} clean run: stop inside A on the aid, go on past the line, score 100`, async () => {
+    const { page, problems } = await fresh(path);
+    await roadSetOff(page, []);
+    const d = await roadStop(page, { allowed: [] });
+    console.log(`     ${figure}: A ${d.stopA} m of ${ruleset.road.max_a_m} m, zone ${d.zone}`);
+    if (Number(d.stopA) < 0 || Number(d.stopA) > ruleset.road.max_a_m) throw new Error(`A ${d.stopA} m is outside the window`);
+    const end = await roadGo(page, { allowed: [], cond: `Number(d.bumper) > 1.2` });
+    if (end.score !== '100' || end.penalties !== '') throw new Error(`not a clean finish: ${JSON.stringify(end)}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    roadClean[lesson] = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+    const exerciseId = Buffer.from(roadClean[lesson].trace, 'base64')[7];
+    if (exerciseId !== lesson) throw new Error(`the trace header carries exercise id ${exerciseId}, not ${lesson}`);
+    await page.close();
+  });
+
+  await check(`the ${figure} trace replays to the hash the page shows`, () => replays(roadClean[lesson]));
+
+  // The learner who brakes far too early: the page must charge CHUA_DEN_VACH, name it in data-last-*,
+  // and print the ruleset's own quotation. That is also the "fails visibly" run. The car starts 2 m
+  // short of the line, so "far too early" is a 1.8 m gap: pressing there leaves A around 1,6 m, well
+  // outside the 500 mm window.
+  await check(`${figure} braking 1,5 m early: CHUA_DEN_VACH charged, named on #stage, quote shown`, async () => {
+    const id = lesson === 2 ? 'SH.02.CHUA_DEN_VACH' : 'SH.DS.CHUA_DEN_VACH';
+    const { page, problems } = await fresh(path);
+    await roadSetOff(page, [id]);
+    const d = await roadStop(page, { allowed: [id], pressAt: 1.8 });
+    if (!d.penalties.split(' ').includes(id)) throw new Error(`${id} did not fire: ${JSON.stringify(d)}`);
+    if (d.lastPenalty !== id) throw new Error(`data-last-penalty is "${d.lastPenalty}", not ${id}`);
+    if (d.lastPenaltyPoints !== '5') throw new Error(`data-last-penalty-points is "${d.lastPenaltyPoints}", not 5`);
+    const rule = ruleset.rules.find((r) => r.id === id);
+    if (d.lastPenaltyQuote !== rule.source.quote) throw new Error(`data-last-penalty-quote is not the ruleset's quote`);
+    const shown = await page.$eval(`[data-penalty="${id}"] blockquote`, (e) => e.textContent);
+    if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    const points = await page.$eval(`[data-penalty="${id}"] .points`, (e) => e.textContent);
+    if (points !== '−5 điểm') throw new Error(`the HUD says "${points}", not "−5 điểm"`);
+    console.log(`     ${figure}: ${id} at A ${d.stopA} m, ${points}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+}
+
+await check('bài 11 clean run: right signal across the finish line, then a stop, score 100', async () => {
+  const { page, problems } = await fresh('/thi/11');
+  // No stop aid here: the line that ends bài 11 charges no distance A.
+  const d0 = await readStage(page);
+  if (d0.aidKey !== '') throw new Error(`bài 11 should have no stop aid, but data-aid-key is "${d0.aidKey}"`);
+  await roadSetOff(page, []);
+  const end = await roadGo(page, { allowed: [], cond: `Number(d.bumper) > 21.3`, signal: true });
+  if (end.score !== '100' || end.penalties !== '') throw new Error(`not a clean finish: ${JSON.stringify(end)}`);
+  if (end.zone !== 'past-finish') throw new Error(`zone is "${end.zone}" past the finish line`);
+  console.log(`     bài 11: crossed with the right signal, zone ${end.zone}, score ${end.score}`);
+  if (problems.length) throw new Error(problems.join('\n'));
+  const clean = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+  const exerciseId = Buffer.from(clean.trace, 'base64')[7];
+  if (exerciseId !== 11) throw new Error(`the trace header carries exercise id ${exerciseId}, not 11`);
+  await page.close();
+  await check('the bài 11 trace replays to the hash the page shows', () => replays(clean));
+});
+
+await check('bài 11 crossing without the right signal: SH.KT.KHONG_XI_NHAN_PHAI, −5, quote shown', async () => {
+  const id = 'SH.KT.KHONG_XI_NHAN_PHAI';
+  const { page, problems } = await fresh('/thi/11');
+  await roadSetOff(page, [id]);
+  const end = await roadGo(page, { allowed: [id], cond: `Number(d.bumper) > 21.3`, signal: false });
+  if (!end.penalties.split(' ').includes(id)) throw new Error(`${id} did not fire: ${JSON.stringify(end)}`);
+  if (end.lastPenalty !== id) throw new Error(`data-last-penalty is "${end.lastPenalty}", not ${id}`);
+  if (end.score !== '95') throw new Error(`score ${end.score}, expected 95`);
+  const rule = ruleset.rules.find((r) => r.id === id);
+  const shown = await page.$eval(`[data-penalty="${id}"] blockquote`, (e) => e.textContent);
+  if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+  console.log(`     bài 11: ${id} fired, ${end.lastPenaltyPoints} point(s)`);
+  if (problems.length) throw new Error(problems.join('\n'));
+  await page.close();
+});
+
   // ---- bài 4 and bài 6: the figure pages ------------------------------------------------------
   for (const lesson of [4, 6]) {
     const page4 = `/thi/${lesson}`;

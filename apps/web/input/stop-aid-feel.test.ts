@@ -16,9 +16,11 @@
 //
 // The two roads are the two the aid has to serve, and neither is bài 3-specific:
 //   * bài 3's slope, where the clutch is the critical key (gravity on the grade does the slowing);
-//   * a flat road with a line at a fixed distance, where the brake is (bài 1's world is the stand-in
-//     until bài 2 lands, exactly as the spike did). The learner presses the clutch first, as the
+//   * bài 2's own scene, on the flat, where the brake is. The learner presses the clutch first, as the
 //     advice line says — a brake in gear stalls the engine — and the countdown only times the brake.
+//     This runs against the real core's bài 2 session (its own stop line, stop zone and codes), not a
+//     stand-in line: the earlier version of this test used bài 1's world with a made-up gap, and it
+//     would not have noticed the real scene charging CHUA_DEN_VACH for a stop the aid thought was fine.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -73,12 +75,12 @@ interface Result {
  * anything, and it re-plans on every read until it is due, so a reading taken a moment early is
  * replaced long before any press could follow it.
  */
-function setUpFor(lesson: 1 | 3): (s: SimState) => { keys: Set<string>; ready: boolean } {
+function setUpFor(lesson: 2 | 3): (s: SimState) => { keys: Set<string>; ready: boolean } {
   /** Ticks until the same key may be pressed again, so a press that did not take is repeated. */
   let wait = 0;
   return (s) => {
     const keys = new Set<string>();
-    const ready = s.engineOn && s.gear === 1 && !s.handbrake && (lesson === 3 || s.phase !== 'waiting');
+    const ready = s.engineOn && s.gear === 1 && !s.handbrake;
     if (wait > 0) wait -= 1;
     if (ready) return { keys, ready: true };
 
@@ -86,11 +88,6 @@ function setUpFor(lesson: 1 | 3): (s: SimState) => { keys: Set<string>; ready: b
       keys.add('Space');
       if (s.clutch >= 0.98 && wait === 0) {
         keys.add('KeyE');
-        wait = 30;
-      }
-    } else if (lesson === 1 && s.phase === 'waiting') {
-      if (wait === 0) {
-        keys.add('Enter');
         wait = 30;
       }
     } else if (s.gear !== 1) {
@@ -117,7 +114,7 @@ function setUpFor(lesson: 1 | 3): (s: SimState) => { keys: Set<string>; ready: b
  */
 function drive(opts: {
   seed: bigint;
-  lesson: 1 | 3;
+  lesson: 2 | 3;
   road: StopRoad;
   /** Where the stop line is, metres of `frontBumperM`, when the world has no line of its own. */
   lineAt?: (start: SimState) => number;
@@ -203,11 +200,7 @@ function codeOf(before: SimState, after: SimState): number[] {
 }
 
 /** Every poll period at three phases and every error, against one road. */
-function sweep(road: StopRoad, extra: { seed: bigint; lesson: 1 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number }, maxErrorMs: number) {
-  // The flat road is a stand-in for bài 2: it is bài 1's world, so bài 1's own rules (no belt, no
-  // left signal) fire on a learner who is only practising the stop. What the gate counts there is a
-  // stall or any other charge; who rides without a belt is not this file's question.
-  const ownRulesOnly = extra.lesson === 1;
+function sweep(road: StopRoad, extra: { seed: bigint; lesson: 2 | 3; lineAt?: (s: SimState) => number; clutchLeadMs?: number }, maxErrorMs: number) {
   const failures: string[] = [];
   let runs = 0;
   let low = Infinity;
@@ -220,11 +213,7 @@ function sweep(road: StopRoad, extra: { seed: bigint; lesson: 1 | 3; lineAt?: (s
         low = Math.min(low, r.A);
         high = Math.max(high, r.A);
         const inside = r.A >= 0 && r.A <= MAX_A;
-        // The flat road is a stand-in: it is bài 1's world, so bài 1's own rules (no belt, no left
-        // signal) fire on a learner who is only practising the stop. What must not happen is a
-        // stall or a charge from the stop itself, so those are what the gate counts there.
-        const charged = ownRulesOnly ? 0 : r.codes.length;
-        if (!inside || r.stalled || charged > 0) {
+        if (!inside || r.stalled || r.codes.length > 0) {
           failures.push(
             `poll ${pollMs} ms phase ${Math.round(phaseMs)} error ${errorMs} ms: A=${r.A.toFixed(3)} stalled=${r.stalled} charged=${r.codes.length}`,
           );
@@ -241,19 +230,18 @@ test('bài 3: a learner polling 16 to 500 ms and pressing within 100 ms of the c
   assert.deepEqual(failures, []);
 });
 
-test('a flat stop line: the same learner, on the brake, stops inside A every time', () => {
-  // The line 8 m ahead of where the car starts: the stand-in for bài 2's line, measured from the
-  // bumper as the law measures A. The clutch goes down 600 ms before the planned brake, as the line
-  // says; the brake is what the countdown times.
-  const { failures, runs, low, high } = sweep(flatRoad('brake'), { seed: seedWord(1), lesson: 1, lineAt: (s) => s.frontBumperM + 8, clutchLeadMs: 600 }, E_GATE_MS);
-  console.log(`     flat: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${MAX_A}`);
+test('bài 2: the same learner, on the brake, stops inside A every time', () => {
+  // bài 2's own scene: its stop line, its stop zone, its codes. The clutch goes down 600 ms before the
+  // planned brake, as the advice line says; the brake is what the countdown times.
+  const { failures, runs, low, high } = sweep(flatRoad('brake'), { seed: seedWord(2), lesson: 2, clutchLeadMs: 600 }, E_GATE_MS);
+  console.log(`     bài 2: A over ${runs} runs: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${ruleset.road!.max_a_m}`);
   assert.deepEqual(failures, []);
 });
 
 test('-150 to +150 ms is reported, not gated: the window has that much to spare or it does not', () => {
   const hill = sweep(hillRoad, { seed: seedWord(3), lesson: 3 }, E_REPORT_MS);
-  const flat = sweep(flatRoad('brake'), { seed: seedWord(1), lesson: 1, lineAt: (s) => s.frontBumperM + 8, clutchLeadMs: 600 }, E_REPORT_MS);
-  for (const [name, r] of [['bài 3', hill], ['flat', flat]] as const) {
+  const flat = sweep(flatRoad('brake'), { seed: seedWord(2), lesson: 2, clutchLeadMs: 600 }, E_REPORT_MS);
+  for (const [name, r] of [['bài 3', hill], ['bài 2', flat]] as const) {
     const fails = r.failures.filter((line) => /error -?1(2[5-9]|50)/.test(line));
     console.log(`     ${name} at ±150 ms: ${fails.length} of ${r.runs} runs outside A (A ${r.low.toFixed(3)} to ${r.high.toFixed(3)})`);
   }
