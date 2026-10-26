@@ -111,15 +111,20 @@ export const KEY_LEGEND: ReadonlyArray<{ keys: string; does: string; bai1Only?: 
   { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
 ];
 
+/** The two figures, which are driven at the car's own idle creep: no throttle, no brake. */
+const FIGURE_LESSONS: ReadonlySet<number> = new Set([4, 6]);
+
 /**
  * The legend for one lesson: bài 3, 4 and 6 have no belt, start order or signal, and bài 4 and 6 are
  * driven at the car's own idle creep, so they use neither throttle nor brake (measured: both clean
- * with neither pressed).
+ * with neither pressed). Bài 5 is a figure too, but it is driven at a real pace and stops for the
+ * light, so it needs both pedals — which is why this asks which lesson it is rather than how big the
+ * number is.
  */
 export const legendFor = (lesson: number, signals = lesson === 1) =>
   KEY_LEGEND.filter((entry) => {
     if (entry.signals) return signals;
-    return (lesson === 1 || !entry.bai1Only) && (lesson < 4 || !entry.noFigure);
+    return (lesson === 1 || !entry.bai1Only) && (!entry.noFigure || !FIGURE_LESSONS.has(lesson));
   });
 
 /** What the driver needs to know about the car; read from the sim state of the previous tick. */

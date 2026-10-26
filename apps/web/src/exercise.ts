@@ -4,11 +4,14 @@
 
 import { flatRoad, stopAid, type StopAid, type StopRoad } from './stopAid.ts';
 import { seedWord } from './sim/session.ts';
-import { adviceFigure, cueFigure, type Centreline } from './figures.ts';
+import { adviceFigure, cueFigure, wantSteer, type Centreline } from './figures.ts';
 import {
   adviceBai3,
+  adviceJunction,
   adviceRoad,
   cueBai3,
+  JUNCTION_STEPS,
+  markJunction,
   markRoad,
   roadSteps,
   FIGURE_STEPS,
@@ -20,10 +23,10 @@ import {
   type Step,
   type StepId,
 } from './steps.ts';
-import { hillOf, type Ruleset } from './ruleset.ts';
+import { hillOf, junctionOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
-export type Lesson = 1 | 2 | 3 | 4 | 6 | 9 | 11;
+export type Lesson = 1 | 2 | 3 | 4 | 5 | 6 | 9 | 11;
 
 /**
  * The straight-road lessons: a lane, a stop line, and one thing past it. They share the road scene
@@ -34,10 +37,10 @@ const isRoadLesson = (lesson: Lesson): lesson is RoadLesson => lesson === 2 || l
 
 /**
  * Which lessons show the signal keys: bài 1 (left signal at the start), bài 11 (right signal across
- * the finish line), and bài 5 when its page lands. Bài 2 and bài 9 score no signal, so their legend
- * does not offer one.
+ * the finish line), and bài 5 (KHONG_XI_NHAN, charged when the car enters the arc without it). Bài 2
+ * and bài 9 score no signal, so their legend does not offer one.
  */
-const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1, 11]);
+const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1, 5, 11]);
 
 export interface Exercise {
   lesson: Lesson;
@@ -125,6 +128,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   2: road(2, 'Bài 2 — Dừng xe nhường đường cho người đi bộ', 'Dừng đúng vạch cho người đi bộ qua, rồi đi tiếp, bằng bàn phím.'),
   9: road(9, 'Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua', 'Tạm dừng đúng vạch trước đường sắt, quan sát rồi đi tiếp, bằng bàn phím.'),
   11: road(11, 'Bài 11 — Kết thúc', 'Qua vạch kết thúc với xi nhan phải rồi dừng, bằng bàn phím.'),
+  5: junction(5, seedWord(5, 1n)),
 };
 
 export const exerciseFor = (lesson: Lesson): Exercise => EXERCISES[lesson];
@@ -167,4 +171,51 @@ function road(lesson: RoadLesson, title: string, description: string): Exercise 
     stops: lesson !== 11,
     introKeys: 5,
   };
+}
+
+/**
+ * Bài 5's seed is one whose arrival is red — the golden's own `qua_nga_tu_den_do_clean` seed — so the
+ * page opens on the case the exercise is for: a learner who must stop at the line and wait. The phase
+ * offset is the seed's low bits, so a recorded trace replays to the same light; measured, seed 1 is
+ * red at the line and seed 900 is green, which is the pair the e2e drives.
+ */
+function junction(lesson: 5, seed: bigint): Exercise {
+  return {
+    lesson,
+    title: 'Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông',
+    description: 'Qua ngã tư có đèn: dừng đúng vạch khi đèn đỏ, chờ đèn xanh, xi nhan phải rồi rẽ, bằng bàn phím.',
+    seed,
+    steps: JUNCTION_STEPS,
+    mark: markJunction,
+    advice: (state, ruleset, centre) => adviceJunction(state, ruleset, cueJunction(state, centre, ruleset)),
+    cue: (state, _ruleset, centre) => cueJunction(state, centre, _ruleset),
+    stop: stopJunction,
+    signals: SIGNAL_LESSONS.has(lesson),
+    stops: true,
+    introKeys: 5,
+  };
+}
+
+/**
+ * Bài 5 stops for the light, not for the line: a green light is not a stop, so the aid is silent and
+ * the learner just drives through. On red or yellow the countdown is the road lessons' own flat-road
+ * brake countdown, because from the bumper to the line the junction's approach is level ground.
+ */
+function stopJunction(state: SimState, ruleset: Ruleset): StopAid | null {
+  if (state.lightColour !== 1 && state.lightColour !== 2) return null;
+  return stopAid(state, ruleset, flatRoad('brake'));
+}
+
+/**
+ * The steering cue past the line, from the same `wantSteer` the figures use: the core now publishes
+ * bài 5's progress, lateral offset and heading error (snapshot 31..34), so the cue is computed from
+ * the car's real place on the route rather than guessed from its pose. Before the line the car runs
+ * straight at the approach, so the cue is only asked for once the bumper is past it.
+ */
+function cueJunction(state: SimState, centre: Centreline, ruleset: Ruleset): 'left' | 'right' | 'straight' | null {
+  if (state.lineGapM > 0 || centre.length < 2) return null;
+  const want = wantSteer(state, centre, ruleset);
+  if (want > 0.16) return 'left';
+  if (want < -0.16) return 'right';
+  return 'straight';
 }

@@ -57,4 +57,17 @@ test('the legend lists the signal stalk only on a lesson that scores signals', (
   // The figures likewise.
   assert.ok(!keys(4, false).some((k) => k.includes('Q') || k.includes('W')), 'bài 4 lists a signal key');
   assert.ok(!keys(6, false).some((k) => k.includes('Q') || k.includes('W')), 'bài 6 lists a signal key');
+  // Bài 5 charges KHONG_XI_NHAN when the car enters the arc, so it shows the stalk too.
+  assert.ok(keys(5, true).some((k) => k.includes('Q') && k.includes('W')), 'bài 5 does not list Q / W');
+});
+
+test('bài 5 gets the pedals in its legend, though it is drawn on a figure', () => {
+  // The figures (bài 4, 6) are driven at the idle creep and list no throttle or brake. Bài 5 is on a
+  // figure too but is driven at a real pace and stops for the light, so a learner who read its legend
+  // would have no way to know ↓ is the key the stop aid is counting down to.
+  const keys = (lesson: number) => legendFor(lesson, lesson === 5).map((e) => e.keys);
+  assert.ok(keys(5).some((k) => k.includes('↑')), 'bài 5 does not list the throttle');
+  assert.ok(keys(5).some((k) => k.includes('↓')), 'bài 5 does not list the brake');
+  // And the figures still do not, which is what this change must not disturb.
+  assert.ok(!keys(4).some((k) => k.includes('↑') || k.includes('↓')), 'bài 4 now lists a pedal');
 });

@@ -6,14 +6,14 @@
 
 import { Canvas } from '@react-three/fiber';
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
 import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
 import type { Penalty, Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
-import { openSession, zoneName, type Session, type SimState } from './sim/session.ts';
+import { lightName, openSession, zoneName, type Session, type SimState } from './sim/session.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -38,8 +38,31 @@ declare global {
 
 const NO_PENALTIES: readonly Penalty[] = [];
 
+/**
+ * The seed the page runs this time, or null for the lesson's own. A page's seed is the exercise's
+ * default (`exercise.ts`); `?seed=` overrides it so a reviewer or the end-to-end test can drive the
+ * same page to a different light or figure. The recorded trace carries the seed in its first 8 bytes,
+ * so a run started this way still replays to the same hash.
+ */
+function seedOverride(): bigint | null {
+  // No window during the static export: the page is prerendered on the server, where there is no URL
+  // to read and the lesson's own seed is what gets baked in. The override happens on the client.
+  if (typeof window === 'undefined') return null;
+  const raw = new URLSearchParams(window.location.search).get('seed');
+  if (raw === null) return null;
+  if (!/^\d+$/.test(raw)) throw new Error(`?seed=${raw} is not a whole number`);
+  const low = BigInt(raw);
+  if (low > 0xffffffffffffn) throw new Error(`?seed=${raw} does not fit below the exercise id`);
+  return low;
+}
+
 export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
-  const exercise = exerciseFor(lesson);
+  const base = exerciseFor(lesson);
+  // The lesson's own numbers, with only the seed taken from the URL when one is given.
+  const exercise = useMemo(() => {
+    const low = seedOverride();
+    return low === null ? base : { ...base, seed: (BigInt(lesson) << 56n) | low };
+  }, [base, lesson]);
   const root = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -160,6 +183,12 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-aid-mark-mm=""
       data-zone=""
       data-zone-label=""
+      data-light=""
+      data-light-left-ms=""
+      data-clock-ms=""
+      data-car-x="0.000"
+      data-car-y="0.000"
+      data-heading="0.000"
       data-last-penalty=""
       data-last-penalty-points=""
       data-last-penalty-quote=""
@@ -269,8 +298,9 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   paintScene(d, s, run);
   d.entered = entered ? 'yes' : 'no';
   // Figure runs: everything the advice line reasons about, so a test (and the Supervisor) reads the
-  // same numbers the page used.
-  if (exercise.lesson === 4 || exercise.lesson === 6) {
+  // same numbers the page used. Bài 5 is drawn on a route too, and the core fills the same fields for
+  // it, so it publishes them under the same names — a steering script has one shape to read.
+  if (exercise.lesson === 4 || exercise.lesson === 5 || exercise.lesson === 6) {
     d.progress = s.progressM.toFixed(3);
     d.courseLen = s.courseLengthM.toFixed(3);
     d.lateral = s.lateralM.toFixed(3);
@@ -322,6 +352,18 @@ function paintAid(d: DOMStringMap, aid: ReturnType<Exercise['stop']>) {
 function paintScene(d: DOMStringMap, s: SimState, run: Run) {
   d.zone = s.route === 0 ? '' : zoneName(s.zone);
   d.zoneLabel = d.zone === '' ? '' : ZONE_TEXT[zoneName(s.zone)];
+  // Bài 5's light and clock. Dark (`none`) and zero are the core's own "not yet" values, so they
+  // publish as empty rather than as a colour or a time a script would mistake for a reading.
+  const lit = lightName(s.lightColour);
+  d.light = lit === 'none' ? '' : lit;
+  d.lightLeftMs = s.lightColour === 0 ? '' : String(Math.round(s.lightLeftMs));
+  d.clockMs = s.clockMs === 0 ? '' : String(Math.round(s.clockMs));
+  // The car's pose in the course's own frame. The figure pages reason about this from progress and
+  // lateral; bài 5 has no figure block in the snapshot, so the pose is what the scene and a steering
+  // script work from. Metres and radians, exactly as `sim_state` reports them.
+  d.carX = s.carX.toFixed(3);
+  d.carY = s.carY.toFixed(3);
+  d.heading = s.heading.toFixed(3);
   const last = run.penalties.at(-1);
   if (!last) {
     d.lastPenalty = '';

@@ -376,6 +376,15 @@ body {
   font-size: 13px;
 }
 
+/* Bài 5's note on the two readings of A: small print under the advice, not a second instruction. */
+.hud-hill .aid-note {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--muted, #9aa0a6);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* Overlays ------------------------------------------------------------- */
 
 .overlay {

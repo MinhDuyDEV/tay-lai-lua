@@ -94,6 +94,40 @@ export const railM = (road: Road): number => stopLineM(road) + road.rail_offset_
 /** Bài 11's finish line. */
 export const finishM = (road: Road): number => stopLineM(road) + road.finish_offset_m;
 
+/**
+ * Bài 5's signalled junction (`content/rulesets/tt108-2026.json`'s `junction` block). The route
+ * itself is built by the core's `course.rs` from these numbers, so the page draws the figure the
+ * scorer judges; the page only needs the line, the light cycle and the two readings of A.
+ */
+export interface Junction {
+  approach_length_m: number;
+  stop_zone_length_m: number;
+  /** The A this page is built to, 500 mm — the value of the two the law gives. */
+  max_a_m: number;
+  /** The law's other reading of A, 1000 mm, and the note explaining which the page chose and why. */
+  max_a_source: RuleSource;
+  a_reading_note: string;
+  /** How far past the line the exercise is over. */
+  end_past_line_m: number;
+  no_stop_beyond_m: number;
+  crosswalk_offset_m: number;
+  crosswalk_width_m: number;
+  junction_depth_m: number;
+  extent_m: number;
+  /** Red, then green, then yellow, in 1/60 s ticks, from the car's first movement. */
+  red_ticks: number;
+  green_ticks: number;
+  yellow_ticks: number;
+  light_source: RuleSource;
+}
+
+/** The stop line's place along bài 5's approach axis: the car starts `approach_length_m` short of it. */
+export const junctionStopLineM = (junction: Junction): number => junction.approach_length_m;
+
+/** The tick at which the light's colour changes next, from `elapsed` ticks into the cycle. */
+export const junctionCycleTicks = (junction: Junction): number =>
+  junction.red_ticks + junction.green_ticks + junction.yellow_ticks;
+
 /** Bài 4 and bài 6's figure numbers (`content/rulesets/tt108-2026.json`'s `sa_hinh` block). */
 export interface SaHinh {
   line_width_m: number;
@@ -158,6 +192,8 @@ export interface Ruleset {
   sa_hinh?: SaHinh;
   /** Bài 2, 9 and 11's straight-road scene. */
   road?: Road;
+  /** Bài 5's signalled junction. */
+  junction?: Junction;
   steer: SteerFeel;
   rules: Rule[];
 }
@@ -197,6 +233,16 @@ export function creepSpeedMps(ruleset: Ruleset): number {
 export function roadOf(ruleset: Ruleset): Road {
   if (!ruleset.road) throw new Error(`${ruleset.id} has no "road" block: bài 2, 9 and 11 need it`);
   return ruleset.road;
+}
+
+/**
+ * Bài 5's junction numbers, or a clear error: the page was built against a ruleset with no junction.
+ * The light cycle, the stop line and the A window all come from here, so a page given the wrong
+ * ruleset says so instead of counting down to a line the scorer does not have.
+ */
+export function junctionOf(ruleset: Ruleset): Junction {
+  if (!ruleset.junction) throw new Error(`${ruleset.id} has no "junction" block: bài 5 needs it`);
+  return ruleset.junction;
 }
 
 /** Bài 3's numbers, or a clear error: the page was built against a ruleset that has no slope. */

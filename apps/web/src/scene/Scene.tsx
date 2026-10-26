@@ -272,7 +272,7 @@ function HillCourse({ ruleset }: { ruleset: Ruleset }) {
  * No dimension is re-derived here: the stripes' positions and widths are the core's, which is what
  * makes the crosswalk in the picture exactly the crosswalk the exercise is named for.
  */
-function RoadCourse({ run }: { run: Run }) {
+function RoadCourse({ run, live }: { run: Run; live?: boolean }) {
   const drawing = useMemo(() => {
     const marks: { kind: number; id: number; a: readonly [number, number]; b: readonly [number, number]; width: number }[] = [];
     const lines: { kind: number; points: readonly (readonly [number, number])[] }[] = [];
@@ -327,17 +327,30 @@ function RoadCourse({ run }: { run: Run }) {
           y={mark.id === 4 ? Y + 0.04 : Y}
         />
       ))}
-      {drawing.signal ? <SignalHead at={drawing.signal} /> : null}
+      {drawing.signal ? <SignalHead at={drawing.signal} run={run} live={live} /> : null}
     </group>
   );
 }
 
 /**
- * The signal head of bài 2 and bài 9's figure: a post with a plate on it, at the position the core
- * gives. Neither exercise is signalled — the plate is the scene's own furniture, as the figure draws
- * it — so it carries no colour state.
+ * The signal head, at the position the core gives: a post with the three-lamp plate on it. Bài 2 and
+ * bài 9 are not signalled — the head is the scene's own furniture there — so its lamps stay dark and
+ * the exercise draws no state on it. Bài 5's light is the core's snapshot field 46, so the lamp that
+ * is lit is the lamp the scorer is judging; the colour is read every frame from the run, never from a
+ * clock of the picture's own.
  */
-function SignalHead({ at }: { at: readonly [number, number] }) {
+function SignalHead({ at, run, live }: { at: readonly [number, number]; run?: Run; live?: boolean }) {
+  const red = useRef<THREE.Mesh>(null);
+  const amber = useRef<THREE.Mesh>(null);
+  const green = useRef<THREE.Mesh>(null);
+  useFrame(() => {
+    if (!live) return;
+    const colour = run?.state.lightColour ?? 0;
+    // Dark until the car first moves (the core's own rule), then one lamp at a time.
+    setLamp(red.current, colour === 1 ? '#ff3b30' : '#3a1a18');
+    setLamp(amber.current, colour === 2 ? '#ffcc00' : '#3a3018');
+    setLamp(green.current, colour === 3 ? '#34c759' : '#173a1e');
+  });
   return (
     <group position={[at[0], 0, -at[1]]}>
       <mesh position={[0, 1.1, 0]}>
@@ -348,8 +361,32 @@ function SignalHead({ at }: { at: readonly [number, number] }) {
         <boxGeometry args={[0.3, 0.8, 0.16]} />
         <meshStandardMaterial color="#2b2f35" />
       </mesh>
+      {/* Red at the top, as the road's own heads are built. */}
+      <mesh ref={red} position={[0, 2.5, 0.09]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshStandardMaterial color="#3a1a18" />
+      </mesh>
+      <mesh ref={amber} position={[0, 2.25, 0.09]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshStandardMaterial color="#3a3018" />
+      </mesh>
+      <mesh ref={green} position={[0, 2.0, 0.09]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshStandardMaterial color="#173a1e" />
+      </mesh>
     </group>
   );
+}
+
+/** One lamp of the signal head, lit or dark. The colour is the only thing that changes. */
+function setLamp(mesh: THREE.Mesh | null, colour: string) {
+  if (!mesh || mesh.userData.colour === colour) return;
+  mesh.userData.colour = colour;
+  const material = mesh.material as THREE.MeshStandardMaterial;
+  material.color.set(colour);
+  // A lit lamp glows; a dark one is just a shade of the plate.
+  material.emissive.set(colour);
+  material.emissiveIntensity = colour === '#3a1a18' || colour === '#3a3018' || colour === '#173a1e' ? 0 : 0.8;
 }
 
 function FigureCourse({ run }: { run: Run }) {
@@ -599,8 +636,8 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
         <HillCourse ruleset={ruleset} />
       ) : exercise.lesson === 4 || exercise.lesson === 6 ? (
         <FigureCourse run={run} />
-      ) : exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11 ? (
-        <RoadCourse run={run} />
+      ) : exercise.lesson === 2 || exercise.lesson === 5 || exercise.lesson === 9 || exercise.lesson === 11 ? (
+        <RoadCourse run={run} live={exercise.lesson === 5} />
       ) : (
         <Course ruleset={ruleset} />
       )}

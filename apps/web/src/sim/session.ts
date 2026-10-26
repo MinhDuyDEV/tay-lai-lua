@@ -4,6 +4,7 @@
 import { STATE_LEN, readState, type SimState } from './contract.ts';
 export type { SimState };
 export { zoneName, ZONE_NAMES, type ZoneName, type ZoneCode } from './contract.ts';
+export { lightName, LIGHT_NAMES, type LightName, type LightColour } from './contract.ts';
 
 /** One drained scoring event, as the core packs it: `[0..4] tick | [4..6] code | [6..8] points`. */
 export interface SimEvent {

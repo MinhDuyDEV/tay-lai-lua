@@ -4,7 +4,8 @@
 // One list per exercise; `exercise.ts` picks which one a page uses.
 
 import { DT } from '../input/driver.ts';
-import { coastDecel, hillOf, roadOf, type Ruleset } from './ruleset.ts';
+import { coastDecel, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
+import type { FigureCue } from './figures.ts';
 import type { SimState } from './sim/session.ts';
 
 export type StepId =
@@ -24,7 +25,7 @@ export type StepId =
   | 'entry'
   | 'vet'
   | 'finish'
-  // bài 2 / bài 9 / bài 11
+  // bài 2 / bài 9 / bài 11 / bài 5
   | 'approach'
   | 'yield'
   | 'through'
@@ -297,4 +298,108 @@ export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11
   }
   const what = lesson === 2 ? 'người đi bộ' : 'đường sắt';
   return `Dừng đúng vạch. Qua vạch rồi chạy tiếp, chú ý ${what}.`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bài 5: a signalled junction, right turn only. The manoeuvre is an order, and the order is what the
+// advice line teaches: brake for the line while the light is red or yellow, wait on green at the
+// line, signal right before the arc, hold the lane edge round it, then go through.
+//
+// Unlike bài 2 and bài 9, the stop here is not the exercise's: the light decides whether there is a
+// stop at all. A green light is not a stop, so the aid is silent then and the checklist's stop step
+// is filled by the light turning green rather than by the car standing still.
+
+/** Bài 5's checklist: the order above, one step per thing the learner does. */
+export const JUNCTION_STEPS: readonly Step[] = [
+  { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
+  { id: 'free', label: 'Nhả phanh tay, chạy tới vạch', key: 'P' },
+  { id: 'stop', label: 'Đèn đỏ/vàng: dừng trong A trước vạch', key: '↓' },
+  { id: 'signal', label: 'Đèn xanh, bật xi nhan phải trước khi rẽ', key: 'W' },
+  { id: 'through', label: 'Rẽ phải trong làn, qua vạch kết thúc ngã tư', key: '→' },
+];
+
+/** Green, from snapshot field 46. */
+const GREEN = 3;
+const YELLOW = 2;
+const RED = 1;
+
+/**
+ * Mark bài 5's steps. The stop step is the light's, not the car's: it is done when the light asked
+ * for a stop and the car made one inside A. A learner who meets a green light has nothing to stop
+ * for, so the step is marked by carrying on through the line instead — the exercise is the junction,
+ * not a stop at it.
+ */
+export function markJunction(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+  const junction = junctionOf(ruleset);
+  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (done.has('gear') && !state.handbrake) done.add('free');
+  const askedToStop = state.lightColour === RED || state.lightColour === YELLOW;
+  if (askedToStop && state.sinceStopTicks >= 0 && state.stopGapAM >= 0 && state.stopGapAM <= junction.max_a_m) {
+    done.add('stop');
+  }
+  // A green light: the stop step is not this learner's to do.
+  if (state.lightColour === GREEN && state.frontBumperM > 0) done.add('stop');
+  if (state.signal === 'right' && state.frontBumperM > 0) done.add('signal');
+  if (state.phase === 'done') done.add('through');
+}
+
+/**
+ * Bài 5's advice: the order, one sentence at a time, from the state the scorer reads. The light is
+ * the core's own field, so the line cannot say "green" on a tick the scorer calls red.
+ */
+export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | null): string {
+  const junction = junctionOf(ruleset);
+  const mm = (m: number) => `${Math.round(m * 1000)} mm`;
+  const kmh = (v: number) => (v * 3.6).toFixed(1);
+  if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
+  if (s.phase === 'done') return 'Hết bài. Bấm Esc để làm lại.';
+  if (!s.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (s.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  if (s.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, rồi chạy tới vạch dừng.';
+
+  // Still short of the line: the light decides whether to stop or to go on.
+  if (s.lineGapM > 0) {
+    if (s.lightColour === GREEN) return 'Đèn xanh: cứ qua vạch, nhưng bật xi nhan phải (W) trước khi vào cua.';
+    if (s.lightColour === RED || s.lightColour === YELLOW) {
+      const colour = s.lightColour === RED ? 'Đèn đỏ' : 'Đèn vàng';
+      if (s.speedMps > 3.4) return `${colour}: nhả ga cho xe chậm lại, phanh khi thanh đếm ngược báo.`;
+      return `${colour}: dừng trong A (không quá ${mm(junction.max_a_m)}), chờ đèn xanh.`;
+    }
+    return 'Chạy tới vạch dừng, xem đèn trước khi quyết định dừng hay đi.';
+  }
+
+  // At a stop inside A: the order says wait for green, then signal, then turn.
+  if (s.sinceStopTicks >= 0 && s.speedMps < 0.3) {
+    const a = s.stopGapAM;
+    if (a < 0 || a > junction.max_a_m) {
+      return a < 0
+        ? `Đã dừng quá vạch ${mm(-a)}. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`
+        : `Đã dừng khi còn ${mm(a)} tới vạch, quá xa. Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`;
+    }
+    if (s.lightColour !== GREEN) return `Dừng đúng vạch (A ${mm(a)}). Chờ đèn xanh rồi mới đi.`;
+    if (s.signal !== 'right') return 'Đèn xanh rồi: bật xi nhan phải (W) trước khi vào cua.';
+    return 'Đã dừng, đèn xanh, xi nhan phải: nhả phanh cho xe đi, rồi đánh lái sang phải.';
+  }
+
+  // Past the line: the turn. The cue is the same one the figures use.
+  if (s.signal !== 'right') return 'Bật xi nhan phải (W) ngay, trước khi vào cua.';
+  // The 20 s clock runs from the green and a junction is crossed at a real pace: at the idle creep
+  // the route alone takes ~25 s, so "để xe tự bò" — the right advice for the figures — is the wrong
+  // advice here. The number is the core's own clock, so this says "go faster" exactly when it does.
+  const left20 = 20 - s.clockMs / 1000;
+  if (s.clockMs > 0 && left20 > 0 && left20 < 12 && s.speedMps < 3.6) {
+    return `Chỉ còn ${Math.ceil(left20)} giây để qua ngã tư: giữ ga ↑ cho xe nhanh lên, đừng bò.`;
+  }
+  // The lane edges are what SAI_VACH_KE is charged on, so the warning is the wheels' own contacts
+  // (snapshot 27..30), not the car's centre: the outer front corner reaches the edge while the centre
+  // is still ~0.5 m inside the lane, so a centre-based warning would come too late to act on.
+  if (s.contact.some((c) => c === 2)) return 'Đã chạm bó vỉa — đình chỉ. Bấm Esc để làm lại.';
+  if (s.contact.some((c) => c === 1)) {
+    const wheel = ['trước trái', 'trước phải', 'sau trái', 'sau phải'][s.contact.findIndex((c) => c === 1)];
+    return `Bánh ${wheel} chạm vạch làn: trả lái ngay (thả phím ← →) cho xe về giữa làn.`;
+  }
+  if (cue === 'right') return 'Đánh lái → sang phải và giữ, rẽ phải trong làn.';
+  if (cue === 'left') return 'Trả lái ← lại cho thẳng sau khi qua cua.';
+  if (s.speedMps > 5) return `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): nhả ga cho xe chậm lại.`;
+  return 'Giữ lái cho thẳng, đi hết làn ra khỏi ngã tư.';
 }

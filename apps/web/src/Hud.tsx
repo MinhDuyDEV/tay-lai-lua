@@ -7,11 +7,11 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { legendFor } from '../input/driver.ts';
 import type { Exercise, Lesson } from './exercise.ts';
 import type { Ruleset } from './ruleset.ts';
-import { hillOf, roadOf, sourceLabel } from './ruleset.ts';
+import { hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
-import { zoneName, type SimState, type ZoneName } from './sim/session.ts';
+import { lightName, zoneName, type LightName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
 export interface HudProps {
@@ -65,6 +65,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const bai3 = exercise.lesson === 3;
   /** Bài 2, 9 and 11: one straight road, a stop line, and one thing past it. */
   const road = exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11;
+  /** Bài 5: the signalled junction. It shares the road card, and adds the light and the 20/30 s clock. */
+  const junction = exercise.lesson === 5;
   const figure = exercise.lesson === 4 || exercise.lesson === 6;
   const figureEl = useRef<HTMLElement>(null);
 
@@ -148,8 +150,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         <p className="hint" ref={hint} />
       </section>
 
-      {bai3 || road ? (
-        <section className="hud-hill" aria-label={bai3 ? 'Dốc' : 'Vạch dừng'} ref={hillEl}>
+      {bai3 || road || junction ? (
+        <section className="hud-hill" aria-label={bai3 ? 'Dốc' : junction ? 'Ngã tư' : 'Vạch dừng'} ref={hillEl}>
           <div className="cell" data-cell="a">
             <span className="name" data-part="label">
               Còn tới vạch
@@ -168,8 +170,17 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
               <small data-part="limit" />
             </div>
           ) : null}
+          {junction ? (
+            <div className="cell" data-cell="light">
+              <span className="name">Đèn</span>
+              <strong>
+                <span data-part="value">—</span>
+              </strong>
+              <small data-part="limit" />
+            </div>
+          ) : null}
           <div className="cell" data-cell="clock">
-            <span className="name">{road ? 'Vùng' : 'Thời gian'}</span>
+            <span className="name">{junction ? '20 / 30 giây' : road ? 'Vùng' : 'Thời gian'}</span>
             <strong>
               <span data-part="value">—</span>
             </strong>
@@ -188,6 +199,16 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             </div>
           ) : null}
           <p className="advice" ref={advice} />
+          {junction ? (
+            <>
+              <p className="aid-note" data-note="a-reading">
+                {junctionOf(ruleset).a_reading_note}
+              </p>
+              <p className="aid-note" data-note="a-source">
+                {sourceLabel(junctionOf(ruleset).max_a_source)}
+              </p>
+            </>
+          ) : null}
         </section>
       ) : null}
 
@@ -378,8 +399,11 @@ interface HillCell {
   limit: HTMLElement;
 }
 
-/** The three cells of the slope card, looked up once so the 60 Hz paint touches no selector. */
-function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell> & { hasRollback: boolean } {
+/** The cells of the stop card, looked up once so the 60 Hz paint touches no selector. */
+function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock' | 'light', HillCell> & {
+  hasRollback: boolean;
+  hasLight: boolean;
+} {
   const cell = (name: string): HillCell => {
     const c = el.querySelector<HTMLElement>(`[data-cell="${name}"]`)!;
     return {
@@ -390,7 +414,15 @@ function hillParts(el: HTMLElement): Record<'a' | 'rollback' | 'clock', HillCell
     };
   };
   const hasRollback = el.querySelector('[data-cell="rollback"]') !== null;
-  return { a: cell('a'), rollback: hasRollback ? cell('rollback') : (null as unknown as HillCell), clock: cell('clock'), hasRollback };
+  const hasLight = el.querySelector('[data-cell="light"]') !== null;
+  return {
+    a: cell('a'),
+    rollback: hasRollback ? cell('rollback') : (null as unknown as HillCell),
+    clock: cell('clock'),
+    light: hasLight ? cell('light') : (null as unknown as HillCell),
+    hasRollback,
+    hasLight,
+  };
 }
 
 /**
@@ -416,8 +448,18 @@ function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ru
     r.cell.dataset.state = s.rollbackM > maxRollback ? 'bad' : s.rollbackM > 0 ? 'warn' : 'neutral';
   }
 
+  if (parts.hasLight) paintLight(parts.light, s);
+
   const t = parts.clock;
-  if (lesson === 3) {
+  if (lesson === 5) {
+    // The 20 s and 30 s clocks run from the light turning green and stop when the bumper clears the
+    // junction; both are the core's own field 48, so the number here is the number it charges on.
+    const seconds = s.clockMs / 1000;
+    t.value.textContent = s.clockMs === 0 ? '—' : `${seconds.toFixed(1)} s`;
+    const over20 = seconds > 20;
+    t.limit.textContent = s.clockMs === 0 ? 'tính từ lúc đèn xanh' : over20 ? 'đã quá 20 giây' : 'còn tới 20 giây';
+    t.cell.dataset.state = s.clockMs === 0 ? 'neutral' : seconds > 30 ? 'bad' : over20 ? 'warn' : 'ok';
+  } else if (lesson === 3) {
     const left = secondsLeft(s, ruleset);
     t.value.textContent = left === null ? '—' : `${Math.ceil(left)} s`;
     t.limit.textContent = left === null ? 'tính từ lúc dừng xe' : 'để qua vạch';
@@ -431,6 +473,25 @@ function paintHill(parts: ReturnType<typeof hillParts>, s: SimState, ruleset: Ru
     t.cell.dataset.state = s.zone === 3 || s.zone === 5 ? 'ok' : s.zone === 4 || s.zone === 2 ? 'warn' : 'neutral';
   }
 }
+
+/**
+ * The signal head's state, in words and in colour. The name is the core's own field 46; the lamp is
+ * dark until the car first moves, which is the core's rule and so the page's too.
+ */
+function paintLight(cell: HillCell, s: SimState) {
+  const name = lightName(s.lightColour);
+  cell.value.textContent = LIGHT_LABEL[name];
+  cell.limit.textContent = s.lightColour === 0 ? 'chưa bật' : `${Math.ceil(s.lightLeftMs / 1000)} s nữa`;
+  cell.cell.dataset.state = name === 'green' ? 'ok' : name === 'red' ? 'bad' : name === 'yellow' ? 'warn' : 'neutral';
+}
+
+/** The lamps, as a learner reads them. */
+const LIGHT_LABEL: Record<LightName, string> = {
+  none: '—',
+  red: 'Đỏ',
+  yellow: 'Vàng',
+  green: 'Xanh',
+};
 
 /**
  * The zone names and what each one means for the learner, in the order of snapshot field 49. The

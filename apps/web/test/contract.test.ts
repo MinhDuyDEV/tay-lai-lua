@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { STATE_LEN, readState, routeName, zoneName, ZONE_NAMES, ROUTE_NAMES } from '../src/sim/contract.ts';
+import { LIGHT_NAMES, STATE_LEN, lightName, readState, routeName, zoneName, ZONE_NAMES, ROUTE_NAMES } from '../src/sim/contract.ts';
 
 const wasm = new WebAssembly.Instance(
   new WebAssembly.Module(readFileSync(new URL('../../../build/sim.wasm', import.meta.url))),
@@ -45,6 +45,31 @@ test('the road lessons publish a zone and a route the page can name', () => {
     assert.equal(zoneName(s.zone), 'stop-zone', `bài ${lesson} starts in the stop zone, not ${zoneName(s.zone)}`);
     assert.ok(Math.abs(s.lineGapM - 2) < 1e-9, `bài ${lesson} line gap ${s.lineGapM}`);
   }
+});
+
+test("bài 5 publishes its light and its 20/30 s clock through the same field list", () => {
+  // The junction page draws a lamp and counts a clock from fields 46 and 48. A renumbering would light
+  // the wrong lamp, so they are read through LIGHT_NAMES and named here.
+  const handle = x.sim_create(5n << 56n | 900n);
+  const ptr = x.sim_alloc(64 * 8);
+  const n = x.sim_state(handle, ptr, 64);
+  const start = readState(new Float64Array(x.memory.buffer, ptr, 64), n);
+  // The light is dark until the car first moves: not "red", not a colour a learner could act on.
+  assert.equal(lightName(start.lightColour), 'none', 'bài 5 starts with a dark light');
+  assert.equal(start.clockMs, 0, 'the 20/30 s clock has not started');
+  assert.equal(routeName(start.route), 'junction');
+});
+
+test('a light outside LIGHT_NAMES is a contract drift, not a colour to guess at', () => {
+  const handle = x.sim_create(1n);
+  const ptr = x.sim_alloc(64 * 8);
+  const n = x.sim_state(handle, ptr, 64);
+  const block = new Float64Array(x.memory.buffer, ptr, 64);
+  const lightAt = 46;
+  const saved = block[lightAt];
+  block[lightAt] = LIGHT_NAMES.length;
+  assert.throws(() => readState(block, n), /light/);
+  block[lightAt] = saved;
 });
 
 test('a zone or route outside the lists is a contract drift, not a value to guess at', () => {
