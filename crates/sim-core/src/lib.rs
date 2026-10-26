@@ -281,8 +281,14 @@ impl Session {
         let _ = self.prng.next();
     }
 
-    /// The smallest clearance from any wheel patch to any limit line, with the car placed at `pose`
-    /// on the ideal line. The figure's own feasibility measure.
+    /// The smallest clearance from any wheel patch to any painted **limit line**, with the car placed
+    /// at `pose` on the ideal line. The figure's own feasibility measure.
+    ///
+    /// This ignores the curb bands: a curb is a different kind of line (`kind 2`) and one that is
+    /// offset outside the limit line, so a wheel up on the verge usually still clears the paint. That
+    /// makes this the right measure for "is the line legal" and the wrong one for "will the learner
+    /// scrape the verge" — a verge scrape is a suspension, so a caller that needs the full picture
+    /// must use [`Session::debug_course_contacts`] instead, which reports curbs too.
     #[doc(hidden)]
     pub fn ideal_pose_clearance(&self, centre: (f64, f64), heading: f64) -> f64 {
         let Some(course) = &self.state.course else { return f64::INFINITY };
