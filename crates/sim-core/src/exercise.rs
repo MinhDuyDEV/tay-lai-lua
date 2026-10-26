@@ -54,12 +54,22 @@ pub enum Exercise {
     Rail,
     /// Bài 11 — Kết thúc.
     Finish,
+    /// Bài 7 — Ghép xe dọc vào nơi đỗ.
+    GhepDoc,
+    /// Bài 8 — Ghép xe ngang vào nơi đỗ.
+    GhepNgang,
 }
 
 impl Exercise {
     /// The two exercises that are scored against a generated figure.
     pub fn is_sa_hinh(self) -> bool {
         matches!(self, Exercise::Vet | Exercise::Curve)
+    }
+
+    /// Bài 7 and bài 8: the two bay exercises. They share a figure shape (one flat area, one
+    /// rectangular bay off it) and one scoring loop, and differ only in how the bay is placed.
+    pub fn is_park(self) -> bool {
+        matches!(self, Exercise::GhepDoc | Exercise::GhepNgang)
     }
 
     /// The exercises that run on the straight road scene of `course::road`.
@@ -212,6 +222,17 @@ pub struct State {
     /// Bài 5: the front bumper's position on the previous tick, so "the bumper entered the
     /// junction" is an edge and not a level.
     pub prev_bumper_m: f64,
+    /// Bài 7 and bài 8: the finish signal's own state — whether the hull is inside the bay on this
+    /// tick, how many consecutive still ticks it has been, and whether the signal has been given.
+    pub hull_inside: bool,
+    pub hold_ticks: u32,
+    pub signal_given: bool,
+    /// Bài 7 and bài 8: the end-of-exam flag on the previous tick, so the learner's press is an
+    /// edge. The web driver latches the flag high after the first press, which makes the first
+    /// press the only edge there is.
+    pub prev_order: bool,
+    /// Bài 7 and bài 8: how many QUA_THOI_GIAN charges the clock has produced.
+    park_clock_charges: u32,
     /// Bài 4 and bài 6: one contact episode per painted line, indexed like `course.lines`.
     episodes: Vec<Episode>,
     /// Bài 4 and bài 6: metres along the centreline of the furthest point reached, for the
@@ -267,8 +288,7 @@ impl State {
                 course = Some(built);
                 Phase::Launched
             }
-            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => {
-                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
+            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => {                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
                 // 1 — the same opening state as bài 3. It has a figure too (the lane, the stop
                 // line, the crosswalk or the rails or the finish line), so the page draws the
                 // same numbers the scoring reads.
@@ -299,9 +319,24 @@ impl State {
                 course = Some(built);
                 Phase::Launched
             }
+            Exercise::GhepDoc | Exercise::GhepNgang => {
+                // Bài 7 and bài 8 give no start order either: the engine idles, the handbrake is
+                // on, and scoring is live from tick 1, as in bài 3.
+                let figure = if exercise == Exercise::GhepDoc { Figure::GhepDoc } else { Figure::GhepNgang };
+                let built = Course::new(figure, rs).expect("the ruleset gives a drawable bay");
+                car.x_m = built.start_x_m;
+                car.y_m = built.start_y_m;
+                car.heading_rad = built.start_heading_rad;
+                car.engine_on = true;
+                car.rpm = rs.drivetrain.idle_target_rpm;
+                course = Some(built);
+                Phase::Launched
+            }
         };
         let episodes = match &course {
-            Some(course) if exercise.is_sa_hinh() => vec![Episode::default(); course.lines.len()],
+            Some(course) if exercise.is_sa_hinh() || exercise.is_park() => {
+                vec![Episode::default(); course.lines.len()]
+            }
             _ => Vec::new(),
         };
         // Bài 5: the cycle's phase offset is the seed proper, so the same trace always meets the
@@ -335,6 +370,11 @@ impl State {
             finished: false,
             no_stop_charged: false,
             prev_bumper_m: 0.0,
+            hull_inside: false,
+            hold_ticks: 0,
+            signal_given: false,
+            prev_order: false,
+            park_clock_charges: 0,
             episodes,
             furthest_m: 0.0,
             clock_s: 0.0,
@@ -377,6 +417,9 @@ impl State {
             Exercise::Start => self.step_start(rs, t, controls, signal, order, fired),
             Exercise::Hill => self.step_hill(rs, t, controls, signal, fired),
             Exercise::Vet | Exercise::Curve => self.step_sa_hinh(rs, t, controls, signal, fired),
+            Exercise::GhepDoc | Exercise::GhepNgang => {
+                self.step_park(rs, t, controls, signal, order, fired)
+            }
             Exercise::Crosswalk | Exercise::Rail => self.step_road_stop(rs, t, controls, signal, fired),
             Exercise::Junction => self.step_junction(rs, t, controls, signal, fired),
             Exercise::Finish => self.step_finish(rs, t, controls, signal, fired),
@@ -887,6 +930,160 @@ impl State {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bài 7 — Ghép xe dọc vào nơi đỗ and bài 8 — Ghép xe ngang vào nơi đỗ.
+//
+// Both run on a bay figure (`course::park_figure`) and share this one loop. Engine idling, neutral,
+// handbrake on, scored from tick 1 — the same opening state as bài 3, 4 and 6.
+//
+// The run the law describes is: drive into the control distance, reverse into the bay, stop with the
+// whole body inside it, and the yard's sensor gives the finish signal. In the simulation the sensor
+// is `signal_source`'s own reading — the hull inside the bay and the car still — and the signal
+// ends the run with nothing charged.
+//
+// What is charged, and why it is charged once:
+// * `SH.GHEP.SAI_HINH` (đình chỉ) — the car's centre leaves (area ∪ bay) by more than
+//   `outside_margin_m`. There is no "reversed too far" rule: reversing is the exercise.
+// * `SH.GHEP.DE_VACH` — one charge per *episode per line*, exactly as bài 4 and bài 6 count it, so
+//   a wheel dragged along a line is one mistake and a five-second scrape is charged again by
+//   `SH.GHEP.DE_VACH_KEO_DAI` rather than twice as DE_VACH.
+// * `SH.GHEP.DE_VACH_KEO_DAI` — the same episode at 5 s, 10 s, 15 s…, per line.
+// * `SH.GHEP.QUA_THOI_GIAN` — the clock runs from the tick the bumper crosses the entry gate, and
+//   charges at each whole 2 minutes.
+// * `VIA_HE` (đình chỉ) — the existing shared rule: a wheel's patch up on a curb band.
+// * `SH.GHEP.KHONG_TIN_HIEU_KET_THUC` and `SH.GHEP.CHUA_VAO_CHUONG` — decided once, by `park_end`.
+//
+// The end of the exam is ONE function (`park_end`), not an `if` at the call site: the finish signal,
+// the learner's own end key and the 240 s cap all call it, and a later lane (liên hoàn) that ends the
+// exercise by driving out of the bay will call it too.
+// ---------------------------------------------------------------------------------------------
+
+impl State {
+    fn step_park(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        order: bool,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        if self.disqualified {
+            return;
+        }
+        self.note_movement();
+
+        let Some(course) = self.course.take() else { return };
+        self.park_clock(rs, t, &course, fired);
+        if self.phase != Phase::Done {
+            self.park_sai_hinh(rs, &course, fired);
+        }
+        if !self.disqualified {
+            self.park_signal(rs, &course, fired);
+        }
+        if !self.disqualified && self.phase != Phase::Done {
+            self.contact_tick(rs, t, &course, fired);
+        }
+        // The end of the exam: the finish signal above, the learner's end key here, or the cap.
+        let end_edge = order && !self.prev_order;
+        self.prev_order = order;
+        if self.phase != Phase::Done && (end_edge || self.tick >= rs.park.exam_cap_ticks()) {
+            self.park_end(rs, &course, fired);
+        }
+        self.course = Some(course);
+    }
+
+    /// SAI_HINH: the centre of the car left the figure. The corridor is the bay area plus
+    /// `outside_margin_m`, measured as a distance so a rounding at the boundary cannot charge.
+    fn park_sai_hinh(&mut self, rs: &Ruleset, course: &Course, fired: &mut Vec<FiredRule>) {
+        let Some(park) = &course.park else { return };
+        if park.centre_outside_m(self.car.x_m, self.car.y_m) > rs.park.outside_margin_m {
+            self.charge(rs, "SH.GHEP.SAI_HINH", fired);
+        }
+    }
+
+    /// The finish signal: "kiểm tra hình bao của xe nằm trọn trong ô đỗ và xe đứng yên". The hull
+    /// inside the bay starts the hold; any still tick while inside keeps it; leaving the bay or
+    /// moving clears it. When the hold expires the signal is given and the run is over.
+    fn park_signal(&mut self, rs: &Ruleset, course: &Course, fired: &mut Vec<FiredRule>) {
+        let Some(park) = &course.park else { return };
+        let hull = course.hull_corners(rs, self.car.x_m, self.car.y_m, self.car.heading_rad);
+        self.hull_inside = park.hull_inside(&hull);
+        let still = self.car.speed_mps == 0.0;
+        if self.hull_inside && still {
+            self.hold_ticks = self.hold_ticks.saturating_add(1);
+        } else {
+            self.hold_ticks = 0;
+        }
+        if !self.signal_given && self.hold_ticks >= rs.park.signal_hold_ticks() {
+            self.signal_given = true;
+            // "Khi có tín hiệu báo kết thúc" the run is done: the bay is right and it has said so.
+            self.phase = Phase::Done;
+        }
+        let _ = fired;
+    }
+
+    /// The clock: the front bumper crossing the entry gate starts it; each whole 2 minutes charges
+    /// QUA_THOI_GIAN. Unlike bài 4/6 there is no exit gate — the run ends at the bay, not past it.
+    fn park_clock(&mut self, rs: &Ruleset, t: &Thresholds, course: &Course, fired: &mut Vec<FiredRule>) {
+        let Some(park) = &course.park else { return };
+        let v = &rs.vehicle;
+        let ahead = 0.5 * v.length_m;
+        // The bumper's signed distance along the approach. Bài 7 drives towards −x, so its approach
+        // distance grows negatively; the gate is crossed when the bumper reaches it either way.
+        let bumper_x = self.car.x_m + ahead * libm::cos(self.car.heading_rad);
+        let crossed = if park.approach_negative {
+            bumper_x <= park.gate_x
+        } else {
+            bumper_x >= park.gate_x
+        };
+        if !self.clock_running {
+            if crossed {
+                if self.phase == Phase::Launched {
+                    self.phase = Phase::PastLine;
+                }
+                self.clock_running = true;
+            }
+            return;
+        }
+        self.clock_s += DT;
+        let over = (self.clock_s / rs.park.time_limit_s) as u32;
+        if over > self.park_clock_charges {
+            self.park_clock_charges += 1;
+            self.charge_counted(rs, "SH.GHEP.QUA_THOI_GIAN", fired);
+        }
+        let _ = t;
+    }
+
+    /// **The one place the exam ends without a finish signal.** Any trigger may call it: the
+    /// learner's end key and the 240 s cap do today, and a later lane's "drove out of the bay" will.
+    ///
+    /// The verdict is the law's two exclusive cases: the whole body inside the bay and no signal is
+    /// `KHONG_TIN_HIEU_KET_THUC` (−5); any part of the body outside it is `CHUA_VAO_CHUONG`
+    /// (đình chỉ). It is read on the tick the exam ends, which is what "khi kết thúc bài sát hạch"
+    /// says.
+    pub(crate) fn park_end(&mut self, rs: &Ruleset, course: &Course, fired: &mut Vec<FiredRule>) {
+        if self.signal_given {
+            self.phase = Phase::Done;
+            return;
+        }
+        let hull = course.hull_corners(rs, self.car.x_m, self.car.y_m, self.car.heading_rad);
+        let inside = course.park.map(|p| p.hull_inside(&hull)).unwrap_or(false);
+        if inside {
+            self.charge(rs, "SH.GHEP.KHONG_TIN_HIEU_KET_THUC", fired);
+            self.phase = Phase::Done;
+        } else {
+            self.charge(rs, "SH.GHEP.CHUA_VAO_CHUONG", fired);
+        }
+    }
+}
+
 /// The ruleset id of a sa hình rule for whichever of bài 4 or bài 6 is running.
 fn sa_hinh_id(exercise: Exercise, name: &str) -> &'static str {
     match (exercise, name) {
@@ -984,6 +1181,17 @@ impl State {
     /// them together could miss a real difference.
     pub fn vet_wheels(&self) -> u8 {
         self.vet_reached
+    }
+
+    /// Bài 7 and bài 8: how many QUA_THOI_GIAN charges the clock has produced.
+    pub fn park_charges(&self) -> u32 {
+        self.park_clock_charges
+    }
+
+    /// Bài 7 and bài 8: 0. The vệt-strip bits are bài 4's own state and mean nothing here; the hash
+    /// picks them up so the park block is written the same way as the figure block beside it.
+    pub fn park_wheels(&self) -> u8 {
+        0
     }
 }
 

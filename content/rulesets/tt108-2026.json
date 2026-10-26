@@ -247,6 +247,83 @@
       "quote": "Bqc (m) là chiều rộng đường vòng quanh co: Bqc = 2,2b."
     }
   },
+  "park": {
+    "time_limit_s": 120.0,
+    "time_limit": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ",
+      "quote": "Hoàn thành bài sát hạch trong thời gian 02 phút."
+    },
+    "outside_margin_m": 1.0,
+    "signal_hold_s": 0.5,
+    "exam_cap_s": 240.0,
+    "faults": {
+      "Sai hinh": "Đi không đúng hình của hạng xe sát hạch, bị đình chỉ sát hạch.",
+      "Khong tin hieu": "Ghép xe không đúng vị trí quy định (toàn bộ thân xe nằm trong khu vực ghép xe nhưng không có tín hiệu báo kết thúc), trừ 05 điểm.",
+      "Chua vao chuong": "Chưa ghép được xe vào nơi đỗ (khi kết thúc bài sát hạch, còn một phần thân xe nằm ngoài khu vực ghép xe), bị đình chỉ sát hạch."
+    },
+    "steps": {
+      "doc": {
+        "value": "Lái xe tiến vào khoảng cách khống chế để lùi vào nơi ghép xe dọc (đối với xe hạng B, C1) hoặc khu vực để ghép xe ngang (đối với xe hạng B chuyển số tự động (bao gồm cả xe ô tô điện), B số cơ khí, C, D1, D2, D).",
+        "why": "Bước 1 của bài: tiến vào khoảng khống chế. Điều kiện bắt đầu tính giờ (xem `park_clock`) đổi nó thành mốc hình học."
+      },
+      "reverse": {
+        "value": "Lùi để ghép xe vào nơi đỗ.",
+        "why": "Bước 2: lùi. Đây là lý do xe lùi là yêu cầu của bài, không phải lỗi (xem `park_sai_hinh`)."
+      },
+      "stop": {
+        "value": "Dừng xe ở vị trí đỗ quy định.",
+        "why": "Bước 3, cùng với tín hiệu kết thúc."
+      }
+    },
+    "doc_figure": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.7 / tr.13 (Hình 13)",
+      "quote": "Ô đỗ vuông góc với làn, nằm dưới làn chính."
+    },
+    "doc_entry": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "Hình 13 — diễn giải",
+      "quote": "Diễn giải: xe vào từ bên phải, chạy qua ô đỗ vào phần cụt bên trái, rồi lùi vào ô."
+    },
+    "ngang_doc_figure": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "mục 2.1.15.8 / tr.14 (Hình 14)",
+      "quote": "Hình: ô đỗ lõm vào lề bên phải của đường. Phía trên ô đỗ có các vạch phân làn nét đứt (nhiều làn). Không ghi kích thước làn."
+    },
+    "formulas": {
+      "Ld": {
+        "doc": "QCVN 15:2026/BCA",
+        "loc": "mục 2.1.15.7 / tr.13",
+        "quote": "Ld (m) là chiều dài nơi ghép xe dọc: Ld = a + 1,0 (m)."
+      },
+      "Rd": {
+        "doc": "QCVN 15:2026/BCA",
+        "loc": "mục 2.1.15.7 / tr.13",
+        "quote": "Rd (m) là chiều rộng nơi ghép xe dọc: Rd = b + 0,6 (m)."
+      },
+      "Ed": {
+        "doc": "QCVN 15:2026/BCA",
+        "loc": "mục 2.1.15.7 / tr.13",
+        "quote": "Ed (m) là khoảng khống chế để lùi vào nơi ghép xe dọc: Ed = 1,2a."
+      },
+      "Lg": {
+        "doc": "QCVN 15:2026/BCA",
+        "loc": "mục 2.1.15.8 / tr.14",
+        "quote": "Lg (m) là chiều dài nơi đỗ xe: Lg = 3a/2."
+      },
+      "Rg": {
+        "doc": "QCVN 15:2026/BCA",
+        "loc": "mục 2.1.15.8 / tr.14",
+        "quote": "Rg (m) là chiều rộng nơi đỗ xe: Rg = 5b/4."
+      }
+    },
+    "signal_source": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — diễn giải tín hiệu báo kết thúc",
+      "quote": "Diễn giải: \"tín hiệu báo kết thúc\" là tín hiệu từ cảm biến của sân, phát ra khi xe đã nằm đúng vị trí đỗ. Trong mô phỏng, có thể làm tín hiệu này bằng cách kiểm tra hình bao của xe nằm trọn trong ô đỗ và xe đứng yên."
+    }
+  },
   "rules": [
     {
       "id": "SH.01.DAY_AN_TOAN",
@@ -863,6 +940,94 @@
         "loc": "Phụ lục III, Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông, bảng lỗi",
         "quote": "Lái xe vi phạm vạch kẻ đường để thiết bị báo không thực hiện đúng trình tự bài sát hạch, bị đình chỉ sát hạch."
       }
+    },
+    {
+      "id": "SH.GHEP.SAI_HINH",
+      "code": 39,
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Đi không đúng hình của hạng xe sát hạch, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.GHEP.DE_VACH",
+      "code": 40,
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, mỗi lần trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.GHEP.DE_VACH_KEO_DAI",
+      "code": 41,
+      "params": {
+        "seconds": 5.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Bánh xe đè vào vạch giới hạn hình sát hạch, cứ quá 05 giây trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.GHEP.KHONG_TIN_HIEU_KET_THUC",
+      "code": 42,
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Ghép xe không đúng vị trí quy định (toàn bộ thân xe nằm trong khu vực ghép xe nhưng không có tín hiệu báo kết thúc), trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.GHEP.CHUA_VAO_CHUONG",
+      "code": 43,
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Chưa ghép được xe vào nơi đỗ (khi kết thúc bài sát hạch, còn một phần thân xe nằm ngoài khu vực ghép xe), bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.GHEP.QUA_THOI_GIAN",
+      "code": 44,
+      "params": {
+        "seconds": 120.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
+        "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+      }
     }
   ],
   "assumptions": [
@@ -1169,6 +1334,66 @@
       "field": "latch_width",
       "value": "the per-rule latch is u64 inside the core. The hash of bài 1, 3, 4, 6 writes the same 32 bits it always wrote (the low half), and only the new exercises' own hash block covers the high half.",
       "why": "Mỗi dòng luật một bit: 23 dòng hôm nay, 38 sau khi thêm bài 2, 5, 9, 11, nên u32 không còn chỗ. Băm vẫn phải giữ nguyên 32 bit cũ cho các bài đã có hash vàng, nếu không hash của các bài cũ sẽ đổi vì một lý do không liên quan gì tới chúng."
+    },
+    {
+      "field": "park_lane_width",
+      "value": "bài 8's lane is `sa_hinh.lane_width_m` = 2,2b = 3,52 m",
+      "why": "Hình 14 không ghi kích thước làn: 'Hình: ô đỗ lõm vào lề bên phải của đường… Không ghi kích thước làn.' Lấy đúng chiều rộng làn mà bộ luật đã dùng cho hình bài 4 và bài 6 (Bv = Bqc = 2,2b) để hai bài ghép xe có cùng một làn, và ghi lại đây vì văn bản không quy định."
+    },
+    {
+      "field": "park_doc_layout",
+      "value": "bài 7: làn chính rộng Ed chạy theo +x; ô đỗ Ld × Rd vuông góc, nằm dưới làn, bên trái vạch vào ô; làn kéo dài Ed về bên trái ô đỗ và đóng kín bằng bó vỉa ở đầu trái; bên phải ô đỗ làn chạy tiếp ra lối vào; xe vào từ bên phải, chạy qua ô đỗ vào phần cụt rồi lùi vào ô",
+      "why": "Hình 13 chỉ cho ba công thức Ld = a + 1,0; Rd = b + 0,6; Ed = 1,2a và mô tả bằng lời: 'Làn chính có bề rộng = Ed'; 'Ô đỗ vuông góc với làn, nằm dưới làn chính'; 'Làn chính kéo dài Ed về bên trái ô đỗ, đầu bên trái bị bó vỉa đóng kín'; 'Diễn giải: xe vào từ bên phải, chạy qua ô đỗ vào phần cụt bên trái, rồi lùi vào ô.' Hình vẽ trong PDF không đọc được bằng số, nên các khoảng còn lại (bề dài làn bên phải, vị trí vạch xuất phát) là giả định của bản mô phỏng."
+    },
+    {
+      "field": "park_ngang_layout",
+      "value": "bài 8: đường chạy theo +x, rộng `park_lane_width`; ô đỗ Lg × Rg lõm vào lề bên phải, tức là ở phía -y, và không có làn nào bên dưới ô đỗ",
+      "why": "Hình 14 chỉ cho Lg = 3a/2, Rg = 5b/4 và một câu: 'Hình: ô đỗ lõm vào lề bên phải của đường… Không ghi kích thước làn.' Ô đỗ lõm vào lề nghĩa là phía sau nó là bó vỉa, không phải đường: đó là điều làm bài này khó hơn bài 7."
+    },
+    {
+      "field": "park_containment",
+      "value": "toàn bộ thân xe = bốn góc của hình chữ nhật a × b của xe; biên ô đỗ = tim các vạch kẻ; một bánh đè lên vạch vẫn là DE_VACH như mọi bài khác",
+      "why": "Văn bản nói 'toàn bộ thân xe nằm trong khu vực ghép xe' mà không nói đo thân xe hay biên ô từ đâu. Lấy thân xe là hình bao chữ nhật a × b (đúng chiều dài toàn bộ và chiều rộng toàn bộ mà QCVN 15 dùng để tính Ld, Rd, Lg, Rg), và biên ô là tim vạch, cùng quy ước với các hình bài 4 và bài 6."
+    },
+    {
+      "field": "park_signal",
+      "value": "tín hiệu báo kết thúc = thân xe nằm trọn trong ô đỗ VÀ xe đứng yên 0,5 s liên tục; khi có tín hiệu thì bài kết thúc (Done) và không bị KHONG_TIN_HIEU_KET_THUC",
+      "why": "Văn bản không nói cảm biến phát tín hiệu lúc nào. Bản diễn giải của chính văn bản cho phép: 'Trong mô phỏng, có thể làm tín hiệu này bằng cách kiểm tra hình bao của xe nằm trọn trong ô đỗ và xe đứng yên.' 0,5 s là GIẢ ĐỊNH CỦA CHÚNG TÔI, không phải số của văn bản: đủ dài để xe còn lăn qua ô không kích hoạt, đủ ngắn để không bắt người học chờ. Không test nào được chỉnh để qua vì con số này."
+    },
+    {
+      "field": "park_exam_end",
+      "value": "bài kết thúc khi: (a) có tín hiệu báo kết thúc — Done, không phạt; (b) người học bấm phím kết thúc (TickInput ORDER, sườn lên) — phán quyết một lần trong `park_end`; (c) đồng hồ chạm 2 × 120 s = 240 s — cũng qua `park_end`",
+      "why": "Văn bản không cho một sự kiện 'hết bài' nào khác ngoài tín hiệu kết thúc. Bản mô phỏng cần một đường thoát để một lượt lái sai vẫn có kết quả, nên định nghĩa hai đường: người học bấm kết thúc, hoặc trần thời gian. Cả hai đều đi qua CÙNG một hàm `park_end`, nên một lane sau (liên hoàn) kết thúc bài bằng cách lái ra khỏi ô cũng dùng đúng hàm đó."
+    },
+    {
+      "field": "park_end_verdict",
+      "value": "khi kết thúc bài: thân xe nằm trọn trong ô mà không có tín hiệu → KHONG_TIN_HIEU_KET_THUC (−5); còn một phần thân ngoài ô → CHUA_VAO_CHUONG (đình chỉ)",
+      "why": "Đúng hai câu của bảng lỗi: 'toàn bộ thân xe nằm trong khu vực ghép xe nhưng không có tín hiệu báo kết thúc' và 'còn một phần thân xe nằm ngoài khu vực ghép xe'. Hai điều kiện loại trừ nhau nên một lượt chỉ bị một trong hai."
+    },
+    {
+      "field": "park_time_cap",
+      "value": "QUA_THOI_GIAN tính mỗi 120 s đồng hồ bài; trần bài là 240 s, nên nhiều nhất một lần −5",
+      "why": "'Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm' không nói bài kéo dài bao lâu. Trần 240 s (gấp đôi thời gian cho phép) là giả định của bản mô phỏng: nó giữ đúng ý 'cứ quá 02 phút' mà vẫn cho lượt lái sai một kết thúc, và với trần đó người học mất nhiều nhất 05 điểm vì thời gian."
+    },
+    {
+      "field": "park_clock",
+      "value": "đồng hồ bài chạy từ bước thanh cản trước vượt vạch vào khoảng khống chế (bài 7) hoặc vạch bắt đầu khu vực ghép (bài 8), như bài 4 và bài 6",
+      "why": "Văn bản chỉ nói 'Hoàn thành bài sát hạch trong thời gian 02 phút', không nói 02 phút tính từ đâu. Bài 4 và bài 6 trong bộ luật này tính từ lúc thanh cản trước qua cổng vào; giữ một quy ước cho cả ba bài để người học không phải nhớ hai cách tính giờ."
+    },
+    {
+      "field": "park_sai_hinh",
+      "value": "SAI_HINH = tâm xe ra khỏi (làn ∪ ô đỗ) quá `outside_margin_m`; KHÔNG áp dụng luật 'lùi quá 1 m sau điểm xa nhất' của bài 4/6",
+      "why": "Bài này bắt buộc phải lùi ('Lùi để ghép xe vào nơi đỗ'), nên luật lùi của bài 4 và bài 6 sẽ phạt chính động tác mà bài yêu cầu. 'Đi không đúng hình của hạng xe sát hạch' được đọc là: tâm xe ra khỏi hình. `outside_margin_m` dùng lại đúng số của bài 4/6 để hai bài không lệch nhau về chỗ nào là 'ra khỏi hình'."
+    },
+    {
+      "field": "park_entry_gate",
+      "value": "bài 7: cổng vào là vạch ngang làn chính ở chỗ bắt đầu khoảng khống chế Ed bên phải ô đỗ, và cổng ra là cùng vạch đó; bài 8: cổng vào là vạch ngang đường ở chỗ ô đỗ bắt đầu",
+      "why": "Hình 13 và Hình 14 vẽ vạch nhưng không đặt tên cho cổng. Cổng vào là mốc mà `park_clock` cần, nên nó được đặt ở chỗ văn bản đặt khoảng khống chế / khu vực ghép: nơi bước 'tiến vào khoảng khống chế' kết thúc."
+    },
+    {
+      "field": "park_reverse_gear",
+      "value": "số lùi có tỉ số −3,5 (drivetrain.gears[\"-1\"]); nhả côn hoàn toàn ở số lùi cho tốc độ bò 1,74 m/s",
+      "why": "Văn bản không cho tỉ số số lùi. Đo trên mô hình: côn nhả hết, không ga, xe lùi 1,74 m/s ổn định. Giữ côn ở giữa không cho một dải chậm ổn định (1,74 → 1,67 → 1,52 → 1,02 khi phanh tăng, rồi chết máy ở phanh ≥ 40/255), nên muốn lùi chậm thì phải nhấp côn rồi phanh — trang web dạy đúng thao tác đó."
     }
   ]
 }

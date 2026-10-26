@@ -22,6 +22,8 @@ pub struct Ruleset {
     /// Bài 2, 5, 9 and 11: the straight-road scene and, for bài 5, the junction and its light.
     pub road: Road,
     pub junction: Junction,
+    /// Bài 7 and bài 8: the two bays, generated from the formulas and the car's own dimensions.
+    pub park: Park,
     pub rules: Vec<Rule>,
 }
 
@@ -159,6 +161,80 @@ pub struct SaHinh {
     pub outside_margin_m: f64,
     /// SAI_HINH: how far the car may reverse behind the furthest progress reached.
     pub reverse_limit_m: f64,
+}
+
+/// Bài 7 (ghép xe dọc, Hình 13) and bài 8 (ghép xe ngang, Hình 14). The bay sizes are the law's
+/// own formulas on the car's own `a` and `b`; the geometry is built in `course.rs` from these
+/// numbers, so the bay that is drawn and the bay that is scored are one bay.
+#[derive(Deserialize)]
+pub struct Park {
+    /// "Hoàn thành bài sát hạch trong thời gian 02 phút" — the clock QUA_THOI_GIAN counts on.
+    pub time_limit_s: f64,
+    /// SAI_HINH: how far the car centre may sit outside (lane ∪ bay).
+    pub outside_margin_m: f64,
+    /// How long the hull must stay inside the bay before the finish signal is given. Not the law's
+    /// number; see `assumptions.park_signal`.
+    pub signal_hold_s: f64,
+    /// The longest a run may last, so a wrong attempt still has an end. The simulator's own cap;
+    /// see `assumptions.park_time_cap`.
+    pub exam_cap_s: f64,
+    /// Hình 13's three dimensions and Hình 14's two, quoted where they are applied.
+    pub formulas: Formulas,
+}
+
+/// The five bay dimensions, each carrying the sentence it comes from. The arithmetic is
+/// `Park::doc_length_m` and its neighbours; this block is the verbatim quote, so a reader can check
+/// the code against the law without leaving the file they are in.
+#[derive(Deserialize)]
+pub struct Formulas {
+    #[serde(rename = "Ld")]
+    pub ld: Source,
+    #[serde(rename = "Rd")]
+    pub rd: Source,
+    #[serde(rename = "Ed")]
+    pub ed: Source,
+    #[serde(rename = "Lg")]
+    pub lg: Source,
+    #[serde(rename = "Rg")]
+    pub rg: Source,
+}
+
+impl Park {
+    /// Bài 7: `Ld = a + 1.0` — the bay's length, along the car when it is parked.
+    pub fn doc_length_m(&self, v: &Vehicle) -> f64 {
+        v.length_m + 1.0
+    }
+
+    /// Bài 7: `Rd = b + 0.6` — the bay's width, across the car when it is parked.
+    pub fn doc_width_m(&self, v: &Vehicle) -> f64 {
+        v.width_m + 0.6
+    }
+
+    /// Bài 7: `Ed = 1.2a` — the control distance, which is also the lane's width (Hình 13: "Làn
+    /// chính có bề rộng = Ed").
+    pub fn doc_lane_m(&self, v: &Vehicle) -> f64 {
+        1.2 * v.length_m
+    }
+
+    /// Bài 8: `Lg = 3a/2` — the bay's length along the road.
+    pub fn ngang_length_m(&self, v: &Vehicle) -> f64 {
+        1.5 * v.length_m
+    }
+
+    /// Bài 8: `Rg = 5b/4` — the bay's depth, recessed into the road's right edge.
+    pub fn ngang_width_m(&self, v: &Vehicle) -> f64 {
+        1.25 * v.width_m
+    }
+
+    /// How long the hull must be still for the finish signal: the hold, in ticks.
+    pub fn signal_hold_ticks(&self) -> u32 {
+        seconds_to_ticks(self.signal_hold_s)
+    }
+
+    /// The exam's hard cap, in ticks.
+    pub fn exam_cap_ticks(&self) -> u32 {
+        seconds_to_ticks(self.exam_cap_s)
+    }
 }
 
 #[derive(Deserialize)]
@@ -344,6 +420,10 @@ pub struct Thresholds {
     /// Bài 5: the 20 s and 30 s marks, counted from the light clock's arming.
     pub junction_20_ticks: u32,
     pub junction_30_ticks: u32,
+    /// Bài 7 and bài 8: the 2 × 120 s marks QUA_THOI_GIAN charges at, and the hold the finish
+    /// signal needs.
+    pub park_time_limit_ticks: u32,
+    pub park_signal_hold_ticks: u32,
 }
 
 impl SaHinh {
@@ -445,6 +525,8 @@ impl Ruleset {
             de_vach_keo_dai_ticks: seconds_to_ticks(self.rule("SH.04.DE_VACH_KEO_DAI").params.seconds),
             junction_20_ticks: seconds_to_ticks(self.rule("SH.05.QUA_20S").params.seconds),
             junction_30_ticks: seconds_to_ticks(self.rule("SH.05.QUA_30S").params.seconds),
+            park_time_limit_ticks: seconds_to_ticks(self.rule("SH.GHEP.QUA_THOI_GIAN").params.seconds),
+            park_signal_hold_ticks: self.park.signal_hold_ticks(),
         }
     }
 }

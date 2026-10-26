@@ -93,9 +93,9 @@ fn stop_wait_start(a: f64, wait_s: u32, limit_s: u32) -> Session {
 
 #[test]
 fn an_unknown_exercise_id_is_refused_not_run_as_bai_1() {
-    // 7 is ghép xe dọc, which this core does not have yet: refused, not run as bài 1.
-    assert!(Session::new(7 << 56 | 1).is_none());
-    assert!(crate::abi::sim_create(7 << 56 | 1).is_null());
+    // 10 is bài thay đổi số, which this core does not have: refused, not run as bài 1.
+    assert!(Session::new(10 << 56 | 1).is_none());
+    assert!(crate::abi::sim_create(10 << 56 | 1).is_null());
     assert!(Session::new(HILL | 1).is_some());
 }
 

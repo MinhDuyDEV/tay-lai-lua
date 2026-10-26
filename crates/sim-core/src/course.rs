@@ -46,6 +46,10 @@ pub enum Figure {
     Finish,
     /// Bài 5 — the right-turn route through the signalled junction.
     Junction,
+    /// Bài 7 — ghép xe dọc vào nơi đỗ (Hình 13).
+    GhepDoc,
+    /// Bài 8 — ghép xe ngang vào nơi đỗ (Hình 14).
+    GhepNgang,
 }
 
 /// A transverse marking: a painted band across the lane, or (for a crosswalk stripe) along it.
@@ -72,6 +76,8 @@ pub enum Gate {
     Exit = 2,
     VetStart = 3,
     VetEnd = 4,
+    /// Bài 7 and bài 8: the bay's open edge, where the car has to reverse through.
+    BayMouth = 5,
 }
 
 /// A gate, as the two ends of the line drawn across the lane.
@@ -156,9 +162,56 @@ pub struct Course {
     /// Bài 4: the vệt strip, as `(x0, x1)` of the figure frame and the lateral centre the two
     /// right wheels must hold between them. `None` in bài 6.
     pub vet: Option<VetStrip>,
+    /// Bài 7 and bài 8: the bay, the area it opens onto, and the gate the clock starts at. `None`
+    /// in every other exercise.
+    pub park: Option<ParkBay>,
     pub start_x_m: f64,
     pub start_y_m: f64,
     pub start_heading_rad: f64,
+}
+
+/// Bài 7 and bài 8 as geometry. Both figures are one flat area — the control area of Hình 13 or
+/// the road of Hình 14 — with a rectangular bay off it, so the rectangle pair is the whole
+/// description: containment, the finish signal and SAI_HINH read it, and the web draws it from the
+/// same numbers.
+///
+/// A rectangle is `(x0, y0, x1, y1)` with `x0 < x1` and `y0 < y1`, in metres in the snapshot's own
+/// frame. The bay's boundary is the *centre* of the painted lines round it, so a hull whose corner
+/// lands exactly on a line is inside the bay and its wheel is on the paint.
+#[derive(Clone, Copy, Debug)]
+pub struct ParkBay {
+    /// The area the car may drive on outside the bay: the control area of bài 7, the road of bài 8.
+    pub area: (f64, f64, f64, f64),
+    /// The bay itself. The hull has to be inside this for the finish signal.
+    pub bay: (f64, f64, f64, f64),
+    /// The gate across the driving axis, where the clock starts: `gate_x`.
+    pub gate_x: f64,
+    /// Bài 7 drives towards −x (the car enters from +x and passes the bay); bài 8 towards +x.
+    pub approach_negative: bool,
+}
+
+impl ParkBay {
+    /// How far the car centre is outside the drivable area (the area plus the bay), 0 when inside.
+    /// This is what SAI_HINH compares against `outside_margin_m`.
+    pub fn centre_outside_m(&self, x: f64, y: f64) -> f64 {
+        let d = rect_outside(&self.area, x, y).min(rect_outside(&self.bay, x, y));
+        d
+    }
+
+    /// Whether all four hull corners are inside the bay.
+    pub fn hull_inside(&self, corners: &[(f64, f64); 4]) -> bool {
+        corners.iter().all(|(x, y)| point_in_rect(&self.bay, *x, *y))
+    }
+}
+
+fn point_in_rect(r: &(f64, f64, f64, f64), x: f64, y: f64) -> bool {
+    x >= r.0 && x <= r.2 && y >= r.1 && y <= r.3
+}
+
+fn rect_outside(r: &(f64, f64, f64, f64), x: f64, y: f64) -> f64 {
+    let dx = (r.0 - x).max(x - r.2).max(0.0);
+    let dy = (r.1 - y).max(y - r.3).max(0.0);
+    sqrt(dx * dx + dy * dy)
 }
 
 /// Bài 4's vệt bánh xe: a straight strip, so it lives in the figure frame rather than in progress.
@@ -213,6 +266,7 @@ impl Course {
             Figure::Curve => curve_figure(rs),
             Figure::Crosswalk | Figure::Rail | Figure::Finish => road_figure(rs, figure),
             Figure::Junction => junction_figure(rs),
+            Figure::GhepDoc | Figure::GhepNgang => park_figure(figure, rs),
         }
     }
 
@@ -343,6 +397,12 @@ impl Course {
         }
         if let Some(p) = self.signal {
             push(7.0, 0.0, &[p]);
+        }
+        // Bài 7 and bài 8 only: the two rectangles the bay exercise is made of. Line 1 is the area
+        // the car may drive on, line 2 the bay, both closed quads (first corner repeated).
+        if let Some(p) = &self.park {
+            push(8.0, 1.0, &rect_quad(&p.area));
+            push(8.0, 2.0, &rect_quad(&p.bay));
         }
     }
 
@@ -574,6 +634,7 @@ fn course_from(rs: &Ruleset, figure: Figure, centre: Vec<(f64, f64)>, lines: Vec
         entry_m: extra.entry_m,
         exit_m: extra.exit_m,
         vet,
+        park: None,
         start_x_m: extra.x,
         start_y_m: extra.y,
         start_heading_rad: extra.heading,
@@ -749,6 +810,131 @@ fn vet_figure(rs: &Ruleset) -> Option<Course> {
 
 fn centre_length_of(centre: &[(f64, f64)]) -> f64 {
     segments_of(centre).1
+}
+
+/// A closed quad for the `kind 8` record: the four corners, first repeated.
+fn rect_quad(r: &(f64, f64, f64, f64)) -> Vec<(f64, f64)> {
+    vec![(r.0, r.1), (r.2, r.1), (r.2, r.3), (r.0, r.3), (r.0, r.1)]
+}
+
+/// Bài 7 (Hình 13) and bài 8 (Hình 14) — the two bay exercises.
+///
+/// Both are the same shape of figure — one flat area, one rectangular bay cut into its edge — so
+/// both are built here from the law's five formulas and the car's own `a` and `b`. Hình 13 gives
+/// `Ld = a + 1,0`, `Rd = b + 0,6`, `Ed = 1,2a`; Hình 14 gives `Lg = 3a/2`, `Rg = 5b/4`.
+///
+/// **Bài 7, dọc.** The control lane is `Ed` wide and runs along `−x` (the car enters from `+x` and
+/// drives towards the dead end, as "xe vào từ bên phải, chạy qua ô đỗ vào phần cụt bên trái" says).
+/// The bay is `Rd` along the lane by `Ld` away from it, perpendicular, below the lane. Along the
+/// lane, reading right to left: `Ed` of lane, the bay's `Rd`, then `Ed` of lane ending in the closed
+/// curbed end — "Làn chính kéo dài Ed về bên trái ô đỗ, đầu bên trái bị bó vỉa đóng kín".
+///
+/// **Bài 8, ngang.** A road `sa_hinh.lane_width_m` wide running along `+x` with the bay `Lg × Rg`
+/// recessed into its right edge (`−y`), the road edge kerbed either side of the bay. Nothing is
+/// behind the bay, which is what makes it the tighter of the two.
+///
+/// What is painted and what is kerbed is the figure: the bay's outline is a limit line on its three
+/// closed sides and open at its mouth; the area's own edges are limit lines, and where the figure
+/// ends in something a car must not mount (the closed end, the far side, the road's edge away from
+/// the bay) a curb band runs just outside them. A hull corner on a line's centre is inside the bay;
+/// a wheel on the paint is DE_VACH, which the shared contact model charges.
+fn park_figure(figure: Figure, rs: &Ruleset) -> Option<Course> {
+    let v = &rs.vehicle;
+    let p = &rs.park;
+    let sh = &rs.sa_hinh;
+    let half_line = 0.5 * sh.line_width_m;
+    let lead = sh.lead_m + 0.5 * v.length_m;
+    let pi = core::f64::consts::PI;
+
+    // The gate is x = 0: the line across the lane where the figure begins. The car is placed `lead`
+    // outside it, on the driving axis.
+    let (area, bay, mid_y, heading) = match figure {
+        Figure::GhepDoc => {
+            let lane = p.doc_lane_m(v);
+            let (ld, rd) = (p.doc_length_m(v), p.doc_width_m(v));
+            // Right to left: [open entry | Ed | bay Rd | Ed | closed end].
+            let bay = (-lane - rd, -ld, -lane, 0.0);
+            let area = (bay.0 - lane, 0.0, lead + 2.0 * lane, lane);
+            (area, bay, 0.5 * lane, pi)
+        }
+        _ => {
+            let lane = sh.lane_width_m(v);
+            let (lg, rg) = (p.ngang_length_m(v), p.ngang_width_m(v));
+            // A road with the bay cut out of its right-hand edge, well before the car's start so it
+            // has to be driven past and reversed back into.
+            let bay = (-lg - 2.0 * lane, -rg, -2.0 * lane, 0.0);
+            let area = (-6.0 * lane, 0.0, 6.0 * lane + lg, lane);
+            (area, bay, 0.5 * lane, 0.0)
+        }
+    };
+
+    // Every painted limit line, as one polyline each: the bay's three closed sides are ONE line (a
+    // wheel dragged round the bay is one episode), and each boundary edge of the area is its own.
+    let mut lines = vec![
+        // The bay: up one side, across the closed end, back up the other. No line at the mouth.
+        painted(1, half_line, vec![(bay.0, 0.0), (bay.0, bay.1), (bay.2, bay.1), (bay.2, 0.0)]),
+        // The far side of the lane, and the side that holds the bay's mouth in two pieces.
+        painted(1, half_line, vec![(area.0, area.3), (area.2, area.3)]),
+        painted(1, half_line, vec![(area.0, 0.0), (bay.0, 0.0)]),
+        painted(1, half_line, vec![(bay.2, 0.0), (area.2, 0.0)]),
+    ];
+    // The area ends: bài 7's closed left end is a line and a curb; bài 8's road runs on in both
+    // directions, so neither end is a limit — a car that leaves the drawn road is caught by SAI_HINH,
+    // which is measured on the rectangles rather than on the paint.
+    if figure == Figure::GhepDoc {
+        lines.push(painted(1, half_line, vec![(area.0, 0.0), (area.0, area.3)]));
+    }
+
+    // Curb bands, `line_curb_setback_m` outside the limit lines: the bay's three closed sides, the
+    // lane's far side, the lane's near side away from the bay, and bài 7's closed end.
+    let off = sh.line_curb_setback_m + 0.5 * CURB_WIDTH_M;
+    let curb_half = 0.5 * CURB_WIDTH_M;
+    let mut curbs = vec![
+        painted(2, curb_half, vec![(bay.0 - off, 0.0), (bay.0 - off, bay.1 - off), (bay.2 + off, bay.1 - off), (bay.2 + off, 0.0)]),
+        painted(2, curb_half, vec![(area.0, area.3 + off), (area.2, area.3 + off)]),
+        painted(2, curb_half, vec![(area.0, -off), (bay.0 - off, -off)]),
+        painted(2, curb_half, vec![(bay.2 + off, -off), (area.2, -off)]),
+    ];
+    if figure == Figure::GhepDoc {
+        // "đầu bên trái bị bó vỉa đóng kín": the dead end is a curb, which is what stops the car.
+        curbs.push(painted(2, curb_half, vec![(area.0 - off, -off), (area.0 - off, area.3 + off)]));
+    }
+    lines.extend(curbs);
+
+    let gates = vec![
+        gate_across((0.0, mid_y), if figure == Figure::GhepDoc { pi } else { 0.0 }, 0.5 * (area.3 - area.1) + 0.5, Gate::Entry),
+        // The bay's mouth, so the page can draw where the car has to reverse through and mark it.
+        GateLine { kind: Gate::BayMouth, a: (bay.0, 0.0), b: (bay.2, 0.0) },
+    ];
+    // The centreline is the driving axis along the middle of the lane: the car's guide, and what the
+    // page's path cue reads. SAI_HINH does not use it — the two rectangles are what the law
+    // describes — so it is free to be the simple line the learner actually drives.
+    let centre = if figure == Figure::GhepDoc {
+        vec![(lead, mid_y), (area.0, mid_y)]
+    } else {
+        vec![(-lead, mid_y), (area.2, mid_y)]
+    };
+    let total = centre_length_of(&centre);
+    let start = centre[0];
+    let mut built = course_from(
+        rs,
+        figure,
+        centre,
+        lines,
+        gates,
+        vec![(0.0, total)],
+        None,
+        StartPose {
+            x: start.0,
+            y: mid_y,
+            heading,
+            half_lane_m: 0.5 * (area.3 - area.1),
+            entry_m: 0.0,
+            exit_m: total,
+        },
+    );
+    built.park = Some(ParkBay { area, bay, gate_x: 0.0, approach_negative: figure == Figure::GhepDoc });
+    Some(built)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1073,6 +1259,22 @@ fn curve_figure(rs: &Ruleset) -> Option<Course> {
 
 
 impl Course {
+    /// The four corners of the car's hull — the rectangle `a × b` the law measures bay sizes from.
+    /// `wheel_centres` places the axles; this is the body, whose containment inside the bay is what
+    /// the finish signal is judged on.
+    pub fn hull_corners(&self, rs: &Ruleset, x: f64, y: f64, heading: f64) -> [(f64, f64); 4] {
+        let v = &rs.vehicle;
+        let (ha, hb) = (0.5 * v.length_m, 0.5 * v.width_m);
+        let c = cos(heading);
+        let s = sin(heading);
+        let local = [(-ha, -hb), (-ha, hb), (ha, hb), (ha, -hb)];
+        let mut out = [(0.0, 0.0); 4];
+        for (i, (lx, ly)) in local.into_iter().enumerate() {
+            out[i] = (x + lx * c - ly * s, y + lx * s + ly * c);
+        }
+        out
+    }
+
     /// Every line with its band half-width and the exact distance from a point's patch.
     pub fn debug_contacts(&self, rs: &Ruleset, centre: (f64, f64), heading: f64) -> Vec<(u8, f64, f64)> {
         let patch = self.patch(rs, centre, heading);

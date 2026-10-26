@@ -135,7 +135,7 @@ impl Prng {
 const EXERCISE_SHIFT: u32 = 56;
 
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 51;
+pub const SNAPSHOT_LEN: usize = 54;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -209,7 +209,12 @@ pub const SNAPSHOT_LEN: usize = 51;
 ///                          stop line | 5 at the crosswalk/railway | 6 in the junction |
 ///                          7 on the exit lane | 8 past the finish line. 0 in bài 1 and bài 3
 /// 50 route                 which route the session drives: 0 none (bài 1, 3) | 1 straight road
-///                          (bài 2, 9, 11) | 2 junction right turn (bài 5) | 3 figure (bài 4, 6)
+///                          (bài 2, 9, 11) | 2 junction right turn (bài 5) | 3 figure (bài 4, 6) |
+///                          4 bay (bài 7, 8)
+/// 51 hull_inside           bài 7/8: 0 | 1, all four hull corners inside the bay on this tick
+/// 52 finish_signal         bài 7/8: 0 | 1, the yard's signal has been given (the run is then Done)
+/// 53 signal_hold_ticks     bài 7/8: consecutive still-and-inside ticks so far, so the page can show
+///                          how far through the hold the car is; 0 outside the bay or while moving
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
@@ -243,6 +248,8 @@ impl Session {
             6 => Exercise::Curve,
             9 => Exercise::Rail,
             11 => Exercise::Finish,
+            7 => Exercise::GhepDoc,
+            8 => Exercise::GhepNgang,
             _ => return None,
         };
         let thresholds = rules.thresholds();
@@ -374,7 +381,7 @@ impl Session {
         // Every exercise that runs on a generated figure reports its figure fields: bài 4 and bài 6,
         // and bài 5, whose route is a figure too and whose SAI_VACH_KE is decided on it. Without
         // this the page could not show a wheel reaching the line before the suspension.
-        if s.exercise.is_sa_hinh() || s.exercise == Exercise::Junction {
+        if s.exercise.is_sa_hinh() || s.exercise == Exercise::Junction || s.exercise.is_park() {
             s.figure_snapshot(&self.rules, &mut out);
         }
         if s.exercise == Exercise::Hill {
@@ -393,6 +400,12 @@ impl Session {
         if s.exercise.is_road() {
             out[50] = self.route_code();
             self.road_snapshot(&mut out);
+        }
+        if s.exercise.is_park() {
+            out[50] = self.route_code();
+            out[51] = f64::from(u8::from(s.hull_inside));
+            out[52] = f64::from(u8::from(s.signal_given));
+            out[53] = f64::from(s.hold_ticks);
         }
         if s.exercise == Exercise::Junction {
             let j = &self.rules.junction;
@@ -413,6 +426,7 @@ impl Session {
             Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => 1.0,
             Exercise::Junction => 2.0,
             Exercise::Vet | Exercise::Curve => 3.0,
+            Exercise::GhepDoc | Exercise::GhepNgang => 4.0,
             _ => 0.0,
         }
     }
@@ -540,6 +554,23 @@ impl Session {
             h.u32(s.stop.map_or(0, |p| p.tick));
             h.bool(s.finished);
             h.opt_f64(s.finish_signal.map(|sig| f64::from(signal_code(sig))));
+        }
+        // Bài 7 and bài 8 write their own block. The hold counter and the inside flag are state the
+        // next tick depends on (the signal is a hold, not a level), so they are hashed.
+        if s.exercise.is_park() {
+            h.bool(s.hull_inside);
+            h.u32(s.hold_ticks);
+            h.bool(s.signal_given);
+            h.bool(s.prev_order);
+            h.f64(s.clock_seconds());
+            h.bool(s.clock_running());
+            h.u32(s.park_charges());
+            h.u8(s.park_wheels());
+            for ep in s.episode_table() {
+                h.bool(ep.touching);
+                h.f64(ep.elapsed_s);
+                h.f64(ep.next_keo_dai_s);
+            }
         }
 
         // Events so far.
