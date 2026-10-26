@@ -754,7 +754,225 @@ pub fn curve_messy() -> Golden {
     figure_messy(CURVE | 0x0123_4567_89ab, "qua_duong_vong_quanh_co_messy")
 }
 
-pub fn all() -> [Golden; 18] {
+// ---------------------------------------------------------------------------------------------
+// Bài 7 and bài 8 — the two bay exercises.
+//
+// The clean run is the line a patient driver can actually hold: a diagonal launch pose reached
+// forward in the lane, then a reverse with at most one steering change, then straight back into the
+// bay. Starting the reverse from a DIAGONAL pose is what makes it clean — a lane-parallel start
+// forces a sharper arc and brushes the bay's side line (measured: the best symmetric two-arc from a
+// parallel start misses by 2 mm).
+//
+// The legs are `(direction, steer, arc length)`. The length is recomputed from the leg's two poses
+// (`dθ = dir·tanδ/L·s`), so it does not inherit the search's 5 cm grid; the core's path depends only
+// on distance and steering, never on speed, so a leg reproduces its arc at any pace. Every leg is
+// driven to a full stop with the wheel set while the car stands still.
+// ---------------------------------------------------------------------------------------------
+
+const DOC: u64 = 7 << 56;
+const NGANG: u64 = 8 << 56;
+
+/// One leg of a bay line: `(from pose, to pose, direction, steer as a fraction of full lock)`.
+type GhepLeg = ((f64, f64, f64), (f64, f64, f64), f64, f64);
+
+fn ghep_arc_len(leg: &GhepLeg) -> f64 {
+    let (from, to, _dir, steer) = leg;
+    let mut d = to.2 - from.2;
+    let pi = core::f64::consts::PI;
+    while d > pi {
+        d -= 2.0 * pi;
+    }
+    while d < -pi {
+        d += 2.0 * pi;
+    }
+    let tan_delta = libm::tan(steer * MAX_STEER_RAD);
+    if tan_delta.abs() < 1e-12 {
+        libm::sqrt((to.0 - from.0) * (to.0 - from.0) + (to.1 - from.1) * (to.1 - from.1))
+    } else {
+        libm::fabs(d * WHEELBASE_M / tan_delta)
+    }
+}
+
+const WHEELBASE_M: f64 = 2.4;
+const MAX_STEER_RAD: f64 = 0.55;
+
+/// Drive a bay line in a live session and freeze the inputs. The one deviation from an open script
+/// is that the final leg keeps going until the hull is inside the bay: the end pose the line was
+/// planned to is quantised to the planner's grid, so its arc can stop a couple of centimetres short.
+fn ghep_clean(seed: u64, name: &'static str, legs: &[GhepLeg]) -> Golden {
+    let mut s = Session::new(seed).expect("a bay exercise");
+    let mut inputs = Vec::new();
+    let mut drive = |s: &mut Session, inputs: &mut Vec<TickInput>, input: TickInput, stop_at: Option<f64>| -> bool {
+        s.step(input);
+        inputs.push(input);
+        let v = s.snapshot()[7];
+        stop_at.is_some_and(|_| v == 0.0)
+    };
+
+    // Idle on the handbrake while the figure settles.
+    for _ in 0..15 {
+        s.step(TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() });
+        inputs.push(TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() });
+    }
+
+    for (i, leg) in legs.iter().enumerate() {
+        let (_, _, dir, steer) = *leg;
+        let gear: i8 = if dir > 0.0 { 1 } else { -1 };
+        let st = (steer * 32767.0).clamp(-32767.0, 32767.0) as i16;
+        // Come to a full stop first: the wheel is only turned while the car stands still.
+        for _ in 0..300 {
+            let done = drive(&mut s, &mut inputs, TickInput { gear, clutch: 255, brake: 255, ..Default::default() }, Some(0.0));
+            if done { break }
+        }
+        let len = ghep_arc_len(leg);
+        let last = i + 1 == legs.len();
+        let sn = s.snapshot();
+        let (mut px, mut py) = (sn[4], sn[5]);
+        let mut travelled = 0.0f64;
+        let mut release = 0u32;
+        for _ in 0..4000 {
+            let sn = s.snapshot();
+            let (x, y, v) = (sn[4], sn[5], sn[7]);
+            travelled += libm::sqrt((x - px) * (x - px) + (y - py) * (y - py));
+            px = x;
+            py = y;
+            // The last leg stops when the hull is inside, not at the planned arc length.
+            let remaining = if last && sn[51] == 0.0 { f64::INFINITY } else { len - travelled };
+            let stop_dist = v * v / (2.0 * 6.9);
+            let braking = remaining.is_finite() && remaining <= stop_dist + 0.02;
+            let input = if braking {
+                TickInput { gear, clutch: 255, brake: 255, steering: st, ..Default::default() }
+            } else if v * dir > 0.85 {
+                TickInput { gear, clutch: 255, brake: 120, steering: st, ..Default::default() }
+            } else if dir > 0.0 {
+                TickInput { gear, clutch: 175, throttle: if v < 0.70 { 55 } else { 0 }, steering: st, ..Default::default() }
+            } else if v.abs() < 0.55 && release == 0 {
+                release = 6;
+                TickInput { gear, clutch: 212, steering: st, ..Default::default() }
+            } else if release > 0 {
+                release -= 1;
+                TickInput { gear, clutch: 212, steering: st, ..Default::default() }
+            } else {
+                TickInput { gear, clutch: 255, brake: 110, steering: st, ..Default::default() }
+            };
+            let done = drive(&mut s, &mut inputs, input, Some(0.0));
+            if s.view().disqualified { return Golden { name, seed, inputs } }
+            if braking && done { break }
+            if last && sn[51] == 1.0 && s.snapshot()[7] == 0.0 { break }
+        }
+    }
+
+    // Stand still and let the yard's signal end the run.
+    for _ in 0..120 {
+        s.step(TickInput { gear: -1, clutch: 255, brake: 255, ..Default::default() });
+        inputs.push(TickInput { gear: -1, clutch: 255, brake: 255, ..Default::default() });
+        if s.snapshot()[52] == 1.0 { break }
+    }
+    Golden { name, seed, inputs }
+}
+
+pub fn ghep_doc_clean() -> Golden {
+    let pi = core::f64::consts::PI;
+    let legs: [( (f64, f64, f64), (f64, f64, f64), f64, f64); 8] = [
+        ((10.140, 2.520, pi), (9.199, 2.405, 193.9f64 * pi / 180.0), 1.0, 1.0),
+        ((9.199, 2.405, 193.9f64 * pi / 180.0), (7.077, 2.473, 162.4f64 * pi / 180.0), 1.0, -1.0),
+        ((7.077, 2.473, 162.4f64 * pi / 180.0), (3.768, 2.027, 212.9f64 * pi / 180.0), 1.0, 1.0),
+        ((3.768, 2.027, 212.9f64 * pi / 180.0), (0.130, 1.700, 157.3f64 * pi / 180.0), 1.0, -1.0),
+        ((0.130, 1.700, 157.3f64 * pi / 180.0), (-0.294, 1.850, 163.9f64 * pi / 180.0), 1.0, 1.0),
+        ((-0.294, 1.850, 163.9f64 * pi / 180.0), (-2.132, 3.007, 131.7f64 * pi / 180.0), 1.0, -1.0),
+        ((-2.132, 3.007, 131.7f64 * pi / 180.0), (-1.141, 0.302, 88.5f64 * pi / 180.0), -1.0, 1.0),
+        ((-1.141, 0.302, 88.5f64 * pi / 180.0), (-1.204, -2.148, 88.5f64 * pi / 180.0), -1.0, 0.0),
+    ];
+    ghep_clean(DOC | 1, "ghep_doc_clean", &legs)
+}
+
+pub fn ghep_ngang_clean() -> Golden {
+    let pi = core::f64::consts::PI;
+    let legs: [((f64, f64, f64), (f64, f64, f64), f64, f64); 8] = [
+        ((-5.100, 1.760, 0.0), (-3.919, 1.578, -17.6f64 * pi / 180.0), 1.0, -1.0),
+        ((-3.919, 1.578, -17.6f64 * pi / 180.0), (-1.943, 1.476, 11.7f64 * pi / 180.0), 1.0, 1.0),
+        ((-1.943, 1.476, 11.7f64 * pi / 180.0), (1.602, 0.429, -44.6f64 * pi / 180.0), 1.0, -1.0),
+        ((1.602, 0.429, -44.6f64 * pi / 180.0), (2.183, -0.044, -33.7f64 * pi / 180.0), 1.0, 1.0),
+        ((2.183, -0.044, -33.7f64 * pi / 180.0), (2.306, -0.130, -35.9f64 * pi / 180.0), 1.0, -1.0),
+        ((2.306, -0.130, -35.9f64 * pi / 180.0), (4.200, -0.851, -5.9f64 * pi / 180.0), 1.0, 1.0),
+        ((4.200, -0.851, -5.9f64 * pi / 180.0), (3.401, -0.851, 5.9f64 * pi / 180.0), -1.0, -1.0),
+        ((3.401, -0.851, 5.9f64 * pi / 180.0), (3.102, -0.870, 1.5f64 * pi / 180.0), -1.0, 1.0),
+    ];
+    ghep_clean(NGANG | 1, "ghep_ngang_clean", &legs)
+}
+
+/// A messy bay run: no line-up at all. The car drives past the bay, reverses in on full lock
+/// straight from the lane, and touches the bay's paint on the way (DE_VACH). It stops there, still
+/// on the line, so the episode runs past the five-second mark (DE_VACH_KEO_DAI), and then ends the
+/// exam on the stop key with the body outside the bay (CHUA_VAO_CHUONG).
+///
+/// Three faults a learner actually makes, each on its own row, and the run ends without being
+/// suspended: reversing on full lock from a lane-parallel pose is exactly the mistake the clean
+/// line's diagonal launch pose avoids.
+fn ghep_messy(seed: u64, name: &'static str) -> Golden {
+    let doc = seed >> 56 == 7;
+    let mut s = Session::new(seed).expect("a bay exercise");
+    let mut inputs = Vec::new();
+    let mut stage = 0u8;
+    let mut release = 0u32;
+    for _ in 0..8000u32 {
+        let snap = s.snapshot();
+        let v = snap[7];
+        let longest = snap[37];
+        match stage {
+            0 if snap[0] > 15.0 => stage = 1,
+            // Forward, past the bay's mouth so the reverse has to turn in from outside it.
+            1 if (if doc { snap[4] <= -1.0 } else { snap[4] >= 7.0 }) => stage = 2,
+            2 if v == 0.0 => stage = 3,
+            // Reverse on full lock until a wheel touches the paint.
+            3 if longest > 0.0 => stage = 4,
+            // Stand still on the line while the episode runs to its five-second mark.
+            4 if longest >= 5.4 => stage = 5,
+            _ => {}
+        }
+        let steer = if doc { -24000i16 } else { 24000 };
+        let input = match stage {
+            0 => TickInput { clutch: 255, flags: HANDBRAKE, ..Default::default() },
+            1 => TickInput { gear: 1, clutch: 168, throttle: 60, ..Default::default() },
+            2 => TickInput { gear: 1, clutch: 255, brake: 255, ..Default::default() },
+            3 => {
+                if v.abs() < 0.5 && release == 0 {
+                    release = 6;
+                    TickInput { gear: -1, clutch: 212, steering: steer, ..Default::default() }
+                } else if release > 0 {
+                    release -= 1;
+                    TickInput { gear: -1, clutch: 212, steering: steer, ..Default::default() }
+                } else {
+                    TickInput { gear: -1, clutch: 255, brake: 110, steering: steer, ..Default::default() }
+                }
+            }
+            // Stopped on the line: hold the brake and keep the wheel where it is.
+            4 => TickInput { gear: -1, clutch: 255, brake: 255, steering: steer, ..Default::default() },
+            // End the exam on the stop key, out of position.
+            _ => TickInput {
+                clutch: 255,
+                brake: 255,
+                flags: TickInput::FLAG_START_ORDER,
+                ..Default::default()
+            },
+        };
+        s.step(input);
+        inputs.push(input);
+        let v = s.view();
+        if v.phase == crate::Phase::Done || v.disqualified { break }
+    }
+    Golden { name, seed, inputs }
+}
+
+pub fn ghep_doc_messy() -> Golden {
+    ghep_messy(DOC | 0x0123_4567_89ab, "ghep_doc_messy")
+}
+
+pub fn ghep_ngang_messy() -> Golden {
+    ghep_messy(NGANG | 0x0123_4567_89ab, "ghep_ngang_messy")
+}
+
+pub fn all() -> [Golden; 22] {
     [
         clean_pass(),
         messy_run(),
@@ -774,6 +992,10 @@ pub fn all() -> [Golden; 18] {
         junction_green_clean(),
         junction_messy(),
         junction_line_messy(),
+        ghep_doc_clean(),
+        ghep_doc_messy(),
+        ghep_ngang_clean(),
+        ghep_ngang_messy(),
     ]
 }
 
@@ -817,7 +1039,7 @@ mod tests {
     /// Every golden's committed hash, in `all()` order. All eight, so `cargo test` pins every one of
     /// them: a zip against a shorter list would silently leave the tail unpinned, and a hash file
     /// full of ffff would still pass.
-    const COMMITTED: [(&str, &str); 18] = [
+    const COMMITTED: [(&str, &str); 22] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
         ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
@@ -836,6 +1058,10 @@ mod tests {
         ("qua_nga_tu_den_xanh_clean", include_str!("../../../golden/qua_nga_tu_den_xanh_clean.hash")),
         ("qua_nga_tu_messy", include_str!("../../../golden/qua_nga_tu_messy.hash")),
         ("qua_nga_tu_de_vach_messy", include_str!("../../../golden/qua_nga_tu_de_vach_messy.hash")),
+        ("ghep_doc_clean", include_str!("../../../golden/ghep_doc_clean.hash")),
+        ("ghep_doc_messy", include_str!("../../../golden/ghep_doc_messy.hash")),
+        ("ghep_ngang_clean", include_str!("../../../golden/ghep_ngang_clean.hash")),
+        ("ghep_ngang_messy", include_str!("../../../golden/ghep_ngang_messy.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the

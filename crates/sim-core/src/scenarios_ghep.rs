@@ -292,3 +292,46 @@ fn sai_hinh_is_the_centre_leaving_the_figure_and_reversing_is_not() {
     assert_eq!(v.fired("SH.GHEP.SAI_HINH"), 1, "the centre left the figure");
     assert!(v.disqualified, "đi không đúng hình is a suspension");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The clean line: a bay exercise has to be passable.
+// ---------------------------------------------------------------------------------------------
+
+/// Each bay's clean golden is a real line a patient driver can hold — forward in the lane to a
+/// DIAGONAL launch pose, a reverse with at most one steering change, then straight back in — and it
+/// scores a clean sheet.
+///
+/// This is the invariant the exercise exists for. If a change to the figure, the vehicle or the
+/// contact band widens a line into the bay's paint, this test fails even though every rule test above
+/// still passes: those drive the rules with `place_car`, so they cannot see that the bay became
+/// impossible to pass.
+#[test]
+fn each_bay_has_a_clean_line_that_scores_a_clean_sheet() {
+    for g in [crate::golden::ghep_doc_clean(), crate::golden::ghep_ngang_clean()] {
+        let s = crate::golden::run(&g);
+        let v = s.view();
+        let sn = s.snapshot();
+        assert!(!v.disqualified, "{} was suspended", g.name);
+        assert!(v.fired_ids().is_empty(), "{} is meant to be clean, fired {:?}", g.name, v.fired_ids());
+        assert_eq!(v.score, 100, "{} scored {} for {:?}", g.name, v.score, v.fired_ids());
+        assert_eq!(sn[51], 1.0, "{} must end with the hull inside the bay", g.name);
+        assert_eq!(sn[52], 1.0, "{} must earn the finish signal", g.name);
+    }
+}
+
+/// The messy run of each bay is a learner's actual mistake — reversing in on full lock from a
+/// lane-parallel pose, without lining up — and it costs exactly the three rows that mistake earns.
+#[test]
+fn each_bays_messy_run_charges_the_three_rows_of_that_mistake() {
+    for g in [crate::golden::ghep_doc_messy(), crate::golden::ghep_ngang_messy()] {
+        let s = crate::golden::run(&g);
+        let v = s.view();
+        assert_eq!(v.fired("SH.GHEP.DE_VACH"), 1, "{}: one episode on the paint: {:?}", g.name, v.fired_ids());
+        assert_eq!(v.fired("SH.GHEP.DE_VACH_KEO_DAI"), 1, "{}: held past five seconds", g.name);
+        assert_eq!(v.fired("SH.GHEP.CHUA_VAO_CHUONG"), 1, "{}: ended outside the bay", g.name);
+        assert_eq!(v.fired("SH.04.DE_VACH"), 0, "{}: never bài 4's code", g.name);
+        assert!(v.disqualified, "{}: chưa vào chuông suspends the learner", g.name);
+        assert_eq!(v.fired("SH.GHEP.QUA_THOI_GIAN"), 0, "{}: well inside the cap", g.name);
+        assert_eq!(v.score, 90, "{}: two 5-point rows and no signal fee", g.name);
+    }
+}
