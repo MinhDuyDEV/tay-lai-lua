@@ -335,3 +335,35 @@ fn each_bays_messy_run_charges_the_three_rows_of_that_mistake() {
         assert_eq!(v.score, 90, "{}: two 5-point rows and no signal fee", g.name);
     }
 }
+/// A wheel held on the bay's mouth corner is ONE mistake, not two.
+///
+/// The bay outline and the near-edge pieces meet at the mouth corners, so if they are separate
+/// polylines a wheel sitting on a corner runs two episodes at once: `DE_VACH` twice, and every
+/// five-second mark twice — a 20 s stop on a corner would cost −50 where the law says −25. The
+/// painted figure is one object wherever the paint is connected, so the lines must be too.
+#[test]
+fn a_wheel_held_on_the_mouth_corner_charges_de_vach_once() {
+    // The right rear patch sits on bài 8's mouth corner (6.3, 0): wheel centres are ±1.2 along the
+    // car and ±0.675 across it, so this centre puts one patch on the corner at heading 0.
+    let mut s = placed(NGANG, (5.10, -0.675, 0.0), 3);
+    let before = s.view().fired("SH.GHEP.DE_VACH");
+    // Hold past the first five-second mark of the same episode (that mark is at 5 s).
+    let secs = 6.0;
+    for _ in 0..(60.0 * secs) as u32 {
+        s.step(TickInput { gear: -1, clutch: 255, brake: 255, ..Default::default() });
+    }
+    let v = s.view();
+    assert_eq!(
+        v.fired("SH.GHEP.DE_VACH") - before,
+        1,
+        "one corner, one episode: {:?}",
+        v.fired_ids()
+    );
+    assert_eq!(
+        v.fired("SH.GHEP.DE_VACH_KEO_DAI"),
+        1,
+        "and one five-second mark, not two: {:?}",
+        v.fired_ids()
+    );
+}
+

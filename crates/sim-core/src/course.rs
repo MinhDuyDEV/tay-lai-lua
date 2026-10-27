@@ -880,15 +880,22 @@ fn park_figure(figure: Figure, rs: &Ruleset) -> Option<Course> {
     let lane_half = 0.5 * (area.3 - area.1);
     let mid_y = 0.5 * (area.1 + area.3);
 
-    // Every painted limit line, one polyline each, so the episode count means what it says: the bay's
-    // three closed sides are ONE line (dragging round the bay is one mistake), and each painted edge
-    // of the area is its own. Nothing is painted across the bay's mouth.
+    // Every painted limit line, one polyline per CONNECTED COMPONENT of paint. The bay's three
+    // closed sides continue into the near edge of the lane on both sides (the mouth corner is painted
+    // too), so the bay and both near-edge pieces are ONE line: a wheel sitting on a mouth corner would
+    // otherwise run two episodes at once and charge DE_VACH, and every 5 s mark, twice for one
+    // mistake. The far edge of the lane is a separate component and is its own line. Nothing is
+    // painted across the mouth itself.
     let mut lines = vec![
-        painted(1, half_line, vec![(bay.0, 0.0), (bay.0, bay.1), (bay.2, bay.1), (bay.2, 0.0)]),
-        // The edge of the road/lane away from the bay, and the near edge in two pieces round the bay.
+        painted(1, half_line, vec![
+            (area.0, 0.0),
+            (bay.0, 0.0),
+            (bay.0, bay.1),
+            (bay.2, bay.1),
+            (bay.2, 0.0),
+            (area.2, 0.0),
+        ]),
         painted(1, half_line, vec![(area.0, area.3), (area.2, area.3)]),
-        painted(1, half_line, vec![(area.0, 0.0), (bay.0, 0.0)]),
-        painted(1, half_line, vec![(bay.2, 0.0), (area.2, 0.0)]),
     ];
     // Bài 7's far end is "bó vỉa đóng kín" — a closed curbed end — so it is drawn as a limit line.
     // Bài 8's road runs on in both directions, so its ends are not lines: a car that leaves the drawn
