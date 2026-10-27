@@ -2,11 +2,11 @@
 // `data-gear-wanted`, which are `cueGhep`'s steer, pedal and gear), re-reads every 50 ms at a phase, is
 // late by a fixed reaction, and acts only through key events on the real driver and the real core.
 // The words it acts on are the ones the HUD paints; it never reads the snapshot to decide what to do.
-// A leg the cue gives a time (`data-hold-ms`) is not stopped on a word: the learner lets go, counts the time
-// and presses, trailing the count by a share of their reaction (`trackFactor`).
+// A leg the cue gives a time (`data-hold-ms`) is not stopped on a word: the learner lets go and presses when
+// the bar (`holdAid`) says `now`, a full reaction plus the poll phase later (`trackFactor` 1, the gate).
 import { readFileSync } from 'node:fs';
 import { exerciseFor, type Lesson } from '../src/exercise.ts';
-import { setSliceWork, yardOf } from '../src/ghep.ts';
+import { holdAid, LEAD_S, setSliceWork, yardOf, type HoldTimer } from '../src/ghep.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { openSession, parkRects, seedWord, type SimState } from '../src/sim/session.ts';
 import { createDriver, steerFeel } from './driver.ts';
@@ -37,11 +37,11 @@ export interface Outcome {
 }
 
 /**
- * `trackFactor` is how late a learner presses on the bar's end, as a share of their reaction: they follow a
- * filling bar and anticipate it, so the lag is a fraction of a reaction to a flash. 0.25 is an assumption
- * (the cue assumes `TRACK_S`); 0 and 0.5 are the two ends it has been swept at.
+ * `trackFactor` is how much of their reaction a learner still loses on the bar's `now`: 1 is a reader who acts on
+ * what the page shows a full reaction + poll phase after it shows it (the gate); 0.25 and 0 anticipate the bar
+ * and are run for information only.
  */
-export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 0.25): Outcome {
+export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 1): Outcome {
   const ex = exerciseFor(lesson);
   const session = openSession(bytes(), seedWord(lesson));
   const yard = yardOf(parkRects(session.course)!);
@@ -58,25 +58,30 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let tick = 0;
   let lastPedal = '';
   let parkPressTick = -Infinity;
-  // A timed pulse: the learner lets go when the line says so, counts `holdMs` from there and presses; their
-  // press trails the count by a quarter of their reaction (they follow a bar that is filling, not a flash).
-  let pulseEnd = -Infinity;
+  // A timed pulse: the learner lets go when the line says so, then presses when the bar says `now`.
   let counting = false;
+  let countedAt = 0;
+  let countTicks = 0;
   let braking = false;
   let stoppedBy = 0;
-  const trackTicks = Math.round(trackFactor * ((reactMs + phaseMs) / 1000) * 60);
+  // The bar is read where the page reads it: the same `holdAid` on the sim's state, every frame. The learner
+  // presses when the bar says `now`, a reaction later (the queue below). `trackFactor` 1 is that, and is the gate;
+  // below 1 the learner anticipates the bar by the missing share of the reaction (information only).
+  const timer: HoldTimer = { ms: 0, t0: null };
+  const pressLeadMs = LEAD_S * 1000 + (1 - trackFactor) * (reactMs + phaseMs);
   // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
   setSliceWork(SLICE_WORK);
   let c = ex.cueNow!(s, ruleset, yard);
   while (s.phase !== 'done' && !s.disqualified && tick < maxS * 60) {
     c = ex.cueNow!(s, ruleset, yard);
+    const bar = holdAid(timer, s, c.holdMs);
     if (tick % pollTicks === 0) {
       const next = new Set<string>();
       if (c.steer === 'left') next.add('ArrowLeft');
       if (c.steer === 'right') next.add('ArrowRight');
       // Pedals: on the clutch and the brake together (a brake with the clutch up stalls the car) except
       // when the word says the car is to move.
-      if (counting && tick >= pulseEnd) {
+      if (counting && ((bar.state !== 'ready' && bar.state !== 'idle' && bar.leftMs <= pressLeadMs) || tick > countedAt + countTicks + 90)) {
         counting = false;
         braking = true;
         stoppedBy = tick + lateTicks + 60;
@@ -87,8 +92,9 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       if (counting) {
         // counting: feet stay off whatever the words say until the time is up
       } else if (c.pedal === 'creep' && c.holdMs > 0 && !braking) {
-        pulseEnd = tick + Math.round((c.holdMs / 1000) * 60) + trackTicks;
         counting = true;
+        countedAt = tick;
+        countTicks = Math.round((c.holdMs / 1000) * 60);
       } else if (c.pedal !== 'creep' || braking) {
         next.add('Space');
         next.add('ArrowDown');

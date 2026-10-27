@@ -386,8 +386,13 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = R
  * 0.65 m, 2 s 1.43 m, braking included). The time is rounded to a tenth, what a bar and a learner resolve.
  */
 export const RELEASE_LAG_S = 0.2;
-/** How late a learner following the bar presses, seconds; the hold is shortened by this much. */
-export const TRACK_S = 0.07;
+/**
+ * How long before the end of the count the bar says "now", seconds. A learner who reads "now" and then
+ * presses is late by their reaction, 0.15 to 0.4 s with the 50 ms poll; the middle of that band is asked for
+ * early, so the press lands on the end of the count for the average reader and within about 0.15 s of it for
+ * the quickest and slowest (0.12 m at the reverse creep). The page does not assume anyone anticipates the bar.
+ */
+export const LEAD_S = 0.3;
 /** The furthest one timed reverse pulse is asked to go, metres. */
 export const TIMED_PULSE_M = 0.8;
 /**
@@ -424,7 +429,7 @@ export function holdMsFor(distM: number, dir: 1 | -1, ruleset: Ruleset): number 
       t = t0 + ((distM - d0) / (d1 - d0)) * (t1 - t0);
     }
   }
-  return Math.max(300, Math.round((t - TRACK_S) * 10) * 100);
+  return Math.max(400, Math.round(t * 10) * 100);
 }
 
 /**
@@ -455,7 +460,7 @@ export interface HoldAid {
 /**
  * The bar behind a timed pulse. It is `ready` while the car stands with the pedals down and the cue has a
  * time; it starts counting when the brake comes up (the learner has let go) and runs on the sim's own clock,
- * so it neither speeds up nor lags with the page; it says `now` when the time is up, and goes `idle` once the
+ * so it neither speeds up nor lags with the page; it says `now` `LEAD_S` before the time is up (the reaction the learner will add), and goes `idle` once the
  * car is still again with the pedals down.
  */
 export function holdAid(t: HoldTimer, s: SimState, cueHoldMs: number): HoldAid {
@@ -472,7 +477,7 @@ export function holdAid(t: HoldTimer, s: SimState, cueHoldMs: number): HoldAid {
   if (t.ms === 0) return { state: 'idle', ms: 0, leftMs: 0 };
   if (t.t0 === null) return { state: 'ready', ms: t.ms, leftMs: t.ms };
   const leftMs = Math.max(0, t.ms - ((s.tick - t.t0) / 60) * 1000);
-  return { state: leftMs <= 0 ? 'now' : 'counting', ms: t.ms, leftMs };
+  return { state: leftMs <= LEAD_S * 1000 ? 'now' : 'counting', ms: t.ms, leftMs };
 }
 
 /** The gear word for the advice line: what to hold down before the gear goes in. */
@@ -758,10 +763,11 @@ export function adviceGhep(
     return 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
   }
   if (timedReachM(plan!, leg!) !== null && Math.abs(s.speedMps) >= 0.05) {
-    return 'Đang đi: đếm tiếp theo thanh, hết giờ thì đạp côn (Space) và phanh ↓ dừng hẳn.';
+    return `Đang đi: khi thanh đếm còn ${(LEAD_S).toFixed(1).replace('.', ',')} giây thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
   }
   if (cue.holdMs > 0) {
-    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way} đúng ${(cue.holdMs / 1000).toFixed(1).replace('.', ',')} giây theo thanh đếm, rồi đạp côn và phanh ↓ dừng hẳn.`;
+    const sec = (ms: number) => (ms / 1000).toFixed(1).replace('.', ',');
+    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way}; khi thanh đếm còn ${sec(LEAD_S * 1000)} giây (xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả) thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
   }
   return `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
 }
@@ -1147,7 +1153,7 @@ const FUNNEL_PRICE_M = 15;
  * page and the learner's count (the pulse is timed, so the reaction is not in it). Core measured the older
  * stopped-on-a-word pulse at ±0.13 s of travel from the brake's rise alone.
  */
-const SCATTER_S = 0.12;
+const SCATTER_S = 0.15;
 const scatterM = (ruleset: Ruleset): number => SCATTER_S * reverseCreepMps(ruleset);
 /** Clearance along a reverse S at which a perturbed stop counts as fully able to finish, metres. */
 const ROOMY_S_M = 0.12;
