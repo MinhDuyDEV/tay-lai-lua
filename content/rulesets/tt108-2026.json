@@ -143,7 +143,7 @@
       "quote": "Xe sát hạch hạng B: là xe ô tô con có từ 03 đến 08 chỗ (không kể chỗ của người lái xe), có chiều dài toàn bộ từ 4,2 m trở lên, chiều rộng toàn bộ từ 1,6 m trở lên, chiều dài cơ sở từ 2,4 m trở lên, bán kính quay vòng nhỏ nhất theo vệt bánh xe trước phía ngoài từ 4,9 m trở lên."
     },
     "assumption": "Kích thước lấy ở biên dưới hạng B (a = 4,2 m; b = 1,6 m; cơ sở 2,4 m) vì văn bản chỉ cho ngưỡng tối thiểu. Xe thật phải thay bằng số đo thực tế.",
-    "drivetrain_assumption": "Khối lượng, bán kính bánh, góc lái tối đa, đường cong mô-men và thông số côn/hộp số không có trong văn bản; đây là số của một xe con số sàn 5 cấp điển hình, chọn để mô hình ‘chết máy khi nhả côn ở số 1’ xảy ra như thật."
+    "drivetrain_assumption": "Khối lượng, bán kính bánh, góc lái tối đa, đường cong mô-men và thông số côn/hộp số không có trong văn bản; đây là số của một xe con số sàn 5 cấp điển hình, chọn để mô hình ‘chết máy khi nhả côn ở số 1’ xảy ra như thật. Riêng số lùi (−8,0) KHÔNG phải số của xe thật mà là giả định của mô phỏng để bù cho việc bàn phím không có nửa côn — xem drivetrain.assumption."
   },
   "drivetrain": {
     "idle_target_rpm": 850.0,
@@ -160,7 +160,7 @@
     "crank_ticks": 18,
     "final_drive": 4.1,
     "gears": {
-      "-1": -3.5,
+      "-1": -8.0,
       "1": 3.5,
       "2": 2.1,
       "3": 1.4,
@@ -171,7 +171,7 @@
     "handbrake_max_n": 5000.0,
     "rolling_n": 150.0,
     "drag_n_per_mps2": 0.45,
-    "assumption": "Không có trong văn bản. Xem vehicle.drivetrain_assumption."
+    "assumption": "Không có trong văn bản. Số lùi lấy −8,0 thay cho −3,5 như một GIẢ ĐỊNH CỦA MÔ PHỎNG, không phải số của xe thật: nó đứng thay cho việc người lái điều khiển côn bằng nửa côn (feathering) — bàn phím không làm được việc đó, nên hộp số bị hạ tỉ số để tốc độ lùi chậm lại và người học vẫn ghép được. Cái giá phải trả: xe lùi CHẬM HƠN xe thật, và mô-men côn ở cùng một độ mở cũng nhỏ hơn. Phạm vi: áp dụng cho MỌI trang có lùi xe, không có bảng số riêng cho từng bài. Đổi số này là đổi hành vi của bài 7 và bài 8 (và mọi trang lùi), nên các vết chuẩn của hai bài đó phải ghi lại. Xem thêm vehicle.drivetrain_assumption."
   },
   "hill": {
     "foot_x_m": 0.0,
