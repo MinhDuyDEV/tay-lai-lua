@@ -269,8 +269,8 @@ function walkLeg(from: Pose, leg: Leg, yard: Yard, ruleset: Ruleset): { end: Pos
   if (margin <= 0) return null;
   return { end: p, margin };
 }
-/** How far past the end of a leg the car may still roll, metres: a 50 ms poll at the creep and a bit. */
-const STOP_OVERSHOOT_M = 0.001;
+/** How far past the end of a leg a timed stop may still land, metres: a poll and the count at about 1 m/s. */
+const STOP_OVERSHOOT_M = 0.05;
 
 export type GhepCue = 'left' | 'right' | 'straight';
 
@@ -299,6 +299,11 @@ export interface GhepCueNow {
   parked: boolean;
   /** The plan this tick's cue came from, for the HUD's own drawing. Null when none was found. */
   plan: Plan | null;
+  /**
+   * Milliseconds to hold the feet off for this pulse (0: stop on the brake word instead). The learner counts
+   * it from the moment they let go, so the road covered does not depend on how fast they react.
+   */
+  holdMs: number;
 }
 
 /**
@@ -329,18 +334,18 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = R
   warmUp(yard, ruleset);
   const pose: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const parked = s.hullInside && Math.abs(s.speedMps) < 0.05;
-  if (parked) return { steer: 'straight', pedal: 'hold', gear: 0, parked: true, plan: null };
+  if (parked) return { steer: 'straight', pedal: 'hold', gear: 0, parked: true, plan: null, holdMs: 0 };
   // While the learner is still starting the car (clutch, gear, handbrake) the first plan is worked out.
   if (s.gear === 0 || s.handbrake) runFor(pose, false, yard, ruleset);
   // The start order the driving school teaches, and the one `PARK_STEPS` lists: clutch, first gear, then
   // the handbrake. Saying "release the brake" while the lever is still in neutral is the wrong order: the
   // car would roll with nothing engaged.
-  if (s.gear === 0) return { steer: 'straight', pedal: 'clutch', gear: 1, parked: false, plan: null };
-  if (s.handbrake) return { steer: 'straight', pedal: 'park', gear: 0, parked: false, plan: null };
+  if (s.gear === 0) return { steer: 'straight', pedal: 'clutch', gear: 1, parked: false, plan: null, holdMs: 0 };
+  if (s.handbrake) return { steer: 'straight', pedal: 'park', gear: 0, parked: false, plan: null, holdMs: 0 };
   if (s.finishSignal || s.disqualified || s.phase === 'done') {
     // The finish is the one instruction the learner must not miss: `enter` is its own word, so the model
     // (and the page) never has to guess whether "stand on the brake" also means "press Enter".
-    return { steer: 'straight', pedal: 'enter', gear: 0, parked, plan: null };
+    return { steer: 'straight', pedal: 'enter', gear: 0, parked, plan: null, holdMs: 0 };
   }
   const speed = Math.abs(s.speedMps);
   const moving = speed > 0.05;
@@ -349,30 +354,83 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = R
   const leg = plan?.legs[0];
   if (!plan || !leg) {
     // No line from here (or the car is already in): hold still and say so rather than invent a wheel.
-    return { steer: 'straight', pedal: 'brake', gear: 0, parked, plan: null };
+    return { steer: 'straight', pedal: 'brake', gear: 0, parked, plan: null, holdMs: 0 };
   }
   const steer: GhepCue = leg.steerRad > 0.06 ? 'left' : leg.steerRad < -0.06 ? 'right' : 'straight';
   if (moving) {
     // Rolling on the leg: the brake word comes when the road still to run equals the road the stop needs.
-    // A reverse leg is driven in pulses: one tap moves the car at most `pulseM`, then the car stops and the
-    // cue is solved again from where it stands. At the reverse creep a late reader's error is a speed times
-    // a reaction, and only a car that is still slow when the brake word lands keeps the S inside its band.
-    const reach = leg.dir === -1 ? Math.min(leg.len, pulseM(ruleset)) : leg.len;
+    // A reverse leg is driven in timed pulses (see `holdMsFor`): the timer is what stops the car, and this
+    // word is only its backup, so it asks for no reaction in hand. A forward leg has no timer and keeps it.
+    const timed = timedReachM(plan, leg);
+    const reach = timed ?? leg.len;
     const left = reach - legProgress(run!.anchor, pose, leg, ruleset);
-    return { steer, pedal: left <= stoppingLeadM(ruleset, speed, reactionS) ? 'brake' : 'creep', gear: 0, parked, plan };
+    const lead = stoppingLeadM(ruleset, speed, timed === null ? reactionS : 0);
+    return { steer, pedal: left <= lead ? 'brake' : 'creep', gear: 0, parked, plan, holdMs: 0 };
   }
   // Standing: the right gear first (clutch to the floor), then feet off, wheel already over.
-  if (s.gear !== leg.dir) return { steer, pedal: 'clutch', gear: leg.dir, parked, plan };
+  if (s.gear !== leg.dir) return { steer, pedal: 'clutch', gear: leg.dir, parked, plan, holdMs: 0 };
   // The lock goes on while the car stands: a leg started with the wheel still travelling is another arc.
   // `wheel` is "hold the arrow, stay on the pedals"; `creep` only comes once the wheel is where the leg wants it.
   const wheelSet = Math.abs(s.steerRad - leg.steerRad) <= WHEEL_SET_RAD * ruleset.vehicle.max_steer_rad;
-  return { steer, pedal: wheelSet ? 'creep' : 'wheel', gear: 0, parked, plan };
+  const timed = timedReachM(plan, leg);
+  const holdMs = wheelSet && timed !== null ? holdMsFor(timed, leg.dir, ruleset) : 0;
+  return { steer, pedal: wheelSet ? 'creep' : 'wheel', gear: 0, parked, plan, holdMs };
+}
+
+/**
+ * A reverse pulse is TIMED, not stopped on a word. A learner who stops a creeping car on a cue is late by
+ * their reaction (up to 0.4 s, 0.3 m at the reverse creep), which is wider than the slack of the S; a
+ * learner who lets go of the pedals, counts a time and presses is late by a poll and the count. With the
+ * pedals let go together, the car covers about `RELEASE_LAG_S` less than the creep speed would give, then
+ * runs at the creep speed (measured on the real car with the keyboard driver: 0.5 s moves 0.24 m, 1 s
+ * 0.65 m, 2 s 1.43 m, braking included). The time is rounded to a tenth, what a bar and a learner resolve.
+ */
+export const RELEASE_LAG_S = 0.2;
+/** How late a learner following the bar presses, seconds; the hold is shortened by this much. */
+export const TRACK_S = 0.07;
+/** The furthest one timed reverse pulse is asked to go, metres. */
+export const TIMED_PULSE_M = 0.8;
+/**
+ * Forward in first gear the car does not settle at a creep speed, it keeps gathering pace, so there is a
+ * table, not a speed: [seconds with the pedals up, metres moved, braking included], measured on the real
+ * car with the same keyboard driver. A forward leg is timed only when it is the one that ends on the
+ * launch pose (the reverse S is sensitive to where this one stops) and short enough for the table.
+ */
+const FORWARD_PULSE: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0.09], [0.6, 0.16], [0.7, 0.25], [0.8, 0.36], [1.0, 0.58], [1.2, 0.84], [1.5, 1.29], [2.0, 2.19],
+];
+/** How far a timed forward pulse may go, metres: the end of the table. */
+const TIMED_FORWARD_M = 2.1;
+
+/** Metres this leg's pulse is timed to cover, or null when the leg is stopped on the brake word instead. */
+function timedReachM(plan: Plan, leg: Leg): number | null {
+  if (leg.dir === -1) return Math.min(leg.len, TIMED_PULSE_M);
+  return plan.legs[1]?.dir === -1 && leg.len <= TIMED_FORWARD_M ? leg.len : null;
+}
+
+/** Seconds with the pedals up for a pulse that covers `distM`, in tenths, as the learner is shown it. */
+export function holdMsFor(distM: number, dir: 1 | -1, ruleset: Ruleset): number {
+  let t: number;
+  if (dir === -1) {
+    t = distM / reverseCreepMps(ruleset) + RELEASE_LAG_S;
+  } else {
+    const k = FORWARD_PULSE.findIndex(([, d]) => d >= distM);
+    if (k <= 0) t = FORWARD_PULSE[0][0] * (k === 0 ? distM / FORWARD_PULSE[0][1] : 1);
+    else if (k < 0) t = FORWARD_PULSE[FORWARD_PULSE.length - 1][0];
+    else {
+      const [t0, d0] = FORWARD_PULSE[k - 1];
+      const [t1, d1] = FORWARD_PULSE[k];
+      t = t0 + ((distM - d0) / (d1 - d0)) * (t1 - t0);
+    }
+  }
+  return Math.max(300, Math.round((t - TRACK_S) * 10) * 100);
 }
 
 /**
  * How long the page assumes a learner takes from the cue changing to the pedal being down, seconds: the
  * slowest reader the page is meant for (a 400 ms reaction, a 50 ms poll and the pedal's own rise). A
- * quicker reader stops a little short, which the next stop's plan absorbs; a slower one overshoots.
+ * quicker reader stops a little short, which the next stop's plan absorbs; a slower one overshoots. It
+ * only matters for the legs that are not timed.
  */
 export const READ_S = 0.5;
 
@@ -816,7 +874,7 @@ function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floorWanted: num
   }
   // The first arc is the one a tap cannot end where it is told (a stop lands a pulse long or short), so the
   // line chosen is the one with the most first-arc lengths either side of it that also work.
-  const near = Math.max(1, Math.round(pulseM(ruleset) / ARC_STEP));
+  const near = Math.max(1, Math.round(scatterM(ruleset) / ARC_STEP));
   let best: Plan | null = null;
   let bestKey = [-1, -Infinity, 0];
   for (const c of found) {
@@ -875,15 +933,12 @@ const SHORT_PRICE = 4;
 
 /**
  * What one clutch tap does at the reverse creep, as time at the creep speed. Measured on the real car at
- * 1.74 m/s: the least tap moved it 0.36 m (0.21 s) and a tap kept to 0.6 m (0.35 s). They are times, not
+ * 1.74 m/s: the least tap moved it 0.36 m (0.21 s) and a tap kept to 0.6 m. They are times, not
  * metres, so a taller reverse gear (a slower creep) shrinks both with no change here.
  */
 const MIN_TAP_S = 0.21;
-const PULSE_S = 0.35;
 /** The least one tap moves the car, metres; never below one arc step, which the solver cannot resolve. */
 const minTapM = (ruleset: Ruleset): number => Math.max(ARC_STEP, MIN_TAP_S * reverseCreepMps(ruleset));
-/** The furthest one tap of a reverse leg is asked to go, metres. */
-const pulseM = (ruleset: Ruleset): number => Math.max(2 * ARC_STEP, PULSE_S * reverseCreepMps(ruleset));
 
 /** Shortest leg worth driving, metres. */
 const MIN_LEG_M = 0.15;
@@ -1046,10 +1101,11 @@ const FUNNEL_CANDIDATES = 8;
 /** Metres of lead-in worth giving up to raise the share of scattered stops the reverse phase can finish from to 1. */
 const FUNNEL_PRICE_M = 15;
 /**
- * How far a stop lands from where it was aimed, metres: the reaction and the brake's rise at the creep
- * speed. Measured by core on the real car: ±0.22 m at 1.74 m/s and ±0.07 m at 0.52 m/s, both 0.13 s of travel.
+ * How far a timed reverse pulse lands from where it was aimed, as seconds at the creep speed: a poll of the
+ * page and the learner's count (the pulse is timed, so the reaction is not in it). Core measured the older
+ * stopped-on-a-word pulse at ±0.13 s of travel from the brake's rise alone.
  */
-const SCATTER_S = 0.25;
+const SCATTER_S = 0.12;
 const scatterM = (ruleset: Ruleset): number => SCATTER_S * reverseCreepMps(ruleset);
 /** Clearance along a reverse S at which a perturbed stop counts as fully able to finish, metres. */
 const ROOMY_S_M = 0.12;

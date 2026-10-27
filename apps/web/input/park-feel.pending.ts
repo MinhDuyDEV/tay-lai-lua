@@ -1,32 +1,20 @@
-// PENDING: not in `pnpm test` (its glob is input/*.test.ts) until every cell passes. Run it with:
+// PENDING (bài 8): not in `pnpm test` (its glob is input/*.test.ts) until every cell is green.
 //   node --test input/park-feel.pending.ts
-// Rename to park-feel.test.ts when bài 7 and bài 8 are green for every reaction and phase.
-// Can a keyboard learner finish bài 7 and bài 8 by reading only what the page shows? Each cell is one
-// run of the learner in `park-model.ts` (reads `data-cue` / `data-pedal` / `data-gear-wanted`, re-reads
-// every 50 ms at a phase, every key change late by the reaction) on the real sim.wasm and the real driver.
-// A cell passes when the core itself scored 100 and gave the finish signal. Run `task build` first.
+// Same learner as park-feel.test.ts (page-only reader, 6 reactions x 4 poll phases at 50 ms). Rename to
+// park-feel-8.test.ts once `node input/park-sweep.ts 8` is 24/24 with the slowest cell under 90 s.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Lesson } from '../src/exercise.ts';
 import { drivePark, REACT_MS } from './park-model.ts';
 
-/** Poll phases inside one 50 ms repaint: the first, and one in the middle. */
-const PHASES_MS = [0, 25] as const;
+const PHASES_MS = [0, 12, 25, 37] as const;
 
-for (const lesson of [7, 8] as const satisfies readonly Lesson[]) {
-  test(`bài ${lesson}: the page's own cue brings a ${REACT_MS.join('/')} ms reader to 100 and the signal`, () => {
-    const bad: string[] = [];
-    for (const react of REACT_MS) {
-      for (const phase of PHASES_MS) {
-        const o = drivePark(lesson, react, phase, 150);
-        const ok = o.score === 100 && o.signal && !o.disqualified;
-        console.log(
-          `     bài ${lesson} react ${react} phase ${phase}: score ${o.score} signal ${o.signal} ` +
-            `run ${o.runS.toFixed(0)} s [${o.pents.join(',')}]`,
-        );
-        if (!ok) bad.push(`${react}/${phase}: ${o.score} ${o.signal ? 'signal' : 'no signal'} [${o.pents}]`);
-      }
+test(`bài 8: the page alone brings every ${REACT_MS.join('/')} ms reader to 100 and the signal`, () => {
+  const bad: string[] = [];
+  for (const react of REACT_MS) {
+    for (const phase of PHASES_MS) {
+      const o = drivePark(8, react, phase, 150);
+      if (!(o.score === 100 && o.signal && !o.disqualified && o.runS < 90)) bad.push(`${react}/${phase}: ${o.score} ${o.signal ? 'signal' : 'no signal'} ${o.runS.toFixed(0)} s [${o.pents}]`);
     }
-    assert.deepEqual(bad, [], `cells that did not finish clean: ${bad.join(' | ')}`);
-  });
-}
+  }
+  assert.deepEqual(bad, [], `cells that did not finish clean: ${bad.join(' | ')}`);
+});

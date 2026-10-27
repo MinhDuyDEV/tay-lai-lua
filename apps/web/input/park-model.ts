@@ -51,6 +51,13 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let tick = 0;
   let lastPedal = '';
   let parkPressTick = -Infinity;
+  // A timed pulse: the learner lets go when the line says so, counts `holdMs` from there and presses; their
+  // press trails the count by a quarter of their reaction (they follow a bar that is filling, not a flash).
+  let pulseEnd = -Infinity;
+  let counting = false;
+  let braking = false;
+  let stoppedBy = 0;
+  const trackTicks = Math.round(0.25 * ((reactMs + phaseMs) / 1000) * 60);
   // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
   setSliceWork(SLICE_WORK);
   let c = ex.cueNow!(s, ruleset, yard);
@@ -62,7 +69,19 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       if (c.steer === 'right') next.add('ArrowRight');
       // Pedals: on the clutch and the brake together (a brake with the clutch up stalls the car) except
       // when the word says the car is to move.
-      if (c.pedal !== 'creep') {
+      if (counting && tick >= pulseEnd) {
+        counting = false;
+        braking = true;
+        stoppedBy = tick + lateTicks + 60;
+      }
+      // The pedals stay down until the car has stopped: a second after the press, or at the next standing cue.
+      if (braking && (tick >= stoppedBy || c.holdMs > 0 || c.pedal === 'wheel' || c.pedal === 'clutch')) braking = false;
+      if (counting) {
+        // counting: feet stay off whatever the words say until the time is up
+      } else if (c.pedal === 'creep' && c.holdMs > 0) {
+        pulseEnd = tick + Math.round((c.holdMs / 1000) * 60) + trackTicks;
+        counting = true;
+      } else if (c.pedal !== 'creep' || braking) {
         next.add('Space');
         next.add('ArrowDown');
       }
