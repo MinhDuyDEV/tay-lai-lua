@@ -11,7 +11,7 @@ import { hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
-import { cueGhep, holdAid, hullOutside, yardOf, type HoldTimer } from './ghep.ts';
+import { cueGhep, holdAid, hullOutside, newHoldTimer, yardOf, type HoldTimer } from './ghep.ts';
 import { lightName, zoneName, type LightName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
@@ -68,7 +68,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const holdEl = useRef<HTMLDivElement>(null);
   const holdFill = useRef<HTMLDivElement>(null);
   const holdText = useRef<HTMLSpanElement>(null);
-  const holdTimer = useRef<HoldTimer>({ ms: 0, t0: null });
+  const holdTimer = useRef<HoldTimer>(newHoldTimer());
   /** The widest gap the aid has been seen at, so the bar's scale does not jump as the car rolls up. */
   const spanRef = useRef(12);
   /** The figure's centreline, read once from the core; the same polyline the scene draws. */

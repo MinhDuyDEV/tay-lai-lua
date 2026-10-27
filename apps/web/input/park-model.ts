@@ -6,7 +6,7 @@
 // the bar (`holdAid`) says `now`, a full reaction plus the poll phase later (`trackFactor` 1, the gate).
 import { readFileSync } from 'node:fs';
 import { exerciseFor, type Lesson } from '../src/exercise.ts';
-import { holdAid, LEAD_S, setSliceWork, yardOf, type HoldTimer } from '../src/ghep.ts';
+import { holdAid, newHoldTimer, setSliceWork, yardOf, type HoldTimer } from '../src/ghep.ts';
 import type { Ruleset } from '../src/ruleset.ts';
 import { openSession, parkRects, seedWord, type SimState } from '../src/sim/session.ts';
 import { createDriver, steerFeel } from './driver.ts';
@@ -41,7 +41,17 @@ export interface Outcome {
  * what the page shows a full reaction + poll phase after it shows it (the gate); 0.25 and 0 anticipate the bar
  * and are run for information only.
  */
-export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 1): Outcome {
+export interface Variant {
+  /** Each action is late by the reaction + phase plus up to this much either way, ms. The gate uses 40. */
+  jitterMs?: number;
+  /** Off: the bar's lead stays at `LEAD_S`. */
+  calibrate?: boolean;
+  /** The bar is fed this lag (s) instead of the one it measures: a broken calibration. */
+  forceLagS?: number;
+}
+
+export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 1, variant: Variant = {}): Outcome {
+  const jitterMs = variant.jitterMs ?? 40;
   const ex = exerciseFor(lesson);
   const session = openSession(bytes(), seedWord(lesson));
   const yard = yardOf(parkRects(session.course)!);
@@ -52,7 +62,21 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
 
   const lateTicks = Math.round(((reactMs + phaseMs) / 1000) * 60);
   const pollTicks = Math.round((POLL_MS / 1000) * 60);
-  const queue: { held: Set<string>; pressed: string[] }[] = [];
+  // Every change of what the learner wants is an action; it lands `lateTicks` plus a jitter of up to
+  // `jitterMs` either way later (people are not metronomes), and actions land in the order they were made.
+  const pending: { at: number; held: Set<string>; pressed: string[] }[] = [];
+  let seed = (reactMs * 1009 + phaseMs * 31 + lesson) >>> 0;
+  const rand = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let lastWant = '';
+  let lastAt = 0;
+  let jitterTicks = 0;
+  let heldNow = new Set<string>(['Space']);
   let want = new Set<string>();
   let owed: string[] = [];
   let tick = 0;
@@ -67,8 +91,10 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   // The bar is read where the page reads it: the same `holdAid` on the sim's state, every frame. The learner
   // presses when the bar says `now`, a reaction later (the queue below). `trackFactor` 1 is that, and is the gate;
   // below 1 the learner anticipates the bar by the missing share of the reaction (information only).
-  const timer: HoldTimer = { ms: 0, t0: null };
-  const pressLeadMs = LEAD_S * 1000 + (1 - trackFactor) * (reactMs + phaseMs);
+  const timer: HoldTimer = newHoldTimer();
+  timer.calibrate = variant.calibrate ?? true;
+  timer.forceLagS = variant.forceLagS;
+  const anticipateMs = (1 - trackFactor) * (reactMs + phaseMs);
   // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
   setSliceWork(SLICE_WORK);
   let c = ex.cueNow!(s, ruleset, yard);
@@ -81,7 +107,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       if (c.steer === 'right') next.add('ArrowRight');
       // Pedals: on the clutch and the brake together (a brake with the clutch up stalls the car) except
       // when the word says the car is to move.
-      if (counting && ((bar.state !== 'ready' && bar.state !== 'idle' && bar.leftMs <= pressLeadMs) || tick > countedAt + countTicks + 90)) {
+      if (counting && ((bar.state !== 'ready' && bar.state !== 'idle' && bar.leftMs <= timer.lead * 1000 + anticipateMs) || tick > countedAt + countTicks + 90)) {
         counting = false;
         braking = true;
         stoppedBy = tick + lateTicks + 60;
@@ -114,9 +140,22 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       want = next;
       if (process.env.PT && tick % 30 === 0) console.log((tick / 60).toFixed(1), c.pedal, c.steer, c.gear, s.speedMps.toFixed(2), s.carX.toFixed(2), s.carY.toFixed(2), ((s.heading * 180) / Math.PI).toFixed(0), c.plan ? c.plan.legs.map((g) => (g.dir > 0 ? 'F' : 'R') + (g.steerRad > 0 ? '+' : g.steerRad < 0 ? '-' : '0') + g.len.toFixed(1)).join(' ') : '-');
     }
-    queue.push({ held: new Set(want), pressed: owed });
+    const sig = [...want].sort().join(',');
+    if (sig !== lastWant || owed.length) {
+      lastWant = sig;
+      jitterTicks = Math.round(((rand() * 2 - 1) * jitterMs) / (1000 / 60));
+    }
+    const at = Math.max(lastAt, tick + lateTicks + jitterTicks);
+    lastAt = at;
+    pending.push({ at, held: new Set(want), pressed: owed });
     owed = [];
-    const seen = queue.length > lateTicks ? queue.shift()! : { held: new Set<string>(['Space']), pressed: [] };
+    let pressedNow: string[] = [];
+    while (pending.length && pending[0].at <= tick) {
+      const e = pending.shift()!;
+      heldNow = e.held;
+      pressedNow = pressedNow.concat(e.pressed);
+    }
+    const seen = { held: heldNow, pressed: pressedNow };
     const r = session.step(driver.step(seen.held, seen.pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
     s = r.state;
     for (const e of r.events) {

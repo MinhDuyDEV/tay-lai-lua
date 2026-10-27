@@ -453,38 +453,72 @@ export const READ_S = 0.5;
  */
 const WHEEL_SET_RAD = 0.02;
 
-/** What the hold bar remembers between frames: the time it was shown for, and when the pedals came up. */
+/**
+ * What the hold bar remembers between frames: the time it was shown for, when the pedals came up, and the
+ * lead it asks the press early by. The lead starts at `LEAD_S` and follows the learner: each pulse, the gap
+ * from the bar saying `now` to the brake rising is measured (from the published state only), and the lead
+ * becomes the median of the last `LAGS_KEPT` gaps, kept in the reaction band.
+ */
 export interface HoldTimer {
   ms: number;
   t0: number | null;
+  /** Seconds before the end of the count that the bar says `now`. */
+  lead: number;
+  /** The last measured press lags, seconds. */
+  lags: number[];
+  /** The frame the bar first said `now` in this pulse, until the press has been measured. */
+  nowTick: number | null;
+  prevBrake: number;
+  /** Test hooks for the broken variants: `calibrate` off keeps the lead fixed; `forceLagS` records that lag instead of the measured one. */
+  calibrate: boolean;
+  forceLagS?: number;
 }
+export const newHoldTimer = (): HoldTimer => ({ ms: 0, t0: null, lead: LEAD_S, lags: [], nowTick: null, prevBrake: 0, calibrate: true });
 export interface HoldAid {
   state: 'idle' | 'ready' | 'counting' | 'now';
   ms: number;
   leftMs: number;
 }
+/** The reaction band the lead is kept in, seconds: a 150 ms reader to a 400 ms reader with the poll. */
+const LEAD_MIN_S = 0.15;
+const LEAD_MAX_S = 0.45;
+const LAGS_KEPT = 3;
 
 /**
  * The bar behind a timed pulse. It is `ready` while the car stands with the pedals down and the cue has a
  * time; it starts counting when the brake comes up (the learner has let go) and runs on the sim's own clock,
- * so it neither speeds up nor lags with the page; it says `now` `LEAD_S` before the time is up (the reaction the learner will add), and goes `idle` once the
- * car is still again with the pedals down.
+ * so it neither speeds up nor lags with the page; it says `now` `lead` before the time is up (the reaction the
+ * learner will add), and goes `idle` once the car is still again with the pedals down.
  */
 export function holdAid(t: HoldTimer, s: SimState, cueHoldMs: number): HoldAid {
   const down = s.brake > 0.8;
   if (cueHoldMs > 0 && down) {
     t.ms = cueHoldMs;
     t.t0 = null;
+    t.nowTick = null;
   } else if (t.ms > 0 && t.t0 === null && !down) {
     t.t0 = s.tick;
   } else if (t.ms > 0 && t.t0 !== null && down && Math.abs(s.speedMps) < 0.05) {
     t.ms = 0;
     t.t0 = null;
+    t.nowTick = null;
   }
+  const rising = s.brake > t.prevBrake + 0.005;
+  t.prevBrake = s.brake;
   if (t.ms === 0) return { state: 'idle', ms: 0, leftMs: 0 };
   if (t.t0 === null) return { state: 'ready', ms: t.ms, leftMs: t.ms };
   const leftMs = Math.max(0, t.ms - ((s.tick - t.t0) / 60) * 1000);
-  return { state: leftMs <= LEAD_S * 1000 ? 'now' : 'counting', ms: t.ms, leftMs };
+  const now = leftMs <= t.lead * 1000;
+  if (now && t.nowTick === null) t.nowTick = s.tick;
+  else if (now && t.nowTick !== null && t.nowTick >= 0 && rising) {
+    const lag = t.forceLagS ?? (s.tick - t.nowTick) / 60;
+    t.nowTick = -1;
+    if (t.calibrate) {
+      t.lags = [...t.lags, Math.min(LEAD_MAX_S, Math.max(LEAD_MIN_S, lag))].slice(-LAGS_KEPT);
+      t.lead = [...t.lags].sort((a, b) => a - b)[Math.floor(t.lags.length / 2)];
+    }
+  }
+  return { state: now ? 'now' : 'counting', ms: t.ms, leftMs };
 }
 
 /** The gear word for the advice line: what to hold down before the gear goes in. */
@@ -770,11 +804,11 @@ export function adviceGhep(
     return 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
   }
   if (timedReachM(plan!, leg!) !== null && Math.abs(s.speedMps) >= 0.05) {
-    return `Đang đi: khi thanh đếm còn ${(LEAD_S).toFixed(1).replace('.', ',')} giây thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
+    return 'Đang đi: khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.';
   }
   if (cue.holdMs > 0) {
     const sec = (ms: number) => (ms / 1000).toFixed(1).replace('.', ',');
-    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way}; khi thanh đếm còn ${sec(LEAD_S * 1000)} giây (xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả) thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
+    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way}; xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả, và khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
   }
   return `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
 }
