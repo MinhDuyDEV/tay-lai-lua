@@ -285,7 +285,9 @@ async function driveFigure(page, { allowed, throttle = false }) {
  * (the pedal word) and `data-gear-wanted` (the gear to put in). Nothing is pressed that the line did not
  * ask for. The learner polls every 50 ms and, when the reading changed, waits PARK_REACTION_MS and then
  * acts on *that* reading even if the line has moved on: a cue that comes late fails here.
- *   creep  — feet off both pedals (the clutch is up and the car moves on its own)
+ *   creep  — feet off both pedals (the clutch is up and the car moves on its own); when the line also gives a
+ *            time (`data-hold-ms`) the pulse is timed: feet off, then Space and ↓ when the hold bar
+ *            (`[data-aid=hold]`) says `now`, PARK_REACTION_MS after it does
  *   brake / wheel / clutch / hold — Space and ↓ together; `wheel` and the arrow together set the lock
  *   park   — P once (handbrake); enter — Enter (the finish); data-gear-wanted — 1 or R with the pedal down
  */
@@ -302,7 +304,21 @@ async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'do
     for (const k of [...held]) if (!want.has(k)) { await key.up(k); held.delete(k); }
     for (const k of want) if (!held.has(k)) { await key.down(k); held.add(k); }
   };
-  const read = () => page.$eval('.advice', (el) => ({ cue: el.dataset.cue ?? '', pedal: el.dataset.pedal ?? '', gear: el.dataset.gearWanted ?? '', text: el.textContent ?? '' }));
+  const read = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('.advice');
+      return {
+        cue: el.dataset.cue ?? '',
+        pedal: el.dataset.pedal ?? '',
+        gear: el.dataset.gearWanted ?? '',
+        hold: Number(el.dataset.holdMs ?? 0),
+        bar: document.querySelector('[data-aid=hold]')?.dataset.state ?? '',
+        text: el.textContent ?? '',
+      };
+    });
+  // A timed pulse: `counting` from the feet coming off to the bar saying `now`, then `braking` until the car has stopped.
+  let pulse = 'idle';
+  let pressedAt = 0;
   let seen = '';
   let lastP = -Infinity;
   const end = Date.now() + maxMs;
@@ -312,6 +328,36 @@ async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'do
     if (bad.length) throw new Error(`unexpected penalty ${bad} at progress ${d.progress}\nstate: ${JSON.stringify(d)}`);
     if (await page.evaluate((c) => new Function('d', `return (${c});`)(document.querySelector('#stage').dataset), stopWhen)) break;
     const r = await read();
+    const steer = new Set();
+    if (r.cue === 'left') steer.add('ArrowLeft');
+    if (r.cue === 'right') steer.add('ArrowRight');
+    if (pulse === 'counting') {
+      if (r.bar === 'now') {
+        await page.waitForTimeout(PARK_REACTION_MS);
+        await hold(new Set([...steer, 'Space', 'ArrowDown']));
+        pulse = 'braking';
+        pressedAt = Date.now();
+      }
+      await page.waitForTimeout(50);
+      continue;
+    }
+    if (pulse === 'braking') {
+      // Pedals stay down until the car has stopped: the line asks for a wheel or a gear, or shows a time again.
+      if (Date.now() - pressedAt < 700 || !(r.hold > 0 || r.pedal === 'wheel' || r.pedal === 'clutch')) {
+        if (Date.now() - pressedAt > 3000) pulse = 'idle';
+        await page.waitForTimeout(50);
+        continue;
+      }
+      pulse = 'idle';
+    }
+    if (r.pedal === 'creep' && r.hold > 0) {
+      console.log(`     the line says [${r.cue}|creep|${r.hold} ms]: ${r.text.trim().slice(0, 110)}`);
+      await page.waitForTimeout(PARK_REACTION_MS);
+      await hold(steer);
+      pulse = 'counting';
+      seen = '';
+      continue;
+    }
     const sig = `${r.cue}|${r.pedal}|${r.gear}`;
     if (sig !== seen) {
       seen = sig;
