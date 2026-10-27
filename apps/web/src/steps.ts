@@ -4,7 +4,7 @@
 // One list per exercise; `exercise.ts` picks which one a page uses.
 
 import { DT } from '../input/driver.ts';
-import { coastDecel, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
+import { coastDecel, gearSignM, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
 import type { FigureCue } from './figures.ts';
 import type { SimState } from './sim/session.ts';
 
@@ -33,7 +33,10 @@ export type StepId =
   | 'approach'
   | 'yield'
   | 'through'
-  | 'end';
+  | 'end'
+  // bài 10
+  | 'shift2'
+  | 'shift1';
 
 export interface Step {
   id: StepId;
@@ -126,6 +129,29 @@ export function markPark(done: Set<StepId>, state: SimState): void {
   if (state.gear === -1) done.add('back');
   if (state.hullInside) done.add('inside');
   if (state.finishSignal) done.add('signal');
+}
+
+/**
+ * Bài 10's checklist: the law's own order — start, shift up inside the first 25 m and be above 24 km/h
+ * at sign 2, then bring the speed down, shift back and be below 24 km/h at sign 3
+ * (`gear.speed`, `gear.back`, `assumptions.gear_speed_reading`). Every step is marked from a sign the
+ * bumper has actually crossed, so the checklist cannot tick a step the car has not done yet.
+ */
+export const GEAR_STEPS: readonly Step[] = [
+  { id: 'gear', label: 'Côn + số 1, nhả phanh tay', key: 'Space, 1, P' },
+  { id: 'away', label: 'Chạy đà bằng số 1 tới biển thứ nhất', key: '↑' },
+  { id: 'shift2', label: 'Qua biển 1: lên số 2, đủ nhanh ở biển 2', key: 'Space, 2, ↑' },
+  { id: 'shift1', label: 'Qua biển 2: giảm tốc, về số 1, đủ chậm ở biển 3', key: '↓, Space, 1' },
+  { id: 'end', label: 'Qua biển thứ ba là hết bài', key: '—' },
+];
+
+export function markGear(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+  if (!ruleset.gear) return;
+  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (state.frontBumperM >= gearSignM(ruleset.gear, 0)) done.add('away');
+  if (state.frontBumperM >= gearSignM(ruleset.gear, 1)) done.add('shift2');
+  if (state.frontBumperM >= gearSignM(ruleset.gear, 2)) done.add('shift1');
+  if (state.phase === 'done' && !state.disqualified) done.add('end');
 }
 
 /** Seconds left of the 30 s since the stop, or null before the stop. */

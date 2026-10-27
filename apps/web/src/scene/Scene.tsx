@@ -19,7 +19,7 @@ import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Exercise } from '../exercise.ts';
-import { hillOf, type Ruleset } from '../ruleset.ts';
+import { gearOf, hillOf, type Ruleset } from '../ruleset.ts';
 import type { Run } from '../run.ts';
 
 const Y = 0.02; // planes sit just above the ground to avoid z-fighting
@@ -333,6 +333,117 @@ function RoadCourse({ run, live }: { run: Run; live?: boolean }) {
 }
 
 /**
+ * Bài 10: the same straight lane as the road lessons, plus the three signs the two zones are judged at.
+ * The lane, the limit lines and the posts all come from the core's own figure (`sim_course`: kinds 1, 2
+ * and 5, and kind 6 with `line_id` 5 for a post's foot), so the sign a learner aims at is the sign the
+ * bumper is measured against. The plate faces the car and reads the ruleset's own speed.
+ *
+ * The first sign is "Bắt đầu tăng số, tăng tốc độ" (a blue plate with the gear-and-arrow mark); the
+ * second and third are the minimum- and maximum-speed plates of Hình 17, both carrying the same 24 of
+ * `gear.speed_kmh` because Hình 17 gives two plates and one value (`assumptions.gear_signs`).
+ */
+function GearCourse({ run, ruleset }: { run: Run; ruleset: Ruleset }) {
+  const gear = gearOf(ruleset);
+  const drawing = useMemo(() => {
+    const lines: { kind: number; points: readonly (readonly [number, number])[] }[] = [];
+    const posts: (readonly [number, number])[] = [];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const record of run.course) {
+      if (record.kind === 6 && record.lineId === 5) {
+        posts.push(record.points[0]);
+        continue;
+      }
+      if (record.kind === 1 || record.kind === 2) lines.push({ kind: record.kind, points: record.points });
+      for (const [x, y] of record.points) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      }
+    }
+    return { lines, posts, minX, maxX, minY, maxY };
+  }, [run.course]);
+
+  return (
+    <group>
+      <mesh position={[(drawing.minX + drawing.maxX) / 2, -0.02, -(drawing.minY + drawing.maxY) / 2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[Math.max(30, drawing.maxX - drawing.minX + 20), Math.max(10, drawing.maxY - drawing.minY + 8)]} />
+        <meshStandardMaterial color="#3b3f45" roughness={1} />
+      </mesh>
+      {drawing.lines.map((line, i) => (
+        <Polyline key={`line-${i}`} points={line.points} colour={line.kind === 2 ? '#8a7a52' : '#e8e8e8'} width={line.kind === 2 ? 0.15 : 0.1} y={line.kind === 2 ? 0.06 : Y} />
+      ))}
+      {drawing.posts.map((at, i) => (
+        <GearSign key={`sign-${i}`} at={at} index={i} speedKmh={gear.speed_kmh} />
+      ))}
+    </group>
+  );
+}
+
+/**
+ * One sign of Hình 17, on the post the core gives. Index 0 is the "tăng số" plate, 1 the minimum-speed
+ * plate and 2 the maximum-speed plate; the two speed plates carry the same number because the exercise is
+ * judged at one speed in both zones.
+ */
+function GearSign({ at, index, speedKmh }: { at: readonly [number, number]; index: number; speedKmh: number }) {
+  const face = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const c = canvas.getContext('2d');
+    if (c) {
+      // A blue disc with a white rim, as the Vietnamese mandatory plates are drawn.
+      c.fillStyle = '#1348a0';
+      c.beginPath();
+      c.arc(64, 64, 60, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 7;
+      c.stroke();
+      c.fillStyle = '#ffffff';
+      if (index === 0) {
+        // "Bắt đầu tăng số, tăng tốc độ": two arrows, one up and one up-and-right.
+        c.lineWidth = 9;
+        c.strokeStyle = '#ffffff';
+        for (const dx of [-18, 16]) {
+          c.beginPath();
+          c.moveTo(64 + dx - 8, 96);
+          c.lineTo(64 + dx + 8, 34);
+          c.stroke();
+        }
+        for (const dx of [-18, 16]) {
+          c.beginPath();
+          c.moveTo(64 + dx - 1, 30);
+          c.lineTo(64 + dx + 17, 42);
+          c.lineTo(64 + dx - 1, 52);
+          c.closePath();
+          c.fill();
+        }
+      } else {
+        c.font = 'bold 62px system-ui, sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(String(Math.round(speedKmh)), 64, 70);
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+  }, [index, speedKmh]);
+  return (
+    <group position={[at[0], 0, -at[1]]}>
+      <mesh position={[0, 1.05, 0]}>
+        <cylinderGeometry args={[0.04, 0.04, 2.1, 6]} />
+        <meshStandardMaterial color="#9aa0a6" />
+      </mesh>
+      {/* Facing the car as it comes up the road: the plate's normal toward -x. */}
+      <mesh position={[0, 2.3, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[0.9, 0.9]} />
+        <meshBasicMaterial map={face} transparent side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
  * The signal head, at the position the core gives: a post with the three-lamp plate on it. Bài 2 and
  * bài 9 are not signalled — the head is the scene's own furniture there — so its lamps stay dark and
  * the exercise draws no state on it. Bài 5's light is the core's snapshot field 46, so the lamp that
@@ -636,6 +747,8 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
         <HillCourse ruleset={ruleset} />
       ) : exercise.lesson === 4 || exercise.lesson === 6 ? (
         <FigureCourse run={run} />
+      ) : exercise.lesson === 10 ? (
+        <GearCourse run={run} ruleset={ruleset} />
       ) : exercise.lesson === 2 || exercise.lesson === 5 || exercise.lesson === 9 || exercise.lesson === 11 ? (
         <RoadCourse run={run} live={exercise.lesson === 5} />
       ) : (

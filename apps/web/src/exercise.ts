@@ -12,7 +12,9 @@ import {
   adviceJunction,
   adviceRoad,
   cueBai3,
+  GEAR_STEPS,
   JUNCTION_STEPS,
+  markGear,
   markJunction,
   markRoad,
   roadSteps,
@@ -27,10 +29,11 @@ import {
   type Step,
   type StepId,
 } from './steps.ts';
+import { adviceGear, gearCue } from './gear.ts';
 import { hillOf, junctionOf, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
-export type Lesson = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 11;
+export type Lesson = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 
 /** Bài 7 and bài 8: the reverse park, whose figures are two rectangles the core publishes. */
 export type ParkLesson = 7 | 8;
@@ -149,6 +152,7 @@ const EXERCISES: Record<Lesson, Exercise> = {
   5: junction(5, seedWord(5, 1n)),
   7: park(7, seedWord(7)),
   8: park(8, seedWord(8)),
+  10: gear(),
 };
 
 export const exerciseFor = (lesson: Lesson): Exercise => EXERCISES[lesson];
@@ -189,6 +193,30 @@ function road(lesson: RoadLesson, title: string, description: string): Exercise 
     stop: lesson === 11 ? () => null : (state, ruleset) => stopAid(state, ruleset, flatRoad('brake')),
     signals: SIGNAL_LESSONS.has(lesson),
     stops: lesson !== 11,
+    introKeys: 5,
+  };
+}
+
+/**
+ * Bài 10: the straight road with three signs, driven only from the advice line. The cue is a word the
+ * learner acts on (`gear.ts`), not a number to hit, because the judged instants are two sign crossings
+ * and the learner is 150–400 ms behind everything they read. Its seed is the exercise's own (`seedWord`
+ * puts the exercise id in the top byte), so a recorded trace replays to the same run.
+ */
+function gear(): Exercise {
+  return {
+    lesson: 10,
+    title: 'Bài 10 — Thay đổi số trên đường bằng',
+    description:
+      'Thay đổi số trên đường bằng (Hình 17): qua biển thứ nhất thì lên số 2 và trên 24 km/h ở biển thứ hai, rồi giảm tốc, về số 1 và dưới 24 km/h ở biển thứ ba, bằng bàn phím.',
+    seed: seedWord(10),
+    steps: GEAR_STEPS,
+    mark: markGear,
+    advice: (state, ruleset) => adviceGear(state, ruleset),
+    cue: (state, ruleset) => gearCue(state, ruleset),
+    stop: () => null,
+    signals: SIGNAL_LESSONS.has(10),
+    stops: false,
     introKeys: 5,
   };
 }
