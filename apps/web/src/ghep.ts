@@ -368,7 +368,8 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = R
     // A reverse leg is driven in timed pulses (see `holdMsFor`): the timer is what stops the car, and this
     // word is only its backup, so it asks for no reaction in hand. A forward leg has no timer and keeps it.
     const timed = timedReachM(plan, leg);
-    const reach = timed ?? leg.len;
+    // A forward leg longer than a timed pulse is stopped on the word, a timed pulse short of its end.
+    const reach = timed ?? (leg.dir === 1 ? Math.max(0.2, leg.len - TIMED_FORWARD_M / 2) : leg.len);
     const left = reach - legProgress(run!.anchor, pose, leg, ruleset);
     const lead = stoppingLeadM(ruleset, speed, timed === null ? reactionS : 0);
     return { steer, pedal: left <= lead ? 'brake' : 'creep', gear: 0, parked, plan, holdMs: 0 };
@@ -412,7 +413,7 @@ const FORWARD_PULSE: ReadonlyArray<readonly [number, number]> = [
   [1.3, 0.98], [1.4, 1.13], [1.5, 1.29], [1.6, 1.45], [1.7, 1.63], [1.8, 1.81], [1.9, 2.0], [2.0, 2.19],
 ];
 /** How far a timed forward pulse may go, metres: the end of the table. */
-const TIMED_FORWARD_M = 2.1;
+const TIMED_FORWARD_M = 0.45;
 
 /** Metres this leg's pulse is timed to cover, or null when the leg is stopped on the brake word instead. */
 function timedReachM(plan: Plan, leg: Leg): number | null {
