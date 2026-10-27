@@ -374,7 +374,7 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = R
  * slowest reader the page is meant for (a 400 ms reaction, a 50 ms poll and the pedal's own rise). A
  * quicker reader stops a little short, which the next stop's plan absorbs; a slower one overshoots.
  */
-export const READ_S = 0.45;
+export const READ_S = 0.5;
 
 /**
  * How near the wheel must be to the lock a leg wants before the car is let go, as a share of full lock. Wide,
