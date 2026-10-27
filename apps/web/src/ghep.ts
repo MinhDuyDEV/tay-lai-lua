@@ -765,8 +765,7 @@ function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floorWanted: num
       return { legs: [leg], end: endPose(from, [leg], ruleset), margin: fin.margin, shunts: 0, length: fin.len };
     }
   }
-  let best: Plan | null = null;
-  let bestScore = -Infinity;
+  const found: Array<{ a: number; idx: number; score: number; plan: Plan }> = [];
   for (const a of [lock, -lock]) {
     let p1 = from;
     let m1 = start;
@@ -806,11 +805,26 @@ function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floorWanted: num
         // A second arc costs a stop and a lock change the car can only make standing still; it has to buy
         // clearance to be worth it, or the solver trades a plain arc for a micro-arc and a shunt.
         const score = fin.margin - (s2 > 0 ? SECOND_ARC_PRICE_M : 0);
-        if (!best || score > bestScore + 0.01 || (score > bestScore - 0.01 && length < best.length)) {
-          best = { legs, end: endPose(p2, [{ dir: -1, steerRad: 0, len: fin.len }], ruleset), margin: fin.margin, shunts: 0, length };
-          bestScore = score;
-        }
+        found.push({
+          a,
+          idx: Math.round(s1 / ARC_STEP),
+          score,
+          plan: { legs, end: endPose(p2, [{ dir: -1, steerRad: 0, len: fin.len }], ruleset), margin: fin.margin, shunts: 0, length },
+        });
       }
+    }
+  }
+  // The first arc is the one a tap cannot end where it is told (a stop lands a pulse long or short), so the
+  // line chosen is the one with the most first-arc lengths either side of it that also work.
+  const near = Math.max(1, Math.round(pulseM(ruleset) / ARC_STEP));
+  let best: Plan | null = null;
+  let bestKey = [-1, -Infinity, 0];
+  for (const c of found) {
+    const room = found.reduce((n, o) => n + (o !== c && o.a === c.a && Math.abs(o.idx - c.idx) <= near ? 1 : 0), 0);
+    const key = [Math.min(room, 2 * near), c.score, -c.plan.length];
+    if (key[0] > bestKey[0] || (key[0] === bestKey[0] && (key[1] > bestKey[1] + 0.01 || (key[1] > bestKey[1] - 0.01 && key[2] > bestKey[2])))) {
+      best = c.plan;
+      bestKey = key;
     }
   }
   return best;
