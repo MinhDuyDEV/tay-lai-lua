@@ -37,6 +37,7 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// * 7 — bài 7 (Ghép xe dọc vào nơi đỗ);
 /// * 8 — bài 8 (Ghép xe ngang vào nơi đỗ);
 /// * 9 — bài 9 (Tạm dừng ở chỗ có đường sắt chạy qua);
+/// * 10 — bài 10 (Thay đổi số trên đường bằng);
 /// * 11 — bài 11 (Kết thúc).
 ///
 /// Bits 0..55 are the seed proper. For bài 5 they also pick the light's phase: the offset into the
@@ -115,8 +116,8 @@ pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) 
 /// * kind 3 — a vệt bánh xe line (bài 4 only), a limit line the learner must drive through;
 /// * kind 4 — a gate: entry, exit, vệt start, vệt end (`line_id` = 1, 2, 3, 4), npoints = 2;
 /// * kind 5 — the lane centreline, for arrow and cue drawing;
-/// * kind 6 — a transverse marking (bài 2, 5, 9, 11), npoints = 2, `line_id` 1 stop line /
-///   2 finish or end line / 3 crosswalk stripe / 4 rail;
+/// * kind 6 — a transverse marking (bài 2, 5, 9, 10, 11), npoints = 2, `line_id` 1 stop line /
+///   2 finish or end line / 3 crosswalk stripe / 4 rail / 5 sign (bài 10, both points the post's foot);
 /// * kind 7 — the signal head's position (bài 2, 5, 9), one point.
 ///
 /// Records arrive in that order: lines, gates, centreline, markings, signal, and — for bài 7 and

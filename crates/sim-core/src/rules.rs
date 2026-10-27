@@ -24,7 +24,40 @@ pub struct Ruleset {
     pub junction: Junction,
     /// Bài 7 and bài 8: the two bays, generated from the formulas and the car's own dimensions.
     pub park: Park,
+    /// Bài 10: the signs and the speed the two 25 m zones are judged at.
+    pub gear: Gear,
     pub rules: Vec<Rule>,
+}
+
+/// Bài 10 — thay đổi số trên đường bằng (Hình 17). Positions are metres from the start line, the
+/// same axis as `Road`; the readings the law leaves open are under `assumptions` (`gear_*`).
+#[derive(Deserialize)]
+pub struct Gear {
+    /// The first sign ("Bắt đầu tăng số, tăng tốc độ"), metres from the start line.
+    pub first_sign_m: f64,
+    /// Distance between consecutive signs, and the length of each judged zone.
+    pub zone_length_m: f64,
+    /// The straight segment's length, so the scene reaches past the last sign.
+    pub road_length_m: f64,
+    /// Class B's speed line, km/h: above it at the end of zone 1, below it at the end of zone 2.
+    pub speed_kmh: f64,
+    /// The longest a run may last, so a wrong attempt still has an end.
+    pub exam_cap_s: f64,
+}
+
+impl Gear {
+    /// Sign `i` (0 = first, 2 = last), metres from the start line.
+    pub fn sign_m(&self, i: usize) -> f64 {
+        self.first_sign_m + self.zone_length_m * i as f64
+    }
+
+    pub fn speed_mps(&self) -> f64 {
+        self.speed_kmh / 3.6
+    }
+
+    pub fn exam_cap_ticks(&self) -> u32 {
+        seconds_to_ticks(self.exam_cap_s)
+    }
 }
 
 /// Bài 2, bài 9 and bài 11: the numbers of a straight-road exercise. Every position the scoring
@@ -427,6 +460,8 @@ pub struct Thresholds {
     /// signal needs.
     pub park_time_limit_ticks: u32,
     pub park_signal_hold_ticks: u32,
+    /// Bài 10: the 2 minutes SH.SO.QUA_THOI_GIAN charges at.
+    pub gear_time_limit_ticks: u32,
 }
 
 impl SaHinh {
@@ -530,6 +565,7 @@ impl Ruleset {
             junction_30_ticks: seconds_to_ticks(self.rule("SH.05.QUA_30S").params.seconds),
             park_time_limit_ticks: seconds_to_ticks(self.rule("SH.GHEP.QUA_THOI_GIAN").params.seconds),
             park_signal_hold_ticks: self.park.signal_hold_ticks(),
+            gear_time_limit_ticks: seconds_to_ticks(self.rule("SH.SO.QUA_THOI_GIAN").params.seconds),
         }
     }
 }

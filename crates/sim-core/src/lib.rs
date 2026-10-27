@@ -249,6 +249,7 @@ impl Session {
             5 => Exercise::Junction,
             6 => Exercise::Curve,
             9 => Exercise::Rail,
+            10 => Exercise::Gear,
             11 => Exercise::Finish,
             7 => Exercise::GhepDoc,
             8 => Exercise::GhepNgang,
@@ -562,6 +563,12 @@ impl Session {
             h.u32(s.stop.map_or(0, |p| p.tick));
             h.bool(s.finished);
             h.opt_f64(s.finish_signal.map(|sig| f64::from(signal_code(sig))));
+        }
+        // Bài 10 writes its own block: how many zones are judged and the 2-minute charges, both
+        // state the next tick depends on. No other exercise's hash moves.
+        if s.exercise == Exercise::Gear {
+            h.u8(s.gear_zones());
+            h.u32(s.clock_charges());
         }
         // Bài 7 and bài 8 write their own block. The hold counter and the inside flag are state the
         // next tick depends on (the signal is a hold, not a level), so they are hashed.

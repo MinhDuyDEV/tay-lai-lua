@@ -131,7 +131,6 @@ fn the_road_exercises_start_like_bai_3_and_are_on_the_road_route() {
         assert_eq!(snap[ZONE], 2.0, "the car waits inside the stop zone, 1,0 m before the line");
         assert!(!s.course_block().is_empty(), "the scene is drawn");
     }
-    assert!(Session::new(10 << 56).is_none(), "bài 10 is still refused, not run as a road scene");
 }
 
 #[test]

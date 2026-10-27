@@ -44,6 +44,8 @@ pub enum Figure {
     Rail,
     /// Bài 11 — a straight lane with the finish line.
     Finish,
+    /// Bài 10 — a straight lane with the three signs of Hình 17.
+    Gear,
     /// Bài 5 — the right-turn route through the signalled junction.
     Junction,
     /// Bài 7 — ghép xe dọc vào nơi đỗ (Hình 13).
@@ -56,7 +58,8 @@ pub enum Figure {
 /// `sim_course` writes one `[kind = 6, line_id, 2, ax, ay, bx, by]` record per mark.
 #[derive(Clone, Copy, Debug)]
 pub struct Mark {
-    /// 1 stop line | 2 finish/end line | 3 crosswalk stripe | 4 rail.
+    /// 1 stop line | 2 finish/end line | 3 crosswalk stripe | 4 rail | 5 sign (bài 10: both points
+    /// are the post's foot, beside the right-hand limit line).
     pub line_id: u8,
     pub a: (f64, f64),
     pub b: (f64, f64),
@@ -264,7 +267,7 @@ impl Course {
         match figure {
             Figure::Vet => vet_figure(rs),
             Figure::Curve => curve_figure(rs),
-            Figure::Crosswalk | Figure::Rail | Figure::Finish => road_figure(rs, figure),
+            Figure::Crosswalk | Figure::Rail | Figure::Finish | Figure::Gear => road_figure(rs, figure),
             Figure::Junction => junction_figure(rs),
             Figure::GhepDoc | Figure::GhepNgang => park_figure(figure, rs),
         }
@@ -1039,6 +1042,7 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
     let end_m = match figure {
         Figure::Crosswalk => r.crosswalk_m() + r.crosswalk_width_m + r.run_end_past_line_m,
         Figure::Rail => r.rail_m() + r.rail_gauge_m + r.rail_offset_m,
+        Figure::Gear => rs.gear.road_length_m,
         _ => r.finish_m() + r.run_end_past_line_m,
     };
 
@@ -1055,7 +1059,9 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
     let mut marks = Vec::new();
     let a = (0.0, 0.0);
     let b = (end_m, 0.0);
-    marks.extend(across(a, b, r.stop_line_m(), r.stop_line_width_m, half, 1));
+    if figure != Figure::Gear {
+        marks.extend(across(a, b, r.stop_line_m(), r.stop_line_width_m, half, 1));
+    }
     let mut signal = None;
     match figure {
         Figure::Crosswalk => {
@@ -1078,6 +1084,13 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
                 marks.extend(across(a, b, x, r.rail_width_m, half, 4));
             }
             signal = Some((rail0, -half - 0.5));
+        }
+        Figure::Gear => {
+            // Hình 17's three signs stand beside the right-hand limit line.
+            for i in 0..3 {
+                let post = (rs.gear.sign_m(i), -half - 0.5);
+                marks.push(Mark { line_id: 5, a: post, b: post });
+            }
         }
         _ => {}
     }

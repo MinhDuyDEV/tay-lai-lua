@@ -54,6 +54,8 @@ pub enum Exercise {
     Rail,
     /// Bài 11 — Kết thúc.
     Finish,
+    /// Bài 10 — Thay đổi số trên đường bằng.
+    Gear,
     /// Bài 7 — Ghép xe dọc vào nơi đỗ.
     GhepDoc,
     /// Bài 8 — Ghép xe ngang vào nơi đỗ.
@@ -217,6 +219,8 @@ pub struct State {
     pub finish_signal: Option<Signal>,
     /// Bài 11: the car has stopped after crossing the finish line; the run is over.
     pub finished: bool,
+    /// Bài 10: how many of the two zones have been judged.
+    gear_zones: u8,
     /// Bài 2 and bài 9: KHONG_DUNG has been charged, so the run has its verdict and can end.
     pub no_stop_charged: bool,
     /// Bài 5: the front bumper's position on the previous tick, so "the bumper entered the
@@ -292,13 +296,14 @@ impl State {
                 course = Some(built);
                 Phase::Launched
             }
-            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish => {                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
+            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish | Exercise::Gear => {                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
                 // 1 — the same opening state as bài 3. It has a figure too (the lane, the stop
                 // line, the crosswalk or the rails or the finish line), so the page draws the
                 // same numbers the scoring reads.
                 let figure = match exercise {
                     Exercise::Crosswalk => Figure::Crosswalk,
                     Exercise::Rail => Figure::Rail,
+                    Exercise::Gear => Figure::Gear,
                     _ => Figure::Finish,
                 };
                 let built = Course::new(figure, rs).expect("the ruleset gives a drawable scene");
@@ -387,6 +392,7 @@ impl State {
             clock_charges: 0,
             vet_reached: 0,
             moved: false,
+            gear_zones: 0,
             latched: 0,
         }
     }
@@ -428,6 +434,7 @@ impl State {
             Exercise::Crosswalk | Exercise::Rail => self.step_road_stop(rs, t, controls, signal, fired),
             Exercise::Junction => self.step_junction(rs, t, controls, signal, fired),
             Exercise::Finish => self.step_finish(rs, t, controls, signal, fired),
+            Exercise::Gear => self.step_gear(rs, t, controls, signal, fired),
         }
     }
 
@@ -1194,6 +1201,10 @@ impl State {
         self.clock_running
     }
 
+    pub fn gear_zones(&self) -> u8 {
+        self.gear_zones
+    }
+
     pub fn clock_charges(&self) -> u32 {
         self.clock_charges
     }
@@ -1314,6 +1325,70 @@ impl State {
         if !self.disqualified && bumper >= line.line_m + r.run_end_past_line_m {
             // The car drove off down the road; the exercise cannot outlast its own scene.
             self.phase = Phase::Done;
+        }
+    }
+
+    /// Bài 10: from sign 1 on, the two 25 m zones. Each is judged once, on the tick the front
+    /// bumper crosses the zone's far sign, from the gear and the speed at that instant
+    /// (`assumptions.gear_speed_reading`, `gear_end_state`). The run is over when both are judged.
+    fn step_gear(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        self.note_movement();
+
+        // One charge per whole 2 minutes *exceeded*, as in bài 7 and bài 8.
+        let limit = t.gear_time_limit_ticks.max(1);
+        let exceeded = self.tick / limit;
+        if self.tick % limit != 0 && exceeded > self.clock_charges {
+            self.clock_charges = exceeded;
+            self.charge_counted(rs, "SH.SO.QUA_THOI_GIAN", fired);
+        }
+
+        let g = &rs.gear;
+        let bumper = self.front_bumper_x(rs);
+        while self.gear_zones < 2 && bumper >= g.sign_m(usize::from(self.gear_zones) + 1) {
+            let (want_gear, fast) = if self.gear_zones == 0 { (2, true) } else { (1, false) };
+            let gear_ok = controls.gear == want_gear;
+            let speed_ok = if fast { self.car.speed_mps > g.speed_mps() } else { self.car.speed_mps < g.speed_mps() };
+            self.judge_gear_zone(rs, gear_ok, speed_ok, fired);
+        }
+        if self.gear_zones < 2 && self.tick >= g.exam_cap_ticks() {
+            // The cap: a zone the car never reached did not get its change.
+            while self.gear_zones < 2 {
+                self.judge_gear_zone(rs, false, false, fired);
+            }
+        }
+        if self.gear_zones == 2 {
+            self.phase = Phase::Done;
+        }
+    }
+
+    /// One zone's single verdict: wrong gear, wrong speed, or both — and "both" is its own row, not
+    /// the other two added (`assumptions.gear_fault_charging`).
+    fn judge_gear_zone(&mut self, rs: &Ruleset, gear_ok: bool, speed_ok: bool, fired: &mut Vec<FiredRule>) {
+        self.gear_zones += 1;
+        match (gear_ok, speed_ok) {
+            (true, true) => {}
+            (false, true) => {
+                self.charge_counted(rs, "SH.SO.SAI_SO", fired);
+            }
+            (true, false) => {
+                self.charge_counted(rs, "SH.SO.SAI_TOC_DO", fired);
+            }
+            (false, false) => {
+                self.charge_counted(rs, "SH.SO.SAI_CA_HAI", fired);
+            }
         }
     }
 

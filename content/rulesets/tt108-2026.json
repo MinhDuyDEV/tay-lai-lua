@@ -1027,6 +1027,65 @@
         "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ — bảng lỗi",
         "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
       }
+    },
+    {
+      "id": "SH.SO.SAI_SO",
+      "code": 45,
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — bảng lỗi",
+        "quote": "Không thay đổi số theo quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.SO.SAI_TOC_DO",
+      "code": 46,
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — bảng lỗi",
+        "quote": "Không thay đổi tốc độ theo quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.SO.SAI_CA_HAI",
+      "code": 47,
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — bảng lỗi",
+        "quote": "Không thay đổi đúng số và đúng tốc độ quy định, trừ 05 điểm."
+      }
+    },
+    {
+      "id": "SH.SO.QUA_THOI_GIAN",
+      "code": 48,
+      "params": {
+        "seconds": 120.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — bảng lỗi",
+        "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
+      }
     }
   ],
   "assumptions": [
@@ -1393,6 +1452,73 @@
       "field": "park_reverse_gear",
       "value": "số lùi có tỉ số −8,0 (drivetrain.gears[\"-1\"]) — GIẢ ĐỊNH CỦA MÔ PHỎNG, không phải số của xe thật; nhả côn hoàn toàn ở số lùi cho tốc độ bò khoảng 0,77 m/s",
       "why": "Văn bản không nói tỉ số hộp số. Bàn phím không điều khiển được nửa côn, nên tỉ số lùi bị hạ xuống để tốc độ lùi đủ chậm cho người học ghép xe; cái giá là xe lùi chậm hơn xe thật. Xem drivetrain.assumption để biết phạm vi (mọi trang có lùi) và điều phải làm khi đổi số này (ghi lại vết chuẩn bài 7 và bài 8)."
+    },
+    {
+      "field": "gear_speed_reading",
+      "value": "‘trên 24km/h’ là tốc độ của thanh cản trước (tim xe, như measure_point) ĐÚNG LÚC nó qua biển cuối đoạn, và phải lớn hơn 24 km/h (6,667 m/s). Không lấy đỉnh tốc độ trong đoạn, cũng không đòi giữ liên tục.",
+      "why": "Văn bản không nói đo ‘trên 24km/h’ ở đâu hay trong bao lâu. Hình 17 đặt biển ‘tốc độ tối thiểu’ ở +25 m và biển ‘tốc độ tối đa’ ở +50 m, nên đọc là: tới biển tối thiểu thì đã trên 24, tới biển tối đa thì đã dưới 24. Một lần đo ở biển là điều một cảm biến sân làm được và người học nhìn thấy được."
+    },
+    {
+      "field": "gear_reverse_reading",
+      "value": "‘ngược lại’ ở đoạn 25 m còn lại là: tới biển thứ ba xe ở số 1 và tốc độ nhỏ hơn 24 km/h (6,667 m/s), đo ở thanh cản trước như trên.",
+      "why": "Văn bản chỉ nói ‘thay đổi số và tốc độ ngược lại’, không nói dưới bao nhiêu. Chọn chính mốc 24 km/h ở cả hai đoạn, vì Hình 17 chỉ có một giá trị tốc độ ở hai biển."
+    },
+    {
+      "field": "gear_end_state",
+      "value": "Mỗi đoạn chỉ chấm trạng thái số và tốc độ tại biển cuối đoạn; không đòi số ở biển đầu đoạn. Người học đổi số trước biển thứ nhất không bị trừ.",
+      "why": "Văn bản đòi ‘thay đổi’ trong đoạn nhưng không nói cảm biến kiểm tra số ở đầu đoạn hay không. Chấm trạng thái cuối giống một cảm biến, và tránh trừ hai lần cho một lỗi (lỗi số ở đoạn 1 làm đoạn 2 không còn là ‘ngược lại’). Trang vẫn dạy đổi số trong đoạn 1, sau biển thứ nhất."
+    },
+    {
+      "field": "gear_fault_charging",
+      "value": "Mỗi đoạn cho đúng một kết luận: sai số → SAI_SO, sai tốc độ → SAI_TOC_DO, sai cả hai → chỉ SAI_CA_HAI (không trừ thêm hai lỗi kia). Mỗi đoạn sai trừ 05 điểm của riêng nó, nên hai đoạn sai trừ tối đa 10 điểm.",
+      "why": "Văn bản có ba dòng lỗi, dòng thứ ba nói ‘không đúng số và đúng tốc độ’ (cả hai), nên nó thay cho hai dòng kia chứ không cộng thêm. Văn bản không nói ‘mỗi lần’, nhưng hai lần thay đổi là hai yêu cầu riêng nên mỗi đoạn sai bị trừ riêng."
+    },
+    {
+      "field": "gear_signs",
+      "value": "Ba biển ở 20 m, 45 m, 70 m kể từ vạch xuất phát (đầu xe đo như measure_point). Biển ‘tốc độ tối thiểu’ (+25 m) và ‘tốc độ tối đa’ (+50 m) của Hình 17 được vẽ kèm số 24 cho người học đọc; chúng không có lỗi riêng, vì bảng lỗi của bài chỉ có bốn dòng.",
+      "why": "Hình 17 có các biển tốc độ mà văn bản chữ không nhắc, và không ghi giá trị trên hình. Giá trị 24 lấy từ bảng của TT 108 cho hạng B. Biển đầu đặt đúng mức tối thiểu 20 m để đoạn chạy đà dài nhất mà luật cho phép tối thiểu, và xe xuất phát cách vạch 1 m."
+    },
+    {
+      "field": "gear_clock",
+      "value": "Đồng hồ chạy từ tick 1 của lượt; mỗi 120 s đã vượt hẳn trừ 05 điểm. Lượt kết thúc khi đầu xe qua biển thứ ba, hoặc sau 240 s; tới 240 s mà còn đoạn chưa chấm thì mỗi đoạn đó bị SAI_CA_HAI.",
+      "why": "Cảnh đường thẳng này không có cổng vào hay lệnh xuất phát, và văn bản chỉ nói ‘hoàn thành trong 02 phút’. 240 s là giới hạn của mô phỏng để lượt nào cũng có kết thúc, như exam_cap_s của bài ghép xe."
+    },
+    {
+      "field": "gear_no_overspeed",
+      "value": "Bài này không có lỗi quá tốc độ; 24 km/h không phải giới hạn tốc độ để trừ điểm ở mọi thời điểm.",
+      "why": "Bảng lỗi của bài ghi rõ không có lỗi quá tốc độ. Lỗi chung (chết máy, vòng tua, vỉa hè) vẫn áp dụng như ở các bài khác."
     }
-  ]
+  ],
+  "gear": {
+    "first_sign_m": 20.0,
+    "first_sign": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "qcvn-15-2026-hinh-ve.md, Hình 17",
+      "quote": "Biển phụ thứ nhất \"Bắt đầu tăng số, tăng tốc độ\" đặt cách đầu đoạn tối thiểu 20 m"
+    },
+    "zone_length_m": 25.0,
+    "zone_length": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — yêu cầu",
+      "quote": "Trên quãng đường 25m kể từ khi bắt đầu vào bài sát hạch, phải thay đổi số và tốc độ như sau:"
+    },
+    "road_length_m": 100.0,
+    "road_length": {
+      "doc": "QCVN 15:2026/BCA",
+      "loc": "qcvn-15-2026-hinh-ve.md, Hình 17",
+      "quote": "Đoạn thẳng dài tối thiểu 100 m"
+    },
+    "speed_kmh": 24.0,
+    "speed": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — hạng B, đoạn 25 m đầu",
+      "quote": "từ số 1 lên số 2 và trên 24km/h"
+    },
+    "back": {
+      "doc": "TT 108/2026/TT-BCA",
+      "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — hạng B, đoạn 25 m còn lại",
+      "quote": "thay đổi số và tốc độ ngược lại"
+    },
+    "exam_cap_s": 240.0
+  }
 }
