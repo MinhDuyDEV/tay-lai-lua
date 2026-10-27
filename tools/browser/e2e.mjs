@@ -968,9 +968,8 @@ let junctionRed = null;
     });
   }
 
-  // Bài 7 and bài 8 are driven only when asked (`--park yes`): they need the reverse speed to be settled
-  // before a clean keyboard run is a fair thing to require.
-  if (args.get('park') === 'yes') {
+  // Bài 7 and bài 8: a clean run from the advice line alone, and the core's own rule named with its quote.
+  {
     for (const lesson of [7, 8]) {
       const figure = `bài ${lesson}`;
       await check(`${figure} clean run from the advice line alone: score 100 and the finish signal`, async () => {
