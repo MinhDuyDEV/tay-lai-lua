@@ -471,10 +471,13 @@ function* solveJob(pose: Pose, key: string, yard: Yard, ruleset: Ruleset): Job<R
   const spot = `${Math.round(pose.x / 0.2)},${Math.round(pose.y / 0.2)},${Math.round(pose.h / 0.06)}`;
   const seen = (visits.get(spot) ?? 0) + 1;
   visits.set(spot, seen);
-  // The third time the car stands in the same place the shunts are not working: aim somewhere else.
-  const looping = seen >= 3;
+  // The fourth time the car stands in the same place the shunts are not working: aim somewhere else.
+  const looping = seen >= 4;
   if (looping && aimed) failedLaunch = [...failedLaunch.slice(-11), aimed];
-  const plan = yield* planParkJob(pose, yard, ruleset, failedLaunch, aimed, looping);
+  // The car keeps coming back here, so the line that clears by a hair is better than the next shunt:
+  // the buffer is spent first (2nd visit), then the 1 cm the paint's own width leaves (3rd).
+  const floor = seen >= 3 ? -0.01 : seen >= 2 ? 0 : COMMITTED_MARGIN;
+  const plan = yield* planParkJob(pose, yard, ruleset, failedLaunch, aimed, looping, floor);
   return { key, anchor: pose, plan };
 }
 
@@ -993,7 +996,7 @@ const FUNNEL_PRICE_M = 15;
  * How far a stop lands from where it was aimed, metres: the reaction and the brake's rise at the creep
  * speed. Measured by core on the real car: ±0.22 m at 1.74 m/s and ±0.07 m at 0.52 m/s, both 0.13 s of travel.
  */
-const SCATTER_S = 0.13;
+const SCATTER_S = 0.25;
 const scatterM = (ruleset: Ruleset): number => SCATTER_S * reverseCreepMps(ruleset);
 const funnels = new WeakMap<Launch, Map<number, number>>();
 
@@ -1090,10 +1093,9 @@ function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Po
  * the one chosen is the middle of the longest unbroken run of them: the tap can land either side of it
  * and the S still closes. The first one found (the shortest shunt) is on the band's edge half the time.
  */
-function* reverseWithShuntJob(from: Pose, yard: Yard, ruleset: Ruleset): Job<Plan | null> {
+function* reverseWithShuntJob(from: Pose, yard: Yard, ruleset: Ruleset, floor = COMMITTED_MARGIN): Job<Plan | null> {
   // Committed to the S the floor is the paint itself plus a small buffer; the roomy 0.05 is for choosing
   // where to start, not for giving up once the car is a few centimetres off the line it was aimed at.
-  const floor = COMMITTED_MARGIN;
   const START_M = 2.4;
   const STEP_M = 0.2;
   const n = Math.round(START_M / STEP_M);
@@ -1173,15 +1175,16 @@ export function* planParkJob(
   avoid: readonly Pose[] = [],
   prefer: Pose | null = null,
   skipDirect = false,
+  floor = COMMITTED_MARGIN,
 ): Job<Plan | null> {
   if (hullInsideBay(from, yard, ruleset, HULL_INSET)) {
     return { legs: [], end: from, margin: patchMargin(from, yard, ruleset), shunts: 0, length: 0 };
   }
-  const direct = skipDirect ? null : yield* reverseWithShuntJob(from, yard, ruleset);
+  const direct = skipDirect ? null : yield* reverseWithShuntJob(from, yard, ruleset, floor);
   if (direct) return direct;
   const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
   // Looping was only a reason to try something else first: with nothing else, the line that exists is taken.
-  if (!lead) return skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset) : null;
+  if (!lead) return skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset, floor) : null;
   const tail = yield* reverseWithShuntJob(lead.end, yard, ruleset);
   if (!tail) return lead;
   return {
