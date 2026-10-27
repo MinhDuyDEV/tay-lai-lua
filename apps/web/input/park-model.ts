@@ -2,6 +2,8 @@
 // `data-gear-wanted`, which are `cueGhep`'s steer, pedal and gear), re-reads every 50 ms at a phase, is
 // late by a fixed reaction, and acts only through key events on the real driver and the real core.
 // The words it acts on are the ones the HUD paints; it never reads the snapshot to decide what to do.
+// A leg the cue gives a time (`data-hold-ms`) is not stopped on a word: the learner lets go, counts the time
+// and presses, trailing the count by a share of their reaction (`trackFactor`).
 import { readFileSync } from 'node:fs';
 import { exerciseFor, type Lesson } from '../src/exercise.ts';
 import { setSliceWork, yardOf } from '../src/ghep.ts';
@@ -34,7 +36,12 @@ export interface Outcome {
   pents: string[];
 }
 
-export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120): Outcome {
+/**
+ * `trackFactor` is how late a learner presses on the bar's end, as a share of their reaction: they follow a
+ * filling bar and anticipate it, so the lag is a fraction of a reaction to a flash. 0.25 is an assumption
+ * (the cue assumes `TRACK_S`); 0 and 0.5 are the two ends it has been swept at.
+ */
+export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 0.25): Outcome {
   const ex = exerciseFor(lesson);
   const session = openSession(bytes(), seedWord(lesson));
   const yard = yardOf(parkRects(session.course)!);
@@ -57,7 +64,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let counting = false;
   let braking = false;
   let stoppedBy = 0;
-  const trackTicks = Math.round(Number(process.env.TRACKF ?? 0.25) * ((reactMs + phaseMs) / 1000) * 60);
+  const trackTicks = Math.round(trackFactor * ((reactMs + phaseMs) / 1000) * 60);
   // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
   setSliceWork(SLICE_WORK);
   let c = ex.cueNow!(s, ruleset, yard);

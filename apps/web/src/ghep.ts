@@ -397,7 +397,8 @@ export const TIMED_PULSE_M = 0.8;
  * launch pose (the reverse S is sensitive to where this one stops) and short enough for the table.
  */
 const FORWARD_PULSE: ReadonlyArray<readonly [number, number]> = [
-  [0.5, 0.09], [0.6, 0.16], [0.7, 0.25], [0.8, 0.36], [1.0, 0.58], [1.2, 0.84], [1.5, 1.29], [2.0, 2.19],
+  [0.5, 0.09], [0.6, 0.16], [0.7, 0.25], [0.8, 0.36], [0.9, 0.47], [1.0, 0.58], [1.1, 0.71], [1.2, 0.84],
+  [1.3, 0.98], [1.4, 1.13], [1.5, 1.29], [1.6, 1.45], [1.7, 1.63], [1.8, 1.81], [1.9, 2.0], [2.0, 2.19],
 ];
 /** How far a timed forward pulse may go, metres: the end of the table. */
 const TIMED_FORWARD_M = 2.1;
@@ -439,6 +440,40 @@ export const READ_S = 0.5;
  * the arc is a larger circle than the plan's (a wheel 10% short is a radius 11% long: 0.1 m across the S).
  */
 const WHEEL_SET_RAD = 0.02;
+
+/** What the hold bar remembers between frames: the time it was shown for, and when the pedals came up. */
+export interface HoldTimer {
+  ms: number;
+  t0: number | null;
+}
+export interface HoldAid {
+  state: 'idle' | 'ready' | 'counting' | 'now';
+  ms: number;
+  leftMs: number;
+}
+
+/**
+ * The bar behind a timed pulse. It is `ready` while the car stands with the pedals down and the cue has a
+ * time; it starts counting when the brake comes up (the learner has let go) and runs on the sim's own clock,
+ * so it neither speeds up nor lags with the page; it says `now` when the time is up, and goes `idle` once the
+ * car is still again with the pedals down.
+ */
+export function holdAid(t: HoldTimer, s: SimState, cueHoldMs: number): HoldAid {
+  const down = s.brake > 0.8;
+  if (cueHoldMs > 0 && down) {
+    t.ms = cueHoldMs;
+    t.t0 = null;
+  } else if (t.ms > 0 && t.t0 === null && !down) {
+    t.t0 = s.tick;
+  } else if (t.ms > 0 && t.t0 !== null && down && Math.abs(s.speedMps) < 0.05) {
+    t.ms = 0;
+    t.t0 = null;
+  }
+  if (t.ms === 0) return { state: 'idle', ms: 0, leftMs: 0 };
+  if (t.t0 === null) return { state: 'ready', ms: t.ms, leftMs: t.ms };
+  const leftMs = Math.max(0, t.ms - ((s.tick - t.t0) / 60) * 1000);
+  return { state: leftMs <= 0 ? 'now' : 'counting', ms: t.ms, leftMs };
+}
 
 /** The gear word for the advice line: what to hold down before the gear goes in. */
 export const gearWord = (dir: 1 | -1): '1' | 'R' => (dir === 1 ? '1' : 'R');
@@ -698,7 +733,8 @@ export function adviceGhep(
   const outside = hullOutside(yard, ruleset, { x: s.carX, y: s.carY, h: s.heading });
   if (cue.parked || outside > 0) {
     const inBay = hullInsideBay({ x: s.carX, y: s.carY, h: s.heading }, yard, ruleset);
-    if (!inBay && outside > 0 && outside < 1.2) {
+    // A timed pulse has its own sentence (key and time); the distance is on the card beside it.
+    if (!inBay && outside > 0 && outside < 1.2 && cue.holdMs === 0) {
       return `Còn ${m(outside)} thân xe ngoài ô: lùi thêm thật chậm (R, giữ côn ở điểm bắt) cho hết thân xe vào, rồi giữ phanh ↓.`;
     }
   }
@@ -720,6 +756,12 @@ export function adviceGhep(
   }
   if (cue.pedal === 'brake') {
     return 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
+  }
+  if (timedReachM(plan!, leg!) !== null && Math.abs(s.speedMps) >= 0.05) {
+    return 'Đang đi: đếm tiếp theo thanh, hết giờ thì đạp côn (Space) và phanh ↓ dừng hẳn.';
+  }
+  if (cue.holdMs > 0) {
+    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way} đúng ${(cue.holdMs / 1000).toFixed(1).replace('.', ',')} giây theo thanh đếm, rồi đạp côn và phanh ↓ dừng hẳn.`;
   }
   return `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
 }

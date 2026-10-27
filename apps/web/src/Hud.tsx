@@ -11,7 +11,7 @@ import { hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
-import { cueGhep, hullOutside, yardOf } from './ghep.ts';
+import { cueGhep, holdAid, hullOutside, yardOf, type HoldTimer } from './ghep.ts';
 import { lightName, zoneName, type LightName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
@@ -65,6 +65,10 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const aidMark = useRef<HTMLDivElement>(null);
   const aidKey = useRef<HTMLSpanElement>(null);
   const aidIn = useRef<HTMLSpanElement>(null);
+  const holdEl = useRef<HTMLDivElement>(null);
+  const holdFill = useRef<HTMLDivElement>(null);
+  const holdText = useRef<HTMLSpanElement>(null);
+  const holdTimer = useRef<HoldTimer>({ ms: 0, t0: null });
   /** The widest gap the aid has been seen at, so the bar's scale does not jump as the car rolls up. */
   const spanRef = useRef(12);
   /** The figure's centreline, read once from the core; the same polyline the scene draws. */
@@ -129,6 +133,15 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
           const cue = cueGhep(s, yardOfOrThrow(yard), ruleset);
           advice.current.dataset.pedal = cue.pedal;
           advice.current.dataset.gearWanted = cue.gear === 0 ? '' : String(cue.gear);
+          advice.current.dataset.holdMs = String(cue.holdMs);
+          if (holdEl.current && holdFill.current && holdText.current) {
+            const h = holdAid(holdTimer.current, s, cue.holdMs);
+            holdEl.current.dataset.state = h.state;
+            holdFill.current.style.width = h.ms > 0 ? `${Math.round((1 - h.leftMs / h.ms) * 100)}%` : '0%';
+            const sec = (h.leftMs / 1000).toFixed(1).replace('.', ',');
+            holdText.current.textContent =
+              h.state === 'idle' ? '' : h.state === 'ready' ? `Nhả côn + phanh ↓ rồi đếm ${(h.ms / 1000).toFixed(1).replace('.', ',')} giây` : h.state === 'now' ? 'Đạp côn + phanh ↓ ngay' : `Còn ${sec} giây`;
+          }
         }
       }
       if (audioEl.current) {
@@ -254,6 +267,14 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
               <span data-part="value">—</span>
             </strong>
             <small data-part="limit" />
+          </div>
+          <div className="aid" data-aid="hold" ref={holdEl} data-state="idle">
+            <div className="aid-track">
+              <div className="aid-fill" ref={holdFill} />
+            </div>
+            <p className="aid-now">
+              <span className="aid-key" ref={holdText} />
+            </p>
           </div>
           <p className="advice" ref={advice} />
         </section>

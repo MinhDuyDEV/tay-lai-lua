@@ -1,5 +1,5 @@
 // The park-feel sweep as a script, not a test: every reaction × poll phase of the page-only reader on
-// bài 7 or bài 8, one line of results. Not in `pnpm test` (see park-feel.pending.ts for the assertions).
+// bài 7 or bài 8, one line of results. The three-cell version of it is in `pnpm test` (park-feel.test.ts).
 //   node apps/web/input/park-sweep.ts 7|8 [maxSeconds]
 // Each cell is `react/phase:score` + `S` when the core gave the finish signal + run seconds + `!rules`.
 import { drivePark, REACT_MS } from './park-model.ts';
