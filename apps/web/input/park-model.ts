@@ -88,7 +88,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
     s = r.state;
     for (const e of r.events) {
       const id = ids.get(e.code);
-      if (id) { pents.push(id); if (process.env.PT) console.log('PENALTY', id, 'contacts', [s.contactFL, s.contactFR, s.contactRL, s.contactRR].join(','), (tick / 60).toFixed(1), s.carX.toFixed(2), s.carY.toFixed(2), ((s.heading * 180) / Math.PI).toFixed(0)); }
+      if (id) { pents.push(id); if (process.env.PT) console.log('PENALTY', id,  (tick / 60).toFixed(1), s.carX.toFixed(2), s.carY.toFixed(2), ((s.heading * 180) / Math.PI).toFixed(0)); }
     }
     tick += 1;
   }
