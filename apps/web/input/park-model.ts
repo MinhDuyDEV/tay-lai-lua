@@ -74,11 +74,12 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
         braking = true;
         stoppedBy = tick + lateTicks + 60;
       }
-      // The pedals stay down until the car has stopped: a second after the press, or at the next standing cue.
-      if (braking && (tick >= stoppedBy || c.holdMs > 0 || c.pedal === 'wheel' || c.pedal === 'clutch')) braking = false;
+      // The pedals stay down until the car has stopped: a second after the press, or at the next standing cue
+      // once the press has landed (before that the cue still shows the car standing, as it did before the release).
+      if (braking && (tick >= stoppedBy || (tick >= stoppedBy - 60 + 20 && (c.holdMs > 0 || c.pedal === 'wheel' || c.pedal === 'clutch')))) braking = false;
       if (counting) {
         // counting: feet stay off whatever the words say until the time is up
-      } else if (c.pedal === 'creep' && c.holdMs > 0) {
+      } else if (c.pedal === 'creep' && c.holdMs > 0 && !braking) {
         pulseEnd = tick + Math.round((c.holdMs / 1000) * 60) + trackTicks;
         counting = true;
       } else if (c.pedal !== 'creep' || braking) {
