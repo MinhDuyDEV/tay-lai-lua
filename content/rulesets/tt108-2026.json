@@ -248,7 +248,6 @@
     }
   },
   "park": {
-    "time_limit_s": 120.0,
     "time_limit": {
       "doc": "TT 108/2026/TT-BCA",
       "loc": "Phụ lục III, Bài ghép xe vào nơi đỗ",
@@ -1352,7 +1351,7 @@
     },
     {
       "field": "park_containment",
-      "value": "toàn bộ thân xe = bốn góc của hình chữ nhật a × b của xe; biên ô đỗ = tim các vạch kẻ; một bánh đè lên vạch vẫn là DE_VACH như mọi bài khác",
+      "value": "toàn bộ thân xe = bốn góc của hình chữ nhật a × b của xe; biên ô đỗ = tim các vạch kẻ; một bánh đè lên vạch vẫn là DE_VACH như mọi bài khác. Hai điều kiện đo bằng hai hình khác nhau, nên trong MỘT tick có thể đồng thời thân xe nằm trọn trong ô VÀ một bánh đè vạch: vết bánh xe là hình chữ nhật 0,20 × 0,195 m, bán kính vòng ngoài 0,140 m, trong khi thân xe chỉ nhô ra ngoài tim bánh 0,125 m ở ngang xe — nên bánh có thể chạm vạch khi cả bốn góc thân vẫn còn trong ô. Hệ quả: tín hiệu kết thúc và DE_VACH không loại trừ nhau.",
       "why": "Văn bản nói 'toàn bộ thân xe nằm trong khu vực ghép xe' mà không nói đo thân xe hay biên ô từ đâu. Lấy thân xe là hình bao chữ nhật a × b (đúng chiều dài toàn bộ và chiều rộng toàn bộ mà QCVN 15 dùng để tính Ld, Rd, Lg, Rg), và biên ô là tim vạch, cùng quy ước với các hình bài 4 và bài 6."
     },
     {
@@ -1362,7 +1361,7 @@
     },
     {
       "field": "park_exam_end",
-      "value": "bài kết thúc khi: (a) có tín hiệu báo kết thúc — Done, không phạt; (b) người học bấm phím kết thúc (TickInput ORDER, sườn lên) — phán quyết một lần trong `park_end`; (c) đồng hồ chạm 2 × 120 s = 240 s — cũng qua `park_end`",
+      "value": "bài kết thúc khi: (a) có tín hiệu báo kết thúc — Done, không phạt; (b) người học bấm phím kết thúc (TickInput ORDER, sườn lên) — phán quyết một lần trong `park_end`; (c) ĐỒNG HỒ BÀI chạm 2 × 120 s = 240 s — cũng qua `park_end`. Trần tính trên đồng hồ bài (chạy từ lúc qua vạch vào), không tính trên tổng số tick của phiên: đứng chờ trước vạch vào bao lâu cũng không bị trần.",
       "why": "Văn bản không cho một sự kiện 'hết bài' nào khác ngoài tín hiệu kết thúc. Bản mô phỏng cần một đường thoát để một lượt lái sai vẫn có kết quả, nên định nghĩa hai đường: người học bấm kết thúc, hoặc trần thời gian. Cả hai đều đi qua CÙNG một hàm `park_end`, nên một lane sau (liên hoàn) kết thúc bài bằng cách lái ra khỏi ô cũng dùng đúng hàm đó."
     },
     {
@@ -1372,8 +1371,8 @@
     },
     {
       "field": "park_time_cap",
-      "value": "QUA_THOI_GIAN tính mỗi 120 s đồng hồ bài; trần bài là 240 s, nên nhiều nhất một lần −5",
-      "why": "'Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm' không nói bài kéo dài bao lâu. Trần 240 s (gấp đôi thời gian cho phép) là giả định của bản mô phỏng: nó giữ đúng ý 'cứ quá 02 phút' mà vẫn cho lượt lái sai một kết thúc, và với trần đó người học mất nhiều nhất 05 điểm vì thời gian."
+      "value": "QUA_THOI_GIAN tính mỗi 120 s ĐỒNG HỒ BÀI; trần bài là 240 s đồng hồ bài, nên nhiều nhất một lần −5. Trần đếm trên đồng hồ bài (chạy từ lúc qua vạch vào), không đếm trên tổng tick của phiên: chờ trước vạch vào bao lâu cũng không bị trần.",
+      "why": "'Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm' không nói bài kéo dài bao lâu. Trần 240 s (gấp đôi thời gian cho phép) là giả định của bản mô phỏng: nó giữ đúng ý 'cứ quá 02 phút' mà vẫn cho lượt lái sai một kết thúc, và với trần đó người học mất nhiều nhất 05 điểm vì thời gian. Bản trước đếm trên tick phiên, làm một người đứng chờ 235 s trước vạch bị đình chỉ ở 240 s dù đồng hồ bài mới là 0 s; nay tính trên đồng hồ bài."
     },
     {
       "field": "park_clock",
@@ -1392,8 +1391,8 @@
     },
     {
       "field": "park_reverse_gear",
-      "value": "số lùi có tỉ số −3,5 (drivetrain.gears[\"-1\"]); nhả côn hoàn toàn ở số lùi cho tốc độ bò 1,74 m/s",
-      "why": "Văn bản không cho tỉ số số lùi. Đo trên mô hình: côn nhả hết, không ga, xe lùi 1,74 m/s ổn định. Giữ côn ở giữa không cho một dải chậm ổn định (1,74 → 1,67 → 1,52 → 1,02 khi phanh tăng, rồi chết máy ở phanh ≥ 40/255), nên muốn lùi chậm thì phải nhấp côn rồi phanh — trang web dạy đúng thao tác đó."
+      "value": "số lùi có tỉ số −8,0 (drivetrain.gears[\"-1\"]) — GIẢ ĐỊNH CỦA MÔ PHỎNG, không phải số của xe thật; nhả côn hoàn toàn ở số lùi cho tốc độ bò khoảng 0,77 m/s",
+      "why": "Văn bản không nói tỉ số hộp số. Bàn phím không điều khiển được nửa côn, nên tỉ số lùi bị hạ xuống để tốc độ lùi đủ chậm cho người học ghép xe; cái giá là xe lùi chậm hơn xe thật. Xem drivetrain.assumption để biết phạm vi (mọi trang có lùi) và điều phải làm khi đổi số này (ghi lại vết chuẩn bài 7 và bài 8)."
     }
   ]
 }

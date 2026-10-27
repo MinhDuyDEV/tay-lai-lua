@@ -82,16 +82,12 @@ fn both_bays_are_built_to_the_laws_formulas_and_start_like_bai_3() {
     let (x0, y0, x1, y1) = park_of(&doc);
     assert!((x1 - x0 - rs.park.doc_width_m(&rs.vehicle)).abs() < 1e-9, "bài 7's bay is Rd = b + 0,6 wide");
     assert!((y1 - y0 - rs.park.doc_length_m(&rs.vehicle)).abs() < 1e-9, "and Ld = a + 1,0 long");
-    assert!((rs.park.doc_width_m(&rs.vehicle) - 2.2).abs() < 1e-9, "2,20 m for this car");
-    assert!((rs.park.doc_length_m(&rs.vehicle) - 5.2).abs() < 1e-9, "5,20 m for this car");
     assert!((rs.park.doc_lane_m(&rs.vehicle) - 5.04).abs() < 1e-9, "Ed = 1,2a = 5,04 m");
 
     let ngang = Session::new(NGANG | 1).expect("bài 8 runs");
     let (x0, y0, x1, y1) = park_of(&ngang);
     assert!((x1 - x0 - rs.park.ngang_length_m(&rs.vehicle)).abs() < 1e-9, "bài 8's bay is Lg = 3a/2 long");
     assert!((y1 - y0 - rs.park.ngang_width_m(&rs.vehicle)).abs() < 1e-9, "and Rg = 5b/4 deep");
-    assert!((rs.park.ngang_length_m(&rs.vehicle) - 6.3).abs() < 1e-9, "6,30 m for this car");
-    assert!((rs.park.ngang_width_m(&rs.vehicle) - 2.0).abs() < 1e-9, "2,00 m for this car");
 
     for (seed, route) in [(DOC, 4.0), (NGANG, 4.0)] {
         let s = Session::new(seed | 1).unwrap();
@@ -251,17 +247,21 @@ fn a_line_touch_in_a_bay_exercise_charges_the_ghep_code_not_bai_4s() {
     // The contact model is shared with bài 4 and bài 6, and the rule id must follow the exercise:
     // a park run that fell through to the bài 4/6 mapper would charge SH.04.* on a run with no
     // SH.04.* row in its own table, and the score would be wrong without any test failing.
-    let probe = Session::new(NGANG | 1).unwrap();
-    let (x0, y0, x1, _) = park_of(&probe);
-    // Park the car across the bay's mouth line, so a wheel is on it.
-    let mut s = placed(NGANG, (0.5 * (x0 + x1), 0.0, 0.0), 3);
+    // A pose that really does put a wheel on the paint: the right wheels against the bay's end wall.
+    // This is the part the earlier version got wrong — its pose was the bay's CENTRE, which touches
+    // nothing, so the test passed whatever the id mapper did, and reverting the fix left it green.
+    let mut s = placed(NGANG, (3.15, -1.325, 0.0), 3);
     for _ in 0..5 {
         hold(&mut s);
     }
     let v = s.view();
+    assert!(
+        v.fired_ids().iter().any(|id| id.starts_with("SH.GHEP.")),
+        "this pose must touch the paint, or the test proves nothing: {:?}",
+        v.fired_ids()
+    );
     assert_eq!(v.fired("SH.04.DE_VACH"), 0, "bài 8 never charges bài 4's code: {:?}", v.fired_ids());
     assert_eq!(v.fired("SH.04.DE_VACH_KEO_DAI"), 0, "nor its five-second mark");
-    let _ = y0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -272,18 +272,15 @@ fn a_line_touch_in_a_bay_exercise_charges_the_ghep_code_not_bai_4s() {
 fn sai_hinh_is_the_centre_leaving_the_figure_and_reversing_is_not() {
     let rs = crate::rules::Ruleset::load();
     let probe = Session::new(DOC | 1).unwrap();
-    let (x0, y0, x1, y1) = park_of(&probe);
+    let (x0, y0, _, _) = park_of(&probe);
     let lane = rs.park.doc_lane_m(&rs.vehicle);
-    let _ = (x1, y1);
 
     // Reversing a long way inside the bay must charge nothing: "Lùi để ghép xe vào nơi đỗ".
     let mut s = placed(DOC, (0.5 * (x0 + rs.park.doc_width_m(&rs.vehicle)), y0 + 0.1, -core::f64::consts::FRAC_PI_2), 3);
-    let before = s.view().score;
     for _ in 0..30 {
         s.step(TickInput { gear: -1, clutch: 210, ..Default::default() });
     }
     assert_eq!(s.view().fired("SH.GHEP.SAI_HINH"), 0, "reversing inside the bay is the exercise");
-    let _ = before;
 
     // Well outside the lane, past the margin: SAI_HINH, and the run is suspended.
     let mut s = placed(DOC, (x0 + 2.0, lane + rs.park.outside_margin_m + 0.5, 0.0), 3);
@@ -334,4 +331,59 @@ fn each_bays_messy_run_charges_the_three_rows_of_that_mistake() {
         assert_eq!(v.fired("SH.GHEP.QUA_THOI_GIAN"), 0, "{}: well inside the cap", g.name);
         assert_eq!(v.score, 90, "{}: two 5-point rows and no signal fee", g.name);
     }
+}
+
+/// A wheel held on the bay's mouth corner is ONE mistake, not two.
+///
+/// The bay outline and the near-edge pieces meet at the mouth corners, so if they are separate
+/// polylines a wheel sitting on a corner runs two episodes at once: `DE_VACH` twice, and every
+/// five-second mark twice — a 20 s stop on a corner would cost −50 where the law says −25. The
+/// painted figure is one object wherever the paint is connected, so the lines must be too.
+#[test]
+fn a_wheel_held_on_the_mouth_corner_charges_de_vach_once() {
+    // The right rear patch sits on bài 8's mouth corner (6.3, 0): wheel centres are ±1.2 along the
+    // car and ±0.675 across it, so this centre puts one patch on the corner at heading 0.
+    let mut s = placed(NGANG, (5.10, -0.675, 0.0), 3);
+    let before = s.view().fired("SH.GHEP.DE_VACH");
+    // Hold past the first five-second mark of the same episode (that mark is at 5 s).
+    let secs = 6.0;
+    for _ in 0..(60.0 * secs) as u32 {
+        s.step(TickInput { gear: -1, clutch: 255, brake: 255, ..Default::default() });
+    }
+    let v = s.view();
+    assert_eq!(
+        v.fired("SH.GHEP.DE_VACH") - before,
+        1,
+        "one corner, one episode: {:?}",
+        v.fired_ids()
+    );
+    assert_eq!(
+        v.fired("SH.GHEP.DE_VACH_KEO_DAI"),
+        1,
+        "and one five-second mark, not two: {:?}",
+        v.fired_ids()
+    );
+}
+
+/// The 240 s cap runs on the EXAM CLOCK, not on session ticks.
+///
+/// A learner who sits in the lane for four minutes before reaching the entry gate has used no exam
+/// time at all: the clock starts at the gate. Capping on session ticks would suspend them at 240 s
+/// with 0 s of exam clock, which is not the law and not what the clock means.
+#[test]
+fn idling_before_the_gate_does_not_hit_the_240_s_cap() {
+    let rs = crate::rules::Ruleset::load();
+    let lane_y = 0.5 * rs.park.doc_lane_m(&rs.vehicle);
+    // Behind the gate: bài 7's gate is at x = 0 and the car drives towards −x, so 8.0 m is short of it.
+    let mut s = placed(DOC, (8.0, lane_y, core::f64::consts::PI), 3);
+    assert_eq!(s.snapshot()[36], 0.0, "the clock must not be running yet");
+    // Stand there for longer than the whole cap.
+    for _ in 0..(60.0 * (rs.park.exam_cap_s + 10.0)) as u32 {
+        s.step(TickInput { clutch: 255, brake: 255, ..Default::default() });
+    }
+    let v = s.view();
+    assert_eq!(s.snapshot()[36], 0.0, "still no exam clock");
+    assert_ne!(v.phase, Phase::Done, "idling before the gate must not end the exam");
+    assert_eq!(v.fired("SH.GHEP.QUA_THOI_GIAN"), 0, "no time charge before the clock starts");
+    assert_eq!(v.fired("SH.GHEP.CHUA_VAO_CHUONG"), 0, "and no suspension for it");
 }

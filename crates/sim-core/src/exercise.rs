@@ -996,9 +996,12 @@ impl State {
             self.contact_tick(rs, t, &course, fired);
         }
         // The end of the exam: the finish signal above, the learner's end key here, or the cap.
+        // The cap is on the EXAM CLOCK, not on session ticks: a learner who idles in the lane before
+        // the entry gate has used no exam time and must not be capped (the clock starts at the gate).
         let end_edge = order && !self.prev_order;
         self.prev_order = order;
-        if self.phase != Phase::Done && (end_edge || self.tick >= rs.park.exam_cap_ticks()) {
+        let capped = self.clock_running && self.park_clock_ticks >= rs.park.exam_cap_ticks();
+        if self.phase != Phase::Done && (end_edge || capped) {
             self.park_end(rs, &course, fired);
         }
         self.course = Some(course);
@@ -1029,9 +1032,10 @@ impl State {
         if !self.signal_given && self.hold_ticks >= rs.park.signal_hold_ticks() {
             self.signal_given = true;
             // "Khi có tín hiệu báo kết thúc" the run is done: the bay is right and it has said so.
-            self.phase = Phase::Done;
+            // Through `park_end`, not by setting the phase here, so that the claim in the comment on
+            // `step_park` is true: every way of ending the exercise goes through one function.
+            self.park_end(rs, course, fired);
         }
-        let _ = fired;
     }
 
     /// The clock: the front bumper crossing the entry gate starts it; each whole 2 minutes charges

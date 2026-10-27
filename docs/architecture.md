@@ -252,7 +252,7 @@ Hai bài ghép xe dùng chung một cơ chế với bài 4 và bài 6: hình sin
 | | bài 7 (dọc) | bài 8 (ngang) |
 |---|---|---|
 | ô đỗ | dài `a + 1,0 m`, rộng `b + 0,6 m` | dài `1,5a`, sâu `1,25b` |
-| làn khống chế | rộng `1,2a` | làn đường `3,5 m` |
+| làn khống chế | rộng `1,2a` | làn đường `2,2b` = 3,52 m với b = 1,6 m |
 | đỗ theo hướng | trục dọc, mũi xe hướng ra (+90°) | trục ngang (0°) |
 
 Vùng chạy được = **làn ∪ ô đỗ**. Ba cạnh kín của ô đỗ là **một** polyline (kéo qua cả ô là một lần lỗi, không phải ba), và **không vẽ vạch ngang miệng ô** — nên xe phải lùi qua miệng ô chứ không được coi miệng ô là vạch.
