@@ -270,7 +270,7 @@ function walkLeg(from: Pose, leg: Leg, yard: Yard, ruleset: Ruleset): { end: Pos
   return { end: p, margin };
 }
 /** How far past the end of a leg a timed stop may still land, metres: a poll and the count at about 1 m/s. */
-const STOP_OVERSHOOT_M = 0.05;
+const STOP_OVERSHOOT_M = 0.08;
 
 export type GhepCue = 'left' | 'right' | 'straight';
 
