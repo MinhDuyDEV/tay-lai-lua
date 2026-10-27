@@ -457,6 +457,49 @@ function* solveJob(pose: Pose, key: string, yard: Yard, ruleset: Ruleset): Job<R
 }
 
 /**
+ * The plan made at the last stop, picked up again where the car now stands, if the car is still on it.
+ * A tap lands a few centimetres short or long along a leg, and that is no reason to look for another
+ * line: only a car that has left the line (more than `OFF_LINE_M` across it or `OFF_LINE_RAD` crooked)
+ * is planned afresh. Without this the solver, sitting on the edge of what fits, answers every small
+ * difference with a different manoeuvre and the car shuffles on the spot.
+ */
+const OFF_LINE_M = 0.07;
+const OFF_LINE_RAD = 0.04;
+function pickUp(run: Run, pose: Pose, yard: Yard, ruleset: Ruleset): Run | null {
+  const plan = run.plan;
+  if (!plan || plan.legs.length === 0) return null;
+  let p = run.anchor;
+  let best: { li: number; d: number; off: number } | null = null;
+  for (let li = 0; li < plan.legs.length; li += 1) {
+    const leg = plan.legs[li];
+    for (let d = 0; d <= leg.len + 1e-9; d += 0.05) {
+      const q = endPose(p, [{ ...leg, len: Math.min(d, leg.len) }], ruleset);
+      const off = Math.hypot(q.x - pose.x, q.y - pose.y);
+      if (off <= OFF_LINE_M && Math.abs(wrap(q.h - pose.h)) <= OFF_LINE_RAD && (!best || off < best.off)) best = { li, d, off };
+    }
+    p = endPose(p, [leg], ruleset);
+  }
+  if (!best) return null;
+  const rest = plan.legs.slice(best.li);
+  rest[0] = { ...rest[0], len: rest[0].len - best.d };
+  const legs = rest[0].len < MIN_LEG_M ? rest.slice(1) : rest;
+  if (legs.length === 0) return null;
+  // Being near the line is not being able to finish it: the rest of it, driven from where the car really
+  // stands, must still clear the paint, and a line that ended inside the bay must still end inside it.
+  let q = pose;
+  let margin = Infinity;
+  for (const leg of legs) {
+    const w = walkLeg(q, leg, yard, ruleset);
+    if (!w) return null;
+    q = w.end;
+    margin = Math.min(margin, w.margin);
+  }
+  if (margin < COMMITTED_MARGIN) return null;
+  if (hullInsideBay(plan.end, yard, ruleset, HULL_INSET) && !hullInsideBay(q, yard, ruleset, HULL_INSET)) return null;
+  return { key: run.key, anchor: pose, plan: { ...plan, legs } };
+}
+
+/**
  * The run for this stop. While the car rolls it is the plan made at the last stop; at a new stop the plan
  * is worked out a slice per call, and until it is done the answer is null (the cue says "hold still").
  */
@@ -472,6 +515,13 @@ function runFor(pose: Pose, moving: boolean, yard: Yard, ruleset: Ruleset): Run 
   // The car creeping off at under 0.05 m/s is still the same stop: the plan is for where it stood, not for
   // each centimetre it gives while the clutch bites.
   if (lastRun && (lastRun.key === key || (lastRun.plan && close(pose, lastRun.anchor, 0.1, 0.03)))) return lastRun;
+  if (lastRun && !pending) {
+    const kept = pickUp(lastRun, pose, yard, ruleset);
+    if (kept) {
+      lastRun = { ...kept, key };
+      return lastRun;
+    }
+  }
   if (!pending || pending.key !== key) pending = { key, job: solveJob(pose, key, yard, ruleset) };
   const done = advance(pending.job);
   if (!done) {
@@ -950,39 +1000,163 @@ function* funnelJob(set: Launch, i: number, yard: Yard, ruleset: Ruleset): Job<n
   return ok / n;
 }
 
+
+/**
+ * Poses from which a three-point turn finishes at a launch pose: reverse one arc, drive forward one arc,
+ * and the car stands on a launch pose. The reverse S only starts from a launch pose, and from the road a
+ * forward-only line reaches few of them with room (bài 7's best are a hand's width from the paint); a car
+ * that shuffles reaches the roomy ones, which is how core's own clean line gets in. Built backwards from
+ * the roomiest launch poses with the same full-lock arcs, once per figure.
+ */
+interface Chains {
+  x: Float32Array;
+  y: Float32Array;
+  h: Float32Array;
+  margin: Float32Array;
+  /** The launch pose each chain ends at, as an index into the launch set. */
+  launch: Int32Array;
+  /** The two legs driven from the pose: the reverse arc, then the forward arc. */
+  legs: Leg[][];
+  n: number;
+}
+const chainCache = new WeakMap<Launch, Chains>();
+const CHAIN_ARCS_M = [0.45, 0.9, 1.35, 1.8, 2.4];
+const CHAIN_LAUNCHES = 300;
+
+function* chainsJob(set: Launch, yard: Yard, ruleset: Ruleset): Job<Chains> {
+  const hit = chainCache.get(set);
+  if (hit) return hit;
+  const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
+  // The roomiest launch poses, one per neighbourhood.
+  const order = Array.from({ length: set.n }, (_, i) => i)
+    .filter((i) => set.margin[i] >= 0.12)
+    .sort((a, b) => set.margin[b] + 0.3 * set.inner[b] - (set.margin[a] + 0.3 * set.inner[a]));
+  const chosen: number[] = [];
+  for (const i of order) {
+    if (chosen.length >= CHAIN_LAUNCHES) break;
+    const p = { x: set.x[i], y: set.y[i], h: set.h[i] };
+    if (chosen.some((j) => close(p, { x: set.x[j], y: set.y[j], h: set.h[j] }, 0.4, 0.15))) continue;
+    chosen.push(i);
+  }
+  const best = new Map<string, { p: Pose; m: number; i: number; legs: Leg[] }>();
+  const walk = (from: Pose, m0: number, dir: 1 | -1, steerRad: number, lengths: readonly number[], visit: (p: Pose, m: number, len: number) => void) => {
+    let p = from;
+    let m = m0;
+    let done = 0;
+    for (const len of lengths) {
+      while (done < len - 1e-9) {
+        const step = Math.min(ARC_STEP, len - done);
+        p = endPose(p, [{ dir, steerRad, len: step }], ruleset);
+        done += step;
+        m = Math.min(m, patchMargin(p, yard, ruleset));
+        if (m < MIN_MARGIN) return;
+      }
+      visit(p, m, len);
+    }
+  };
+  for (const ci of chosen) {
+    yield;
+    const c: Pose = { x: set.x[ci], y: set.y[ci], h: set.h[ci] };
+    const m0 = patchMargin(c, yard, ruleset);
+    for (const lam of [lock, -lock]) {
+      // Y: where a forward arc at `lam` of length u ends at c, i.e. c driven backwards at `lam`.
+      walk(c, m0, -1, lam, CHAIN_ARCS_M, (y, my, u) => {
+        for (const mu of [lock, -lock]) {
+          // Z: where a reverse arc at `mu` of length t ends at y, i.e. y driven forwards at `mu`.
+          walk(y, my, 1, mu, CHAIN_ARCS_M.slice(0, 4), (z, mz, t) => {
+            const k = `${Math.round(z.x / 0.15)},${Math.round(z.y / 0.15)},${Math.round(z.h / 0.06)}`;
+            const old = best.get(k);
+            if (!old || mz > old.m) {
+              best.set(k, {
+                p: z,
+                m: mz,
+                i: ci,
+                legs: [
+                  { dir: -1, steerRad: mu, len: t },
+                  { dir: 1, steerRad: lam, len: u },
+                ],
+              });
+            }
+          });
+        }
+      });
+    }
+  }
+  const n = best.size;
+  const out: Chains = {
+    x: new Float32Array(n),
+    y: new Float32Array(n),
+    h: new Float32Array(n),
+    margin: new Float32Array(n),
+    launch: new Int32Array(n),
+    legs: [],
+    n,
+  };
+  let k = 0;
+  for (const v of best.values()) {
+    out.x[k] = v.p.x;
+    out.y[k] = v.p.y;
+    out.h[k] = v.p.h;
+    out.margin[k] = v.m;
+    out.launch[k] = v.i;
+    out.legs.push(v.legs);
+    k += 1;
+  }
+  chainCache.set(set, out);
+  return out;
+}
+
 function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const radius = ruleset.vehicle.wheelbase_m / Math.tan(lock);
   const floor = floorFrom(from, yard, ruleset, MIN_MARGIN);
   const set = yield* launchSetJob(yard, ruleset);
-  const cand: Array<{ len: number; legs: Leg[]; i: number }> = [];
-  for (let i = 0; i < set.n; i += 1) {
-    if (i % 1500 === 0) yield;
-    if (set.margin[i] < 0.09) continue;
-    const to: Pose = { x: set.x[i], y: set.y[i], h: set.h[i] };
-    if (avoid.some((a) => close(a, to, 0.35, 0.14))) continue;
+  const chains = yield* chainsJob(set, yard, ruleset);
+  /** `chain`: legs driven after the Dubins legs, from the pose they end at; `i`: the launch pose it ends at. */
+  const cand: Array<{ len: number; legs: Leg[]; chain: Leg[]; i: number }> = [];
+  const consider = (to: Pose, i: number, chain: Leg[], tail: number, roomM: number, inner: number) => {
+    if (avoid.some((a) => close(a, to, 0.35, 0.14))) return;
     const word = dubins(from, to, radius)[0];
-    if (!word) continue;
+    if (!word) return;
     // A leg shorter than a clutch tap can place is not a leg: dropping it moves the end by centimetres.
     const legs = word.map((w) => ({ ...w, steerRad: w.steerRad * lock })).filter((w) => w.len > MIN_LEG_M);
-    const len = legs.reduce((t, w) => t + w.len, 0) + stopCost(legs);
+    const all = [...legs, ...chain];
+    const len = all.reduce((t, w) => t + w.len, 0) + stopCost(all);
     // Roomier launch poses win over shorter ones: the lead-in lands a few centimetres and degrees off.
-    const keep = prefer && close(prefer, to, 0.5, 0.2) ? KEEP_BONUS_M : 0;
-    cand.push({ len: len + ROOM_PRICE * Math.max(0, ROOMY_M - set.margin[i]) + INNER_PRICE * (1 - set.inner[i]) - keep, legs, i });
+    const lp: Pose = { x: set.x[i], y: set.y[i], h: set.h[i] };
+    const keep = prefer && close(prefer, lp, 0.5, 0.2) ? KEEP_BONUS_M : 0;
+    cand.push({ len: len + tail + ROOM_PRICE * Math.max(0, ROOMY_M - roomM) + INNER_PRICE * (1 - inner) - keep, legs, chain, i });
+  };
+  for (let i = 0; i < set.n; i += 1) {
+    work += 1;
+    if (i % 1500 === 0) yield;
+    if (set.margin[i] < 0.09) continue;
+    consider({ x: set.x[i], y: set.y[i], h: set.h[i] }, i, [], 0, set.margin[i], set.inner[i]);
+  }
+  for (let k = 0; k < chains.n; k += 1) {
+    work += 1;
+    if (k % 1500 === 0) yield;
+    if (chains.margin[k] < 0.09) continue;
+    const li = chains.launch[k];
+    consider({ x: chains.x[k], y: chains.y[k], h: chains.h[k] }, li, chains.legs[k], 0, Math.min(chains.margin[k], set.margin[li]), set.inner[li]);
   }
   cand.sort((u, v) => u.len - v.len);
+  if (process.env.LD) console.log('chains', chains.n, 'cands', cand.length, 'withChain', cand.filter((c) => c.chain.length).length, 'best5', cand.slice(0, 5).map((c) => c.len.toFixed(1) + (c.chain.length ? 'C' : '')).join(' '), 'bestChain', cand.filter((c) => c.chain.length).slice(0, 3).map((c) => c.len.toFixed(1)).join(' '));
   // The cheapest lead-ins that clear the paint; among them the one whose launch pose the reverse phase can
   // still finish from after the scatter of a real stop, which is the roomy pose and not always the nearest.
   const ok: Array<{ plan: Plan; cost: number }> = [];
   let tried = 0;
+  let shuffled = 0;
+  let straight = 0;
   for (const c of cand) {
-    if (tried >= 600 || ok.length >= FUNNEL_CANDIDATES) break;
+    if (tried >= 900 || (shuffled >= FUNNEL_CANDIDATES && straight >= FUNNEL_CANDIDATES)) break;
+    if (c.chain.length ? shuffled >= FUNNEL_CANDIDATES : straight >= FUNNEL_CANDIDATES) continue;
     tried += 1;
     if (tried % 8 === 0) yield;
     let p = from;
     let margin = Infinity;
     let clear = true;
-    for (const leg of c.legs) {
+    for (const leg of [...c.legs, ...c.chain]) {
       const w = walkLeg(p, leg, yard, ruleset);
       if (!w || w.margin < floor) {
         clear = false;
@@ -996,8 +1170,11 @@ function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Po
     if (ok.some((o) => close(o.plan.launch!, { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] }, 0.6, 0.25))) continue;
     const launch = { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] };
     const f = yield* funnelJob(set, c.i, yard, ruleset);
+    if (c.chain.length) shuffled += 1;
+    else straight += 1;
+    if (process.env.LD) console.log('  cand', c.chain.length ? 'C' : '-', c.len.toFixed(1), 'f', f.toFixed(2), 'launch', set.x[c.i].toFixed(2), set.y[c.i].toFixed(2), ((set.h[c.i] * 180) / Math.PI).toFixed(0));
     ok.push({
-      plan: { legs: c.legs, end: p, margin, shunts: 0, length: c.legs.reduce((t, w) => t + w.len, 0), launch },
+      plan: { legs: [...c.legs, ...c.chain], end: p, margin, shunts: 0, length: [...c.legs, ...c.chain].reduce((t, w) => t + w.len, 0), launch },
       cost: c.len + FUNNEL_PRICE_M * (1 - f),
     });
   }
