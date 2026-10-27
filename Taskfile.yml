@@ -35,6 +35,12 @@ tasks:
     cmds:
       - cargo test
 
+  golden:record:
+    desc: re-record every golden trace and hash at the repo root (do this on purpose, then commit)
+    cmds:
+      - cargo run --release -p sim-core --example gen_golden -- .
+      - git status --short {{.GOLDEN}}
+
   golden:
     desc: every golden trace on Chrome, Firefox, WebKit, wazero compiler and wazero interpreter
     deps: [build]

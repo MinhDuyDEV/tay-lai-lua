@@ -243,6 +243,33 @@ Mỗi lỗi trong `docs/legal` trở thành một dòng dữ liệu. Ví dụ (T
   - Có thể nhập từ OpenDRIVE 1.9 lúc build bằng crate Rust `xodr`. OpenDRIVE chỉ là định dạng nhập, không dùng khi chạy.
 - **Giám khảo ảo và đạo diễn tình huống** chọn vị trí trên tuyến cho từng bài 2–11, rồi chỉ sinh đúng các đối tượng cần cho bài đó.
 
+### 7.1. Bài 7 (ghép dọc) và bài 8 (ghép ngang)
+
+Hai bài ghép xe dùng chung một cơ chế với bài 4 và bài 6: hình sinh từ `course.rs`, chấm bằng vết bánh xe trên vạch, nhưng **ô đỗ là đích** thay vì một đoạn đường phải đi qua.
+
+**Hình và kích thước** (`rules.rs`, công thức của QCVN 15:2026 trên chính xe thi):
+
+| | bài 7 (dọc) | bài 8 (ngang) |
+|---|---|---|
+| ô đỗ | dài `a + 1,0 m`, rộng `b + 0,6 m` | dài `1,5a`, sâu `1,25b` |
+| làn khống chế | rộng `1,2a` | làn đường `3,5 m` |
+| đỗ theo hướng | trục dọc, mũi xe hướng ra (+90°) | trục ngang (0°) |
+
+Vùng chạy được = **làn ∪ ô đỗ**. Ba cạnh kín của ô đỗ là **một** polyline (kéo qua cả ô là một lần lỗi, không phải ba), và **không vẽ vạch ngang miệng ô** — nên xe phải lùi qua miệng ô chứ không được coi miệng ô là vạch.
+
+**Tín hiệu kết thúc** (`exercise.rs`, `park_signal`) đọc là: **toàn bộ bốn góc thân xe nằm trong ô đỗ** *và* xe đứng yên liên tục `signal_hold_s` = 0,5 s. Đứng yên được tính lại mỗi tick, nên xe còn lăn thì đồng hồ giữ đếm lại từ 0. Một góc nằm ngoài là chưa có tín hiệu — kiểm tra theo **góc**, không theo tâm xe: thân xe xoay 3° có thể lọt phép thử tâm mà một góc đã ra ngoài.
+
+**Kết thúc bài là MỘT hàm**, `park_end`, không phải một chuỗi `if` rải rác. Nó có đúng hai ngả gọi vào:
+
+1. **tín hiệu kết thúc** vừa được phát (đỗ đúng, đứng yên đủ lâu);
+2. **phím kết thúc của thí sinh** (cạnh lên, không phải mức — giữ phím không kết thúc mỗi tick), và **trần 240 s** đi cùng nhánh này.
+
+Cả ba đường đều đi qua một chỗ để một làn sau (liên hoàn, thoát khỏi ô) chỉ cần gọi lại hàm đó, và để không có đường nào bỏ sót việc chốt điểm.
+
+**Giả định nằm ở đâu:** mọi con số không có trong văn bản luật đều nằm trong `content/rulesets/tt108-2026.json` dưới khoá `park`, mỗi khoá có `source` (trích dẫn) hoặc `assumption` (nói rõ là giả định): thời gian chờ tín hiệu 0,5 s, trần 240 s, biên `outside_margin_m` 1,0 m cho SAI_HÌNH, và ngưỡng 5 s của `DE_VACH_KEO_DAI`. Đổi một con số ở đó là đổi hành vi, không cần sửa code.
+
+**Đoạn đường sạch để chạy (golden).** Mỗi bài có một vết `_clean` (điểm 100, không lỗi) và một vết `_messy`. Vết sạch của bài 7/8 đi theo đúng một công thức: tiến trong làn tới một tư thế xuất phát **chéo**, rồi lùi **một cung toàn lái** tới khi mũi xe về trục ô đỗ, rồi thẳng vào. Xuất phát lùi từ tư thế **song song làn** không sạch: nó buộc cung bán kính nhỏ hơn và bánh sau quệt đúng vạch cạnh của ô (bài 8: thiếu 2 mm). Hai test `scenarios_ghep.rs` khoá điều này lại — một test đòi mỗi ô **phải chạy được** (nó báo lỗi nếu ai sửa hình khiến ô không còn lối vào sạch), một test đòi vết `_messy` chỉ trừ đúng ba dòng lỗi của nó.
+
 ## 8. Tất định, phát lại và kiểm thử
 
 - **Test vết chuẩn (golden trace):** cùng một bộ log thao tác chuẩn phải cho cùng mã băm trên tất cả các môi trường sau:
