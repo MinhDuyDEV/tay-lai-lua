@@ -1032,9 +1032,10 @@ impl State {
         if !self.signal_given && self.hold_ticks >= rs.park.signal_hold_ticks() {
             self.signal_given = true;
             // "Khi có tín hiệu báo kết thúc" the run is done: the bay is right and it has said so.
-            self.phase = Phase::Done;
+            // Through `park_end`, not by setting the phase here, so that the claim in the comment on
+            // `step_park` is true: every way of ending the exercise goes through one function.
+            self.park_end(rs, course, fired);
         }
-        let _ = fired;
     }
 
     /// The clock: the front bumper crossing the entry gate starts it; each whole 2 minutes charges
