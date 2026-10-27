@@ -415,6 +415,7 @@ let visits = new Map<string, number>();
 let lastTick = 0;
 /** For the last few plans: did it open with a straight shunt? */
 let recentShunts: boolean[] = [];
+let lastShunt: { dir: 1 | -1; pose: Pose } | null = null;
 
 /** Drop everything the planner remembers about the run in progress. */
 function forget(): void {
@@ -423,6 +424,7 @@ function forget(): void {
   failedLaunch = [];
   visits = new Map();
   recentShunts = [];
+  lastShunt = null;
   runYard = '';
 }
 
@@ -496,7 +498,15 @@ function* solveJob(pose: Pose, key: string, yard: Yard, ruleset: Ruleset): Job<R
   // The car keeps coming back here, so the line that clears by a hair is better than the next shunt:
   // the buffer is spent (2nd visit onwards).
   const floor = seen >= 2 ? 0 : COMMITTED_MARGIN;
-  const plan = yield* planParkJob(pose, yard, ruleset, failedLaunch, aimed, looping, floor);
+  let plan = yield* planParkJob(pose, yard, ruleset, failedLaunch, aimed, looping, floor);
+  // A shunt that just undoes the last one (forward 0.2, then back 0.2, the car landing either side of a
+  // window it cannot hit) is not a plan: look for a different two moves instead.
+  const f0 = plan?.legs[0];
+  if (plan && f0 && f0.steerRad === 0 && lastShunt && f0.dir === -lastShunt.dir && close(pose, lastShunt.pose, 0.8, 0.3)) {
+    const other = yield* recoverJob(pose, yard, ruleset, floor);
+    if (other) plan = other;
+  }
+  lastShunt = plan?.legs[0] && plan.legs[0].steerRad === 0 && (plan.shunts ?? 0) > 0 ? { dir: plan.legs[0].dir, pose } : null;
   const first = plan?.legs[0];
   recentShunts = [...recentShunts.slice(-5), Boolean(first && first.steerRad === 0 && (plan?.shunts ?? 0) > 0)];
   if (looping) recentShunts = [];
@@ -1341,6 +1351,39 @@ function* escapeJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Po
 }
 
 /**
+ * Nothing above found a line: the car is wedged (heading 40 degrees into the bay's mouth, say). Try every
+ * one or two moves of full lock or straight, forward or back, 0.4 to 1.6 m each, and take the shortest
+ * after which the reverse S fits. It is the last resort, so it may be slow; it is sliced like the rest.
+ */
+function* recoverJob(from: Pose, yard: Yard, ruleset: Ruleset, floor: number): Job<Plan | null> {
+  const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
+  const lens = [0.4, 0.8, 1.2, 1.6].filter((l) => l >= minTapM(ruleset) - 1e-9);
+  const moves: Leg[] = [];
+  for (const len of lens) for (const dir of [1 as const, -1 as const]) for (const steerRad of [0, lock, -lock]) moves.push({ dir, steerRad, len });
+  const start = floorFrom(from, yard, ruleset, floor);
+  const tried: Array<{ legs: Leg[]; end: Pose; margin: number; length: number }> = [];
+  for (const a of moves) {
+    const wa = walkLeg(from, a, yard, ruleset);
+    if (wa && wa.margin >= start) tried.push({ legs: [a], end: wa.end, margin: wa.margin, length: a.len });
+  }
+  for (const first of tried.slice()) {
+    yield;
+    for (const b of moves) {
+      if (b.dir === first.legs[0].dir && b.steerRad === first.legs[0].steerRad) continue;
+      const wb = walkLeg(first.end, b, yard, ruleset);
+      if (wb && wb.margin >= start) tried.push({ legs: [...first.legs, b], end: wb.end, margin: Math.min(first.margin, wb.margin), length: first.length + b.len });
+    }
+  }
+  tried.sort((u, v) => u.length - v.length);
+  for (const t of tried) {
+    const r = yield* reverseSJob(t.end, yard, ruleset, floor);
+    if (!r) continue;
+    return { legs: [...t.legs, ...r.legs], end: r.end, margin: Math.min(t.margin, r.margin), shunts: 1, length: t.length + r.length };
+  }
+  return null;
+}
+
+/**
  * The plan from a stopped pose: parked already (no legs), a reverse S (after a shunt if need be), or a
  * forward lead-in to a launch pose followed by the S from there. Null when none is found.
  */
@@ -1360,7 +1403,7 @@ export function* planParkJob(
   if (direct) return direct;
   const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer, skipDirect)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
   // Looping was only a reason to try something else first: with nothing else, the line that exists is taken.
-  if (!lead) return skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset, floor) : null;
+  if (!lead) return (skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset, floor) : null) ?? (yield* recoverJob(from, yard, ruleset, floor));
   const tail = yield* reverseWithShuntJob(lead.end, yard, ruleset);
   if (!tail) return lead;
   return {
