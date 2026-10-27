@@ -617,6 +617,117 @@ pub fn finish_golden_messy() -> Golden {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Bài 10 — thay đổi số trên đường bằng. One scripted driver for the goldens and for the rule
+// tests: it reads the bumper and the speed, and shifts with the clutch floored the way the
+// keyboard driver does, so a plan says *what* the learner does and the script does the pedals.
+// ---------------------------------------------------------------------------------------------
+
+const GEAR: u64 = 10 << 56;
+
+/// What a bài 10 run does. `up`/`down` are the two shifts; `top_mps` is the speed asked of the
+/// first zone and `low_mps` the speed the second zone is braked down to before the downshift;
+/// `keep_speed` never brakes in the second zone and holds `top_mps` instead.
+#[derive(Clone, Copy)]
+pub(crate) struct GearPlan {
+    pub up: bool,
+    pub top_mps: f64,
+    pub down: bool,
+    pub low_mps: f64,
+    pub keep_speed: bool,
+}
+
+/// The run-up speed in gear 1 before the first sign.
+const GEAR_RUN_UP_MPS: f64 = 5.5;
+
+/// A shift, `k` ticks in: clutch down, the lever across, then the clutch lifted slowly.
+fn gear_shift(k: u32, from: i8, to: i8, throttle: u8) -> TickInput {
+    match k {
+        0..=11 => TickInput { gear: from, clutch: 255, ..Default::default() },
+        12..=21 => TickInput { gear: to, clutch: 255, ..Default::default() },
+        22..=61 => TickInput { gear: to, clutch: (255 - (k - 22) * 6) as u8, throttle, ..Default::default() },
+        _ => TickInput { gear: to, clutch: 0, throttle, ..Default::default() },
+    }
+}
+
+pub(crate) fn gear_run(seed: u64, name: &'static str, plan: GearPlan, rough_start: bool) -> Golden {
+    let g = crate::rules::Ruleset::load().gear;
+    let (sign_1, sign_2) = (g.sign_m(0), g.sign_m(1));
+    let (mut up_at, mut down_at): (Option<u32>, Option<u32>) = (None, None);
+    let mut stage = if rough_start { 0u8 } else { 5 };
+    let inputs = record_to_the_end(seed, |v, t| {
+        match stage {
+            0 if t >= 20 => stage = 1,
+            1 if v.rpm > 4300.0 => stage = 2,
+            2 if v.rpm < 900.0 => stage = 3,
+            3 if !v.engine_on => stage = 4,
+            4 if v.engine_on => stage = 5,
+            _ => {}
+        }
+        if stage < 5 {
+            return match stage {
+                0 => road_park(),
+                1 => TickInput { clutch: 255, throttle: 255, flags: HANDBRAKE, ..Default::default() },
+                2 => road_park(),
+                3 => TickInput { gear: 1, clutch: 0, ..Default::default() },
+                _ => TickInput { clutch: 255, flags: TickInput::FLAG_IGNITION, ..Default::default() },
+            };
+        }
+        if !rough_start && t < 20 {
+            return road_park();
+        }
+        let b = v.front_bumper_m;
+        let speed = v.speed_mps;
+        // Zone 2 first: from sign 2 the throttle is off and the car is braked down to `low_mps`.
+        if b >= sign_2 {
+            if plan.keep_speed {
+                let throttle = if speed < plan.top_mps { 200 } else { 0 };
+                return TickInput { gear: if plan.up { 2 } else { 1 }, clutch: 0, throttle, ..Default::default() };
+            }
+            if let Some(k) = down_at {
+                return gear_shift(t - k, 2, 1, 0);
+            }
+            if speed > plan.low_mps {
+                return TickInput { gear: if plan.up { 2 } else { 1 }, clutch: 0, brake: 255, ..Default::default() };
+            }
+            if plan.down {
+                down_at = Some(t);
+                return gear_shift(0, 2, 1, 0);
+            }
+            return TickInput { gear: if plan.up { 2 } else { 1 }, clutch: 0, ..Default::default() };
+        }
+        // Zone 1: the shift is asked for three metres after the first sign.
+        if plan.up && b >= sign_1 + 3.0 && up_at.is_none() {
+            up_at = Some(t);
+        }
+        if let Some(k) = up_at {
+            let throttle = if speed < plan.top_mps { 200 } else { 0 };
+            return gear_shift(t - k, 1, 2, throttle);
+        }
+        let throttle = if b < sign_1 {
+            if speed < GEAR_RUN_UP_MPS { 160 } else { 0 }
+        } else if speed < plan.top_mps {
+            200
+        } else {
+            0
+        };
+        TickInput { gear: 1, clutch: if speed < 3.0 { 150 } else { 0 }, throttle, ..Default::default() }
+    });
+    Golden { name, seed, inputs }
+}
+
+pub(crate) const GEAR_CLEAN: GearPlan = GearPlan { up: true, top_mps: 9.0, down: true, low_mps: 5.0, keep_speed: false };
+/// Gear 1 all the way and never braked: the wrong gear in both zones, and too fast in the second.
+const GEAR_MESSY: GearPlan = GearPlan { up: false, top_mps: 8.0, down: false, low_mps: 0.0, keep_speed: true };
+
+pub fn gear_golden_clean() -> Golden {
+    gear_run(GEAR | 1, "thay_doi_so_clean", GEAR_CLEAN, false)
+}
+
+pub fn gear_golden_messy() -> Golden {
+    gear_run(GEAR | 0x0123_4567_89ab, "thay_doi_so_messy", GEAR_MESSY, true)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Bài 5 — the light exercise. Its goldens are the seeds as much as the scripts: a seed whose phase
 // offset puts red in front of the car, one that puts green there, and one messy run with three
 // different faults in it.
@@ -972,7 +1083,7 @@ pub fn ghep_ngang_messy() -> Golden {
     ghep_messy(NGANG | 0x0123_4567_89ab, "ghep_ngang_messy")
 }
 
-pub fn all() -> [Golden; 22] {
+pub fn all() -> [Golden; 24] {
     [
         clean_pass(),
         messy_run(),
@@ -996,6 +1107,8 @@ pub fn all() -> [Golden; 22] {
         ghep_doc_messy(),
         ghep_ngang_clean(),
         ghep_ngang_messy(),
+        gear_golden_clean(),
+        gear_golden_messy(),
     ]
 }
 
@@ -1039,7 +1152,7 @@ mod tests {
     /// Every golden's committed hash, in `all()` order. All eight, so `cargo test` pins every one of
     /// them: a zip against a shorter list would silently leave the tail unpinned, and a hash file
     /// full of ffff would still pass.
-    const COMMITTED: [(&str, &str); 22] = [
+    const COMMITTED: [(&str, &str); 24] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
         ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
@@ -1062,6 +1175,8 @@ mod tests {
         ("ghep_doc_messy", include_str!("../../../golden/ghep_doc_messy.hash")),
         ("ghep_ngang_clean", include_str!("../../../golden/ghep_ngang_clean.hash")),
         ("ghep_ngang_messy", include_str!("../../../golden/ghep_ngang_messy.hash")),
+        ("thay_doi_so_clean", include_str!("../../../golden/thay_doi_so_clean.hash")),
+        ("thay_doi_so_messy", include_str!("../../../golden/thay_doi_so_messy.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the
