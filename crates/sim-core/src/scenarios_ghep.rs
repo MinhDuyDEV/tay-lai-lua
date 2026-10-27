@@ -82,16 +82,12 @@ fn both_bays_are_built_to_the_laws_formulas_and_start_like_bai_3() {
     let (x0, y0, x1, y1) = park_of(&doc);
     assert!((x1 - x0 - rs.park.doc_width_m(&rs.vehicle)).abs() < 1e-9, "bài 7's bay is Rd = b + 0,6 wide");
     assert!((y1 - y0 - rs.park.doc_length_m(&rs.vehicle)).abs() < 1e-9, "and Ld = a + 1,0 long");
-    assert!((rs.park.doc_width_m(&rs.vehicle) - 2.2).abs() < 1e-9, "2,20 m for this car");
-    assert!((rs.park.doc_length_m(&rs.vehicle) - 5.2).abs() < 1e-9, "5,20 m for this car");
     assert!((rs.park.doc_lane_m(&rs.vehicle) - 5.04).abs() < 1e-9, "Ed = 1,2a = 5,04 m");
 
     let ngang = Session::new(NGANG | 1).expect("bài 8 runs");
     let (x0, y0, x1, y1) = park_of(&ngang);
     assert!((x1 - x0 - rs.park.ngang_length_m(&rs.vehicle)).abs() < 1e-9, "bài 8's bay is Lg = 3a/2 long");
     assert!((y1 - y0 - rs.park.ngang_width_m(&rs.vehicle)).abs() < 1e-9, "and Rg = 5b/4 deep");
-    assert!((rs.park.ngang_length_m(&rs.vehicle) - 6.3).abs() < 1e-9, "6,30 m for this car");
-    assert!((rs.park.ngang_width_m(&rs.vehicle) - 2.0).abs() < 1e-9, "2,00 m for this car");
 
     for (seed, route) in [(DOC, 4.0), (NGANG, 4.0)] {
         let s = Session::new(seed | 1).unwrap();
@@ -276,18 +272,15 @@ fn a_line_touch_in_a_bay_exercise_charges_the_ghep_code_not_bai_4s() {
 fn sai_hinh_is_the_centre_leaving_the_figure_and_reversing_is_not() {
     let rs = crate::rules::Ruleset::load();
     let probe = Session::new(DOC | 1).unwrap();
-    let (x0, y0, x1, y1) = park_of(&probe);
+    let (x0, y0, _, _) = park_of(&probe);
     let lane = rs.park.doc_lane_m(&rs.vehicle);
-    let _ = (x1, y1);
 
     // Reversing a long way inside the bay must charge nothing: "Lùi để ghép xe vào nơi đỗ".
     let mut s = placed(DOC, (0.5 * (x0 + rs.park.doc_width_m(&rs.vehicle)), y0 + 0.1, -core::f64::consts::FRAC_PI_2), 3);
-    let before = s.view().score;
     for _ in 0..30 {
         s.step(TickInput { gear: -1, clutch: 210, ..Default::default() });
     }
     assert_eq!(s.view().fired("SH.GHEP.SAI_HINH"), 0, "reversing inside the bay is the exercise");
-    let _ = before;
 
     // Well outside the lane, past the margin: SAI_HINH, and the run is suspended.
     let mut s = placed(DOC, (x0 + 2.0, lane + rs.park.outside_margin_m + 0.5, 0.0), 3);

@@ -168,8 +168,6 @@ pub struct SaHinh {
 /// numbers, so the bay that is drawn and the bay that is scored are one bay.
 #[derive(Deserialize)]
 pub struct Park {
-    /// "Hoàn thành bài sát hạch trong thời gian 02 phút" — the clock QUA_THOI_GIAN counts on.
-    pub time_limit_s: f64,
     /// SAI_HINH: how far the car centre may sit outside (lane ∪ bay).
     pub outside_margin_m: f64,
     /// How long the hull must stay inside the bay before the finish signal is given. Not the law's
@@ -416,6 +414,11 @@ pub struct Thresholds {
     /// Bài 3: ticks allowed from the stop to the stop line.
     pub hill_timeout_ticks: u32,
     /// Bài 4 and bài 6: seconds one contact episode must last before DE_VACH_KEO_DAI charges.
+    ///
+    /// Inert for bài 7 and bài 8: those exercises take the same interval from
+    /// `SH.GHEP.DE_VACH_KEO_DAI`'s own `params.seconds`, which happens to be the same five seconds,
+    /// because the rule row was inherited from bài 6. Changing the number on one row and not the
+    /// other would therefore change the two exercises' behaviour separately.
     pub de_vach_keo_dai_ticks: u32,
     /// Bài 5: the 20 s and 30 s marks, counted from the light clock's arming.
     pub junction_20_ticks: u32,
