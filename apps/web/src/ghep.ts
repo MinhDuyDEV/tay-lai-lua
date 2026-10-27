@@ -1037,6 +1037,8 @@ const FUNNEL_PRICE_M = 15;
  */
 const SCATTER_S = 0.25;
 const scatterM = (ruleset: Ruleset): number => SCATTER_S * reverseCreepMps(ruleset);
+/** Clearance along a reverse S at which a perturbed stop counts as fully able to finish, metres. */
+const ROOMY_S_M = 0.12;
 const funnels = new WeakMap<Launch, Map<number, number>>();
 
 /**
@@ -1057,7 +1059,8 @@ function* funnelJob(set: Launch, i: number, yard: Yard, ruleset: Ruleset): Job<n
     for (const dh of [-0.35 * e, 0, 0.35 * e]) {
       n += 1;
       const r = yield* reverseSJob({ x: set.x[i] + dx, y: set.y[i] + dy, h: set.h[i] + dh }, yard, ruleset, COMMITTED_MARGIN);
-      if (r) ok += 1;
+      // A line that clears by a hair counts for little: it is the line the scatter will take away.
+      if (r) ok += Math.min(1, Math.max(0, r.margin) / ROOMY_S_M);
     }
   }
   memo.set(i, ok / n);
@@ -1217,8 +1220,11 @@ function* leadInJob(
   // still finish from after the scatter of a real stop, which is the roomy pose and not always the nearest.
   const ok: Array<{ plan: Plan; cost: number }> = [];
   let tried = 0;
+  let shuffled = 0;
+  let straight = 0;
   for (const c of cand) {
-    if (tried >= 600 || ok.length >= FUNNEL_CANDIDATES) break;
+    if (tried >= 900 || (shuffled >= FUNNEL_CANDIDATES && straight >= FUNNEL_CANDIDATES)) break;
+    if (c.chain.length ? shuffled >= FUNNEL_CANDIDATES : straight >= FUNNEL_CANDIDATES) continue;
     tried += 1;
     if (tried % 8 === 0) yield;
     let p = from;
@@ -1238,6 +1244,9 @@ function* leadInJob(
     if (ok.some((o) => close(o.plan.launch!, { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] }, 0.6, 0.25))) continue;
     const launch = { x: set.x[c.i], y: set.y[c.i], h: set.h[c.i] };
     const f = yield* funnelJob(set, c.i, yard, ruleset);
+    if (c.chain.length) shuffled += 1;
+    else straight += 1;
+    if (process.env.LD) console.log('  cand', c.chain.length ? 'C' : '-', c.len.toFixed(1), 'f', f.toFixed(2), 'launch', set.x[c.i].toFixed(2), set.y[c.i].toFixed(2), ((set.h[c.i] * 180) / Math.PI).toFixed(0));
     ok.push({
       plan: { legs: [...c.legs, ...c.chain], end: p, margin, shunts: 0, length: [...c.legs, ...c.chain].reduce((t, w) => t + w.len, 0), launch },
       cost: c.len + FUNNEL_PRICE_M * (1 - f),
@@ -1401,7 +1410,7 @@ export function* planParkJob(
   }
   const direct = skipDirect ? null : yield* reverseWithShuntJob(from, yard, ruleset, floor);
   if (direct) return direct;
-  const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer, skipDirect)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
+  const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer, true)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
   // Looping was only a reason to try something else first: with nothing else, the line that exists is taken.
   if (!lead) return (skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset, floor) : null) ?? (yield* recoverJob(from, yard, ruleset, floor));
   const tail = yield* reverseWithShuntJob(lead.end, yard, ruleset);
