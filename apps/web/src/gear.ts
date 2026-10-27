@@ -145,6 +145,10 @@ export function adviceGear(s: SimState, ruleset: Ruleset, policy: GearPolicy = G
     case 'runup':
       return `Giữ ga ↑ cho tới ${n(t.runUpKmh)} km/h (đang ${kmhOf(s.speedMps)} km/h) rồi thả ra, để xe chạy đà tới biển thứ nhất, còn ${to(sign1)}.`;
     case 'roll':
+      // Past sign 1 the car is in second gear and fast enough: let it run, which is not the run-up's words.
+      if (b >= sign1) {
+        return `Thả ga, giữ số 2 cho xe chạy tới biển thứ hai (còn ${to(sign2)}), đang ${kmhOf(s.speedMps)} km/h: ở đó phải trên ${n(t.judgedKmh)} km/h.`;
+      }
       return `Thả ga, giữ số 1 cho xe chạy đà. Qua biển thứ nhất (còn ${to(sign1)}) mới đổi lên số 2.`;
     case 'shift2':
       return `Qua biển thứ nhất rồi: đạp côn (giữ Space), bấm 2, rồi nhả côn và giữ ga ↑ cho tới ${n(t.pullKmh)} km/h. Còn ${to(sign2)} tới biển thứ hai, ở đó phải trên ${n(t.judgedKmh)} km/h.`;
