@@ -4,8 +4,8 @@
 //     and `data-hold-ms` (the time of a timed pulse), i.e. `cueGhep`'s steer, pedal, gear and hold; it never
 //     reads the snapshot to decide;
 //   * it polls every 50 ms, and when the reading has changed it acts REACTION ms later on THAT reading, even
-//     if the line has moved on (a cue that comes late fails here); on a timed pulse it lets go, counts the
-//     time and presses a quarter of a reaction late;
+//     if the line has moved on (a cue that comes late fails here); on a timed pulse it lets go, and presses
+//     when the bar says `now`, a full reaction + phase later (`trackFactor` 1: no anticipation is assumed);
 //   * REACTION is one of 150 / 300 / 400 ms, plus the poll's phase inside the 50 ms repaint (0 / 12 / 25 /
 //     37 ms): 3 reactions x 4 phases = 12 cells per bay;
 //   * it acts only through key events on the real driver (wheel winds at 2/s, pedal rises) and the real
