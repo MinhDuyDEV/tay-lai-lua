@@ -943,7 +943,7 @@ function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floorWanted: num
         if (!fin) continue;
         // A clutch tap cannot place a leg shorter than it moves the car: a 0.15 m first arc is not a leg the
         // car can drive, it is a way for the solver to shift where the second arc starts.
-        const tap = minTapM(ruleset);
+        const tap = Math.max(minTapM(ruleset), MIN_ARC_M);
         if (s1 < tap || (s2 > 0 && s2 < tap)) continue;
         const legs: Leg[] = [{ dir: -1, steerRad: a, len: s1 }];
         if (s2 > 0) legs.push({ dir: -1, steerRad: -a, len: s2 });
@@ -1029,6 +1029,11 @@ const MIN_TAP_S = 0.21;
 /** The least one tap moves the car, metres; never below one arc step, which the solver cannot resolve. */
 const minTapM = (ruleset: Ruleset): number => Math.max(ARC_STEP, MIN_TAP_S * reverseCreepMps(ruleset));
 
+/**
+ * The shortest S arc worth a lock change, metres: about six stop-scatters. A shorter arc is a trim, and the
+ * solver chose trims everywhere (`R-0.3 R+3.4`), each a stop of its own with the next plan trimming back.
+ */
+const MIN_ARC_M = 0.5;
 /** Shortest leg worth driving, metres. */
 const MIN_LEG_M = 0.15;
 /** A launch pose with at least this much wheel clearance along its whole S is roomy. */
