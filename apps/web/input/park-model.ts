@@ -57,7 +57,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let counting = false;
   let braking = false;
   let stoppedBy = 0;
-  const trackTicks = Math.round(0.25 * ((reactMs + phaseMs) / 1000) * 60);
+  const trackTicks = Math.round(Number(process.env.TRACKF ?? 0.25) * ((reactMs + phaseMs) / 1000) * 60);
   // The page asks for the cue every frame and the planner works a slice of each; a poll reads the last answer.
   setSliceWork(SLICE_WORK);
   let c = ex.cueNow!(s, ruleset, yard);
