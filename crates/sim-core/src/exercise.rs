@@ -996,9 +996,12 @@ impl State {
             self.contact_tick(rs, t, &course, fired);
         }
         // The end of the exam: the finish signal above, the learner's end key here, or the cap.
+        // The cap is on the EXAM CLOCK, not on session ticks: a learner who idles in the lane before
+        // the entry gate has used no exam time and must not be capped (the clock starts at the gate).
         let end_edge = order && !self.prev_order;
         self.prev_order = order;
-        if self.phase != Phase::Done && (end_edge || self.tick >= rs.park.exam_cap_ticks()) {
+        let capped = self.clock_running && self.park_clock_ticks >= rs.park.exam_cap_ticks();
+        if self.phase != Phase::Done && (end_edge || capped) {
             self.park_end(rs, &course, fired);
         }
         self.course = Some(course);

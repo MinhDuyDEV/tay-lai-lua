@@ -251,17 +251,21 @@ fn a_line_touch_in_a_bay_exercise_charges_the_ghep_code_not_bai_4s() {
     // The contact model is shared with bài 4 and bài 6, and the rule id must follow the exercise:
     // a park run that fell through to the bài 4/6 mapper would charge SH.04.* on a run with no
     // SH.04.* row in its own table, and the score would be wrong without any test failing.
-    let probe = Session::new(NGANG | 1).unwrap();
-    let (x0, y0, x1, _) = park_of(&probe);
-    // Park the car across the bay's mouth line, so a wheel is on it.
-    let mut s = placed(NGANG, (0.5 * (x0 + x1), 0.0, 0.0), 3);
+    // A pose that really does put a wheel on the paint: the right wheels against the bay's end wall.
+    // This is the part the earlier version got wrong — its pose was the bay's CENTRE, which touches
+    // nothing, so the test passed whatever the id mapper did, and reverting the fix left it green.
+    let mut s = placed(NGANG, (3.15, -1.325, 0.0), 3);
     for _ in 0..5 {
         hold(&mut s);
     }
     let v = s.view();
+    assert!(
+        v.fired_ids().iter().any(|id| id.starts_with("SH.GHEP.")),
+        "this pose must touch the paint, or the test proves nothing: {:?}",
+        v.fired_ids()
+    );
     assert_eq!(v.fired("SH.04.DE_VACH"), 0, "bài 8 never charges bài 4's code: {:?}", v.fired_ids());
     assert_eq!(v.fired("SH.04.DE_VACH_KEO_DAI"), 0, "nor its five-second mark");
-    let _ = y0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -335,6 +339,7 @@ fn each_bays_messy_run_charges_the_three_rows_of_that_mistake() {
         assert_eq!(v.score, 90, "{}: two 5-point rows and no signal fee", g.name);
     }
 }
+
 /// A wheel held on the bay's mouth corner is ONE mistake, not two.
 ///
 /// The bay outline and the near-edge pieces meet at the mouth corners, so if they are separate
@@ -367,3 +372,25 @@ fn a_wheel_held_on_the_mouth_corner_charges_de_vach_once() {
     );
 }
 
+/// The 240 s cap runs on the EXAM CLOCK, not on session ticks.
+///
+/// A learner who sits in the lane for four minutes before reaching the entry gate has used no exam
+/// time at all: the clock starts at the gate. Capping on session ticks would suspend them at 240 s
+/// with 0 s of exam clock, which is not the law and not what the clock means.
+#[test]
+fn idling_before_the_gate_does_not_hit_the_240_s_cap() {
+    let rs = crate::rules::Ruleset::load();
+    let lane_y = 0.5 * rs.park.doc_lane_m(&rs.vehicle);
+    // Behind the gate: bài 7's gate is at x = 0 and the car drives towards −x, so 8.0 m is short of it.
+    let mut s = placed(DOC, (8.0, lane_y, core::f64::consts::PI), 3);
+    assert_eq!(s.snapshot()[36], 0.0, "the clock must not be running yet");
+    // Stand there for longer than the whole cap.
+    for _ in 0..(60.0 * (rs.park.exam_cap_s + 10.0)) as u32 {
+        s.step(TickInput { clutch: 255, brake: 255, ..Default::default() });
+    }
+    let v = s.view();
+    assert_eq!(s.snapshot()[36], 0.0, "still no exam clock");
+    assert_ne!(v.phase, Phase::Done, "idling before the gate must not end the exam");
+    assert_eq!(v.fired("SH.GHEP.QUA_THOI_GIAN"), 0, "no time charge before the clock starts");
+    assert_eq!(v.fired("SH.GHEP.CHUA_VAO_CHUONG"), 0, "and no suspension for it");
+}
