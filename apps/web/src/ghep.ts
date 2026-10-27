@@ -172,9 +172,11 @@ export function patchMargin(p: Pose, yard: Yard, ruleset: Ruleset): number {
     // Clearance changes no faster than the point moves: a wheel whose centre is further from every wall
     // than the patch is wide, plus what the worst so far already is, cannot lower the minimum.
     if (clearance(yard, wx, wy) - reach >= worst) continue;
-    for (let j = -1; j <= 1; j += 1) {
+    // A 5 x 3 grid: with only the corners and the middle a line running obliquely past the patch's long
+    // edge can be closer to the edge's midpoint than to any sampled point.
+    for (let j = -2; j <= 2; j += 1) {
       for (let k = -1; k <= 1; k += 1) {
-        const dx = j * hl;
+        const dx = (j / 2) * hl;
         const dy = k * hw;
         const d = clearance(yard, wx + dx * c - dy * s, wy + dx * s + dy * c);
         if (d < worst) worst = d;
@@ -311,7 +313,10 @@ export function stoppingLeadM(ruleset: Ruleset, speedMps: number, reactionS: num
  *
  * `reactionS` is the read-and-press the page is built for; the brake is asked for that much road early.
  */
-export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0.3): GhepCueNow {
+export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = READ_S): GhepCueNow {
+  // A run that starts over (the tick counter went back) starts without the last run's memory.
+  if (s.tick < lastTick) forget();
+  lastTick = s.tick;
   warmUp(yard, ruleset);
   const pose: Pose = { x: s.carX, y: s.carY, h: s.heading };
   const parked = s.hullInside && Math.abs(s.speedMps) < 0.05;
@@ -355,6 +360,13 @@ export function cueGhep(s: SimState, yard: Yard, ruleset: Ruleset, reactionS = 0
   return { steer, pedal: wheelSet ? 'creep' : 'wheel', gear: 0, parked, plan };
 }
 
+/**
+ * How long the page assumes a learner takes from the cue changing to the pedal being down, seconds: the
+ * slowest reader the page is meant for (a 400 ms reaction, a 50 ms poll and the pedal's own rise). A
+ * quicker reader stops a little short, which the next stop's plan absorbs; a slower one overshoots.
+ */
+export const READ_S = 0.45;
+
 /** The gear word for the advice line: what to hold down before the gear goes in. */
 export const gearWord = (dir: 1 | -1): '1' | 'R' => (dir === 1 ? '1' : 'R');
 
@@ -385,6 +397,16 @@ let failedLaunch: Pose[] = [];
 let runYard = '';
 /** How often the car has stood at each (rounded) pose: standing in one place three times is a loop. */
 let visits = new Map<string, number>();
+let lastTick = 0;
+
+/** Drop everything the planner remembers about the run in progress. */
+function forget(): void {
+  lastRun = null;
+  pending = null;
+  failedLaunch = [];
+  visits = new Map();
+  runYard = '';
+}
 
 /** Clearance checks done so far: the planner's measure of work, which is the same on every machine. */
 let work = 0;
@@ -553,7 +575,7 @@ export function adviceGhep(
   yard: Yard,
   ruleset: Ruleset,
   lesson: GhepLesson,
-  reactionS = 0.3,
+  reactionS = READ_S,
 ): string {
   const name = lesson === 7 ? 'bài 7' : 'bài 8';
   const bayW = yard.bay[2] - yard.bay[0];
