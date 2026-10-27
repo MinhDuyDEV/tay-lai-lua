@@ -79,6 +79,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       // The lever goes in with the pedal at the floor as the sentence says; the press repeats until it takes.
       if (c.gear !== 0 && s.gear !== c.gear && s.clutch >= 0.97) owed.push(c.gear === 1 ? 'Digit1' : 'KeyR');
       want = next;
+      if (process.env.PT && tick % 30 === 0) console.log((tick / 60).toFixed(1), c.pedal, c.steer, c.gear, s.speedMps.toFixed(2), s.carX.toFixed(2), s.carY.toFixed(2), ((s.heading * 180) / Math.PI).toFixed(0), c.plan ? c.plan.legs.map((g) => (g.dir > 0 ? 'F' : 'R') + (g.steerRad > 0 ? '+' : g.steerRad < 0 ? '-' : '0') + g.len.toFixed(1)).join(' ') : '-');
     }
     queue.push({ held: new Set(want), pressed: owed });
     owed = [];

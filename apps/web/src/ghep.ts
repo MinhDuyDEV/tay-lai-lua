@@ -560,6 +560,14 @@ export function adviceGhep(
 }
 
 
+/**
+ * The clearance a plan must keep from a pose: the usual floor, but never more than the car already has.
+ * A car that stopped 3 cm off the paint is still allowed to drive away from it; one that must first be
+ * 5 cm clear would be stuck for good.
+ */
+const floorFrom = (from: Pose, yard: Yard, ruleset: Ruleset, floor: number): number =>
+  Math.min(floor, patchMargin(from, yard, ruleset) - 0.002);
+
 /** A job the planner can run a slice at a time: it yields between units of work and returns its result. */
 type Job<T> = Generator<void, T, void>;
 
@@ -583,7 +591,7 @@ const PATH_STEP = 0.1;
 /** The wheel-patch clearance a plan must keep everywhere, metres. Core's executed lines keep 0.10-0.18. */
 export const MIN_MARGIN = 0.05;
 /** The clearance an S already under way must still keep, metres: off the paint, with a little to spare. */
-const COMMITTED_MARGIN = 0.02;
+const COMMITTED_MARGIN = 0.005;
 /** A hull corner this far inside the bay line counts as inside: a rotated hull passes a centre test with a corner out. */
 const HULL_INSET = 0.02;
 const MAX_ARC_M = 6;
@@ -626,7 +634,8 @@ export function reverseS(from: Pose, yard: Yard, ruleset: Ruleset, floor = MIN_M
   return drain(reverseSJob(from, yard, ruleset, floor));
 }
 
-function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floor: number): Job<Plan | null> {
+function* reverseSJob(from: Pose, yard: Yard, ruleset: Ruleset, floorWanted: number): Job<Plan | null> {
+  const floor = floorFrom(from, yard, ruleset, floorWanted);
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const axis = holdPose(yard).h;
   // The bay stretched along its long axis: a pose that fits this fits across the bay, wherever along it.
@@ -944,6 +953,7 @@ function* funnelJob(set: Launch, i: number, yard: Yard, ruleset: Ruleset): Job<n
 function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
   const lock = wheelAt(ruleset, reverseCreepMps(ruleset));
   const radius = ruleset.vehicle.wheelbase_m / Math.tan(lock);
+  const floor = floorFrom(from, yard, ruleset, MIN_MARGIN);
   const set = yield* launchSetJob(yard, ruleset);
   const cand: Array<{ len: number; legs: Leg[]; i: number }> = [];
   for (let i = 0; i < set.n; i += 1) {
@@ -974,7 +984,7 @@ function* leadInJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Po
     let clear = true;
     for (const leg of c.legs) {
       const w = walkLeg(p, leg, yard, ruleset);
-      if (!w || w.margin < MIN_MARGIN) {
+      if (!w || w.margin < floor) {
         clear = false;
         break;
       }
@@ -1061,11 +1071,12 @@ function* reverseWithShuntJob(from: Pose, yard: Yard, ruleset: Ruleset): Job<Pla
  * exists, shortest first. The legs returned are the straight run plus the lead-in found after it.
  */
 function* escapeJob(from: Pose, yard: Yard, ruleset: Ruleset, avoid: readonly Pose[], prefer: Pose | null): Job<Plan | null> {
+  const floor = floorFrom(from, yard, ruleset, MIN_MARGIN);
   for (let d = 1; d <= 6; d += 1) {
     for (const dir of [-1 as const, 1 as const]) {
       const run: Leg = { dir, steerRad: 0, len: d };
       const w = walkLeg(from, run, yard, ruleset);
-      if (!w || w.margin < MIN_MARGIN) continue;
+      if (!w || w.margin < floor) continue;
       const lead = yield* leadInJob(w.end, yard, ruleset, avoid, prefer);
       if (!lead) continue;
       return { legs: [run, ...lead.legs], end: lead.end, margin: Math.min(w.margin, lead.margin), shunts: 1, length: d + lead.length, launch: lead.launch };
@@ -1092,7 +1103,8 @@ export function* planParkJob(
   const direct = skipDirect ? null : yield* reverseWithShuntJob(from, yard, ruleset);
   if (direct) return direct;
   const lead = (yield* leadInJob(from, yard, ruleset, avoid, prefer)) ?? (yield* escapeJob(from, yard, ruleset, avoid, prefer));
-  if (!lead) return null;
+  // Looping was only a reason to try something else first: with nothing else, the line that exists is taken.
+  if (!lead) return skipDirect ? yield* reverseWithShuntJob(from, yard, ruleset) : null;
   const tail = yield* reverseWithShuntJob(lead.end, yard, ruleset);
   if (!tail) return lead;
   return {
