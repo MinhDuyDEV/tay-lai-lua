@@ -270,7 +270,7 @@ function walkLeg(from: Pose, leg: Leg, yard: Yard, ruleset: Ruleset): { end: Pos
   return { end: p, margin };
 }
 /** How far past the end of a leg the car may still roll, metres: a 50 ms poll at the creep and a bit. */
-const STOP_OVERSHOOT_M = 0.16;
+const STOP_OVERSHOOT_M = 0.001;
 
 export type GhepCue = 'left' | 'right' | 'straight';
 
