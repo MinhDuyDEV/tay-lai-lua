@@ -405,7 +405,7 @@ const TIMED_FORWARD_M = 2.1;
 /** Metres this leg's pulse is timed to cover, or null when the leg is stopped on the brake word instead. */
 function timedReachM(plan: Plan, leg: Leg): number | null {
   if (leg.dir === -1) return Math.min(leg.len, TIMED_PULSE_M);
-  return plan.legs[1]?.dir === -1 && leg.len <= TIMED_FORWARD_M ? leg.len : null;
+  return leg.len <= TIMED_FORWARD_M ? leg.len : null;
 }
 
 /** Seconds with the pedals up for a pulse that covers `distM`, in tenths, as the learner is shown it. */
