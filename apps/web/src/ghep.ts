@@ -260,17 +260,23 @@ function walkLeg(from: Pose, leg: Leg, yard: Yard, ruleset: Ruleset): { end: Pos
     margin = Math.min(margin, patchMargin(p, yard, ruleset));
     if (margin <= 0) return null;
   }
-  // The brake lands a hand's width past where the leg ends: that stretch must be clear too.
+  // The press lands a little past where the leg ends: that stretch must be clear too.
   let q = p;
+  const over = leg.dir === -1 ? reverseCreepMps(ruleset) * (SLOWEST_S - LEAD_S) : FORWARD_PULSE_MPS * (SLOWEST_S - LEAD_S);
   for (let i = 0; i < 2; i += 1) {
-    q = endPose(q, [{ ...leg, len: STOP_OVERSHOOT_M / 2 }], ruleset);
+    q = endPose(q, [{ ...leg, len: over / 2 }], ruleset);
     margin = Math.min(margin, patchMargin(q, yard, ruleset));
   }
   if (margin <= 0) return null;
   return { end: p, margin };
 }
-/** How far past the end of a leg a timed stop may still land, metres: a poll and the count at about 1 m/s. */
-const STOP_OVERSHOOT_M = 0.08;
+/**
+ * How late, past the end of the count, the slowest reader's press lands, seconds: a 0.44 s reaction + poll
+ * against the `LEAD_S` the bar asks for early. A leg's end is cleared that far further on, at the speed of
+ * the timed pulse (the creep speed in reverse, about this in first gear forward).
+ */
+const SLOWEST_S = 0.44;
+const FORWARD_PULSE_MPS = 1.5;
 
 export type GhepCue = 'left' | 'right' | 'straight';
 
