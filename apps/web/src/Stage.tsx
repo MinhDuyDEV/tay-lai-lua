@@ -11,7 +11,7 @@ import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
 import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
-import type { Penalty, Ruleset } from './ruleset.ts';
+import { gearOf, gearSignM, type Penalty, type Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
 import { lightName, openSession, zoneName, type Session, type SimState } from './sim/session.ts';
 
@@ -315,6 +315,16 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
     d.progress = s.progressM.toFixed(3);
     d.lateral = s.lateralM.toFixed(3);
     d.contact = s.contact.join('');
+  }
+  // Bài 10's own numbers: the gear the core consumed, the next sign ahead of the bumper and the two
+  // judged instants, so a script (and the e2e) reads the same signs the scorer's tick used.
+  if (exercise.lesson === 10) {
+    d.gearUsed = String(s.gear);
+    const gear = gearOf(ruleset);
+    const signs = [gearSignM(gear, 0), gearSignM(gear, 1), gearSignM(gear, 2)];
+    const next = signs.find((m) => s.frontBumperM < m);
+    d.nextSign = next === undefined ? '' : String(next);
+    d.signsPassed = String(signs.filter((m) => s.frontBumperM >= m).length);
   }
   if (exercise.lesson === 4 || exercise.lesson === 5 || exercise.lesson === 6) {
     d.progress = s.progressM.toFixed(3);

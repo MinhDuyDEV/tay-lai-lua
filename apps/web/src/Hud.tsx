@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { legendFor } from '../input/driver.ts';
 import type { Exercise, Lesson } from './exercise.ts';
 import type { Ruleset } from './ruleset.ts';
-import { hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
+import { gearOf, gearSignM, hillOf, junctionOf, roadOf, sourceLabel } from './ruleset.ts';
 import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
@@ -83,7 +83,10 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const figure = exercise.lesson === 4 || exercise.lesson === 6;
   /** Bài 7 and bài 8: the bay card, the hold counter and the top-down inset of the yard. */
   const park = exercise.lesson === 7 || exercise.lesson === 8;
+  /** Bài 10: the three signs and the two zones, and the one speed both zones are judged at. */
+  const gearLesson = exercise.lesson === 10;
   const figureEl = useRef<HTMLElement>(null);
+  const gearEl = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const hill = hillEl.current ? hillParts(hillEl.current) : null;
@@ -91,6 +94,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       ? { el: aidEl.current, fill: aidFill.current!, mark: aidMark.current!, key: aidKey.current!, inn: aidIn.current! }
       : null;
     const fig = figureEl.current ? figureParts(figureEl.current) : null;
+    const gearParts = gearEl.current ? gearCardParts(gearEl.current) : null;
     const stop = run.onFrame(() => {
       const s = run.state;
       if (speed.current) speed.current.textContent = (s.speedMps * 3.6).toFixed(1);
@@ -108,6 +112,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         paintAid(aidParts, aid, spanRef.current);
       }
       if (fig) paintFigure(fig, s, yard, ruleset, park);
+      if (gearParts) paintGearCard(gearParts, s, ruleset);
       if (score.current) score.current.textContent = s.disqualified ? 'ĐÌNH CHỈ' : String(s.score);
       if (phase.current) phase.current.textContent = phaseLabel(s.phase, s.disqualified, exercise.lesson);
       if (throttle.current) throttle.current.style.height = bar(s.throttle);
@@ -307,6 +312,33 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
         </section>
       ) : null}
 
+      {gearLesson ? (
+        <section className="hud-hill hud-gear" aria-label="Thay đổi số" ref={gearEl}>
+          <div className="cell" data-cell="sign">
+            <span className="name" data-part="label">
+              Tới biển
+            </span>
+            <strong>
+              <span data-part="value">—</span> m
+            </strong>
+            <small data-part="limit" />
+          </div>
+          <div className="cell" data-cell="speed">
+            <span className="name">Tốc độ chấm</span>
+            <strong>{Math.round(gearOf(ruleset).speed_kmh)} km/h</strong>
+            <small>trên ở biển 2, dưới ở biển 3</small>
+          </div>
+          <div className="cell" data-cell="gearnow">
+            <span className="name">Số đang dùng</span>
+            <strong>
+              <span data-part="value">N</span>
+            </strong>
+            <small>số 1, rồi số 2, rồi số 1</small>
+          </div>
+          <p className="advice" ref={advice} />
+        </section>
+      ) : null}
+
       <section className="hud-drive" aria-label="Xe">
         <div className="pedals">
           <div className="pedal">
@@ -430,6 +462,37 @@ interface FigureCell {
   value: HTMLElement;
   limit: HTMLElement;
   cell: HTMLElement;
+}
+
+/** The bài 10 card's two live cells: the next sign ahead, and the gear the core has. */
+function gearCardParts(el: HTMLElement): { sign: FigureCell; gearnow: HTMLElement } {
+  const cell = (name: string): FigureCell => {
+    const c = el.querySelector<HTMLElement>(`[data-cell="${name}"]`)!;
+    return { cell: c, value: c.querySelector<HTMLElement>('[data-part="value"]')!, limit: c.querySelector<HTMLElement>('[data-part="limit"]')! };
+  };
+  return { sign: cell('sign'), gearnow: el.querySelector<HTMLElement>('[data-cell="gearnow"] [data-part="value"]')! };
+}
+
+/**
+ * Bài 10's card: how far to the next sign the exercise is judged at, and the gear the core has. The sign
+ * is the next one *ahead of the bumper*, from the ruleset's own positions, so the number counts down to the
+ * same crossing the core judges on. The judged speed is fixed by the ruleset and written once in the JSX.
+ */
+function paintGearCard(parts: ReturnType<typeof gearCardParts>, s: SimState, ruleset: Ruleset) {
+  const gear = gearOf(ruleset);
+  const signs = [gearSignM(gear, 0), gearSignM(gear, 1), gearSignM(gear, 2)];
+  const next = signs.find((m) => s.frontBumperM < m);
+  const sign = parts.sign;
+  if (next === undefined) {
+    sign.value.textContent = '—';
+    sign.limit.textContent = 'đã qua biển thứ ba';
+    sign.cell.dataset.state = 'neutral';
+  } else {
+    sign.value.textContent = Math.max(0, next - s.frontBumperM).toFixed(0);
+    sign.limit.textContent = `biển ${signs.indexOf(next) + 1} (${next} m)`;
+    sign.cell.dataset.state = next - s.frontBumperM < 10 ? 'warn' : 'neutral';
+  }
+  parts.gearnow.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
 }
 
 /** The figure card's three cells, looked up once so the 60 Hz paint touches no selector. */

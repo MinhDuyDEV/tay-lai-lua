@@ -121,6 +121,37 @@ export interface Junction {
   light_source: RuleSource;
 }
 
+/**
+ * Bài 10's straight road (`content/rulesets/tt108-2026.json`'s `gear` block): three signs, two 25 m
+ * zones, and one speed the two zones are judged at. Positions are metres of `frontBumperM` — the
+ * core judges the tick the bumper's centre crosses `sign_m(i)` (`assumptions.gear_signs`), which is
+ * the same number the page publishes as `data-bumper`, so the picture and the judge read one axis.
+ */
+export interface Gear {
+  first_sign_m: number;
+  zone_length_m: number;
+  road_length_m: number;
+  /** The single speed of both zones, km/h: above it at sign 2, below it at sign 3. */
+  speed_kmh: number;
+  /** The text that gives the two zones their numbers. */
+  speed: RuleSource;
+  back: RuleSource;
+  /** The "02 phút" of SH.SO.QUA_THOI_GIAN's own sentence is in that rule's params, not here. */
+  exam_cap_s: number;
+}
+
+/** The sign's place on the road, metres: sign 1, 2 and 3 for `i` = 0, 1, 2. */
+export const gearSignM = (gear: Gear, i: 0 | 1 | 2): number => gear.first_sign_m + gear.zone_length_m * i;
+
+/**
+ * Bài 10's numbers, or a clear error: the page was built against a ruleset that has no `gear` block,
+ * and the signs it draws must be the signs the scorer judges.
+ */
+export function gearOf(ruleset: Ruleset): Gear {
+  if (!ruleset.gear) throw new Error(`${ruleset.id} has no "gear" block: bài 10 needs it`);
+  return ruleset.gear;
+}
+
 /** The stop line's place along bài 5's approach axis: the car starts `approach_length_m` short of it. */
 export const junctionStopLineM = (junction: Junction): number => junction.approach_length_m;
 
@@ -210,6 +241,8 @@ export interface Ruleset {
   road?: Road;
   /** Bài 5's signalled junction. */
   junction?: Junction;
+  /** Bài 10's three signs and two zones. */
+  gear?: Gear;
   steer: SteerFeel;
   rules: Rule[];
 }

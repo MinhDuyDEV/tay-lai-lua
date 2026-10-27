@@ -44,8 +44,8 @@ export interface CourseRecord {
 export type CourseKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 /** What a kind 6 transverse marking is, by its `line_id` (crates/sim-core/src/abi.rs). */
-export type MarkKind = 'stop' | 'finish' | 'crosswalk' | 'rail';
-const MARK_KINDS: readonly MarkKind[] = ['stop', 'finish', 'crosswalk', 'rail'];
+export type MarkKind = 'stop' | 'finish' | 'crosswalk' | 'rail' | 'sign';
+const MARK_KINDS: readonly MarkKind[] = ['stop', 'finish', 'crosswalk', 'rail', 'sign'];
 export const markKind = (lineId: number): MarkKind => {
   const kind = MARK_KINDS[lineId - 1];
   if (kind === undefined) throw new Error(`sim_course mark line_id ${lineId} is not in the contract`);

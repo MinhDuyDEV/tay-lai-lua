@@ -908,6 +908,134 @@ let junctionRed = null;
   });
 }
 
+// ---- bài 10: the gear-change road ------------------------------------------------------------
+// The learner reads the advice line and the cue word, and nothing else: `data-cue` says which key
+// group is asked for, the sentence says which keys and what number. The reaction is a person's, and
+// a press that did not take (the clutch was not down yet) is made again while the line still asks.
+// `skip` is the mistake a variant makes: 'shift2' is a learner who reads the sentence's "giữ ga ↑ cho tới
+// 30 km/h" but misses its "bấm 2", so the car runs the first zone in first gear at a speed the sentence
+// named — wrong gear, right speed, which is SH.SO.SAI_SO and not SAI_CA_HAI. 'none' follows the words.
+const GEAR_REACTION_MS = 300;
+async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  const held = new Set();
+  const hold = async (want) => {
+    for (const k of [...held]) if (!want.has(k)) { await key.up(k); held.delete(k); }
+    for (const k of want) if (!held.has(k)) { await key.down(k); held.add(k); }
+  };
+  const read = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('.advice');
+      return { cue: el.dataset.cue ?? '', text: el.textContent ?? '' };
+    });
+  // The keys a cue word asks for: the page's own vocabulary, read as words a learner reads.
+  const keysOf = (cue) =>
+    cue === 'runup' || cue === 'pull' ? ['ArrowUp'] : cue === 'brake' ? ['ArrowDown'] : cue === 'ready' || cue === 'shift2' || cue === 'shift1' ? ['Space'] : [];
+  let seen = '';
+  let lastTap = new Map();
+  const end = Date.now() + maxMs;
+  while (Date.now() < end) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} at bumper ${d.bumper}\nstate: ${JSON.stringify(d)}`);
+    if (d.phase === 'done' || d.disqualified === 'yes') break;
+    const r = await read();
+    const wantGear = r.cue === 'ready' || r.cue === 'shift1' ? 1 : r.cue === 'shift2' ? 2 : 0;
+    const tap = wantGear === 1 ? 'Digit1' : wantGear === 2 ? 'Digit2' : null;
+    // The mistake: the up-shift's gear word is read but its "bấm 2" is missed, so the car goes through
+    // the first zone in first gear. The throttle is held to a speed just above the judged 24 and no
+    // further — first gear's own 4 000 rpm line is 31 km/h, and a learner who did read "trên 24 km/h"
+    // would sit between the two, which is what makes this a wrong-gear charge and not an over-rev.
+    const blindToShift = skip === 'shift2' && r.cue === 'shift2';
+    if (blindToShift) {
+      if (seen !== 'blind') {
+        seen = 'blind';
+        console.log(`     the line says [${r.cue} (gear tap missed)] at ${d.bumper} m: ${r.text.trim().slice(0, 120)}`);
+        await page.waitForTimeout(GEAR_REACTION_MS);
+      }
+      await hold(Number(d.speed) * 3.6 >= 27 ? new Set() : new Set(['ArrowUp']));
+      await page.waitForTimeout(50);
+      continue;
+    }
+    const asked = r.cue;
+    if (asked !== seen) {
+      seen = asked;
+      console.log(`     the line says [${asked}] at ${d.bumper} m: ${r.text.trim().slice(0, 120)}`);
+      await page.waitForTimeout(GEAR_REACTION_MS);
+      await hold(new Set(keysOf(asked)));
+    }
+    // The gear and the handbrake are taps, and a tap that did not take is made again one reaction on.
+    if (tap && wantGear && d.gear !== String(wantGear) && Number(d.clutch) > 0.95 && Date.now() - (lastTap.get(tap) ?? 0) > GEAR_REACTION_MS + 300) {
+      lastTap.set(tap, Date.now());
+      await page.waitForTimeout(GEAR_REACTION_MS);
+      await key.press(tap);
+    }
+    if (r.cue === 'ready' && d.handbrake === 'yes' && Date.now() - (lastTap.get('KeyP') ?? 0) > GEAR_REACTION_MS + 300) {
+      lastTap.set('KeyP', Date.now());
+      await page.waitForTimeout(GEAR_REACTION_MS);
+      await key.press('KeyP');
+    }
+    await page.waitForTimeout(50);
+  }
+  await hold(new Set());
+  await until(page, 'the run to end', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
+  return readStage(page);
+}
+
+{
+  let gearClean;
+  await check('bài 10 clean run from the advice line alone: gear 2 above 24 km/h at sign 2, gear 1 below 24 at sign 3, 100', async () => {
+    const { page, problems } = await fresh('/thi/10');
+    const d0 = await readStage(page);
+    if (d0.exercise !== '10') throw new Error(`the page says exercise ${d0.exercise}`);
+    if (d0.penalties !== '') throw new Error(`the page starts with penalties: ${d0.penalties}`);
+    const d = await driveGearPage(page, { allowed: [] });
+    if (d.phase !== 'done' || d.disqualified !== 'no' || d.score !== '100' || d.penalties !== '') {
+      throw new Error(`not a clean finish: ${JSON.stringify(d)}`);
+    }
+    // The journey the brief names, from the page's own published numbers: the card counts down to the
+    // sign the bumper is approaching, and all three are behind the car when the run ends.
+    const signs = await page.evaluate(() => ({
+      next: document.querySelector('#stage').dataset.nextSign,
+      passed: document.querySelector('#stage').dataset.signsPassed,
+    }));
+    if (signs.passed !== '3') throw new Error(`${signs.passed} of the three signs were passed, not 3`);
+    const card = await page.$eval('[data-cell="sign"] [data-part="limit"]', (el) => el.textContent);
+    console.log(`     bài 10: score ${d.score}, 3 signs passed, card says "${card}"`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    gearClean = await page.evaluate(() => ({ trace: window.__thi.trace(), hash: window.__thi.hash(), shown: document.querySelector('#stage').dataset.hash }));
+    const exerciseId = Buffer.from(gearClean.trace, 'base64')[7];
+    if (exerciseId !== 10) throw new Error(`the trace header carries exercise id ${exerciseId}, not 10`);
+    await page.close();
+  });
+
+  await check('the bài 10 trace replays to the hash the page shows', () => replays(gearClean));
+
+  // The failure path the brief names: the learner never shifts up, so the first zone is run in first
+  // gear. The page must name the rule, its points and the ruleset's own quotation.
+  await check('bài 10 never shifting up: SH.SO.SAI_SO at sign 2, −5, quote shown', async () => {
+    const id = 'SH.SO.SAI_SO';
+    const { page, problems } = await fresh('/thi/10');
+    const d = await driveGearPage(page, { allowed: [id], skip: 'shift2' });
+    if (!d.penalties.split(' ').includes(id)) throw new Error(`${id} did not fire: ${JSON.stringify(d)}`);
+    if (d.lastPenalty !== id) throw new Error(`data-last-penalty is "${d.lastPenalty}", not ${id}`);
+    if (d.lastPenaltyPoints !== '5') throw new Error(`data-last-penalty-points is "${d.lastPenaltyPoints}", not 5`);
+    if (d.score !== '95') throw new Error(`score ${d.score}, expected 95`);
+    const rule = ruleset.rules.find((r) => r.id === id);
+    if (d.lastPenaltyQuote !== rule.source.quote) throw new Error('data-last-penalty-quote is not the ruleset\u2019s quote');
+    const shown = await page.$eval(`[data-penalty="${id}"] blockquote`, (e) => e.textContent);
+    if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+    const points = await page.$eval(`[data-penalty="${id}"] .points`, (e) => e.textContent);
+    if (points !== '−5 điểm') throw new Error(`the HUD says "${points}", not "−5 điểm"`);
+    console.log(`     bài 10 without the up-shift: ${id} at sign 2, ${points}, score ${d.score}`);
+    if (problems.length) throw new Error(problems.join('\n'));
+    await page.close();
+  });
+}
+
   // ---- bài 4 and bài 6: the figure pages ------------------------------------------------------
   for (const lesson of [4, 6]) {
     const page4 = `/thi/${lesson}`;
