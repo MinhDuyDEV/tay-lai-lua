@@ -442,7 +442,7 @@ async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'do
     await page.waitForTimeout(50);
   }
   await hold(new Set());
-  await until(page, 'the run to end', stopWhen, allowed);
+  await until(page, `the run to end (${stopWhen})`, stopWhen, allowed);
 }
 
 let failures = 0;
@@ -1475,15 +1475,15 @@ async function driveWholeRun(page, { automatic = false, allowed = [], belt = tru
   await driveFigure(page, { allowed, automatic, end: `d.lesson === '5'` });
   await driveJunction(page, { allowed, arrive: 'red', automatic, end: `d.lesson === '6'` });
   await driveFigure(page, { allowed, automatic, end: `d.lesson === '7'` });
-  await driveParkPage(page, { allowed, automatic, stopWhen: `d.lesson === '8'` });
-  await driveParkPage(page, { allowed, automatic, stopWhen: `d.lesson === '9'` });
+  await driveParkPage(page, { allowed, automatic, until: `d.lesson === '8'` });
+  await driveParkPage(page, { allowed, automatic, until: `d.lesson === '9'` });
   await roadSetOff(page, allowed, automatic);
   await roadStop(page, { allowed, automatic });
   await roadGo(page, { allowed, cond: `Number(d.bumper) > 1.2`, automatic, stop: false, end: `d.lesson === '10'` });
   await driveGearPage(page, { allowed, automatic, end: `d.lesson === '11'` });
   await roadSetOff(page, allowed, automatic);
   await roadGo(page, { allowed, cond: `Number(d.bumper) > 21.3`, signal: true, automatic });
-  await until(page, 'the result screen', `d.phase === 'done'`);
+  await until(page, 'the result screen', `d.phase === 'done'`, allowed);
   await page.waitForSelector('[data-run-result]', { timeout: WAIT_MS });
   const final = await readStage(page);
   const result = await readLienHoanResult(page);
@@ -1578,19 +1578,15 @@ async function faultLienHoan() {
 }
 
 {
-  // The two variants in parallel pages: a whole run is real-time, and the outcome needs both. The
-  // fault run is a third real-time sitting, so it runs on its own after these two to keep the
-  // screen-only learner's 250–300 ms reactions inside the band the page's cues were built for.
-  await check('liên hoàn: the whole run on số sàn and số tự động, 11 bài, 100, each replayed to the same hash', async () => {
-    const results = await Promise.allSettled([
-      cleanLienHoan('số sàn', '/lien-hoan', false),
-      cleanLienHoan('số tự động', '/lien-hoan?so=tu-dong', true),
-    ]);
-    const failed = results.filter((r) => r.status === 'rejected');
-    if (failed.length) throw new Error(failed.map((r) => String(r.reason?.message ?? r.reason)).join('\n'));
-  });
-
-  await check('liên hoàn fault: bài 1 without the belt → result screen names SH.01.DAY_AN_TOAN −5, its quote, bài 1 and the run clock', () => faultLienHoan());
+  // Each run is one real-time sitting on its own page, the way the per-bài sections drive: the bay
+  // and the slope cues are timed for a 250–300 ms learner, and a second live page on the same
+  // machine steals enough of that band to make the fault a property of the runner, not the page.
+  await check('liên hoàn số sàn: the whole run, 11 bài, 100, then replay to the same hash', () =>
+    cleanLienHoan('số sàn', '/lien-hoan', false));
+  await check('liên hoàn số tự động: the whole run, 11 bài, 100, then replay to the same hash', () =>
+    cleanLienHoan('số tự động', '/lien-hoan?so=tu-dong', true));
+  await check('liên hoàn fault: bài 1 without the belt → result screen names SH.01.DAY_AN_TOAN −5, its quote, bài 1 and the run clock', () =>
+    faultLienHoan());
 }
 
 } finally {
