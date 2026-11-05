@@ -67,6 +67,8 @@ impl TickInput {
     /// The learner pressed the start order (đèn xanh). Latches: only the first tick carrying it
     /// matters, and everything after that tick is scored.
     pub const FLAG_START_ORDER: u8 = 1 << 5;
+    /// The hazard-lights button is down (level, like the belt). Only a liên hoàn run reads it.
+    pub const FLAG_HAZARD: u8 = 1 << 6;
 
     pub fn from_wire(b: &[u8; Self::WIRE_LEN]) -> Self {
         Self {
@@ -150,8 +152,12 @@ const EXERCISE_SHIFT: u32 = 56;
 /// so an automatic attempt meets the same light as its manual twin. (The PRNG and the hash take the whole seed, bit included: the PRNG's draws are never read, and the hash should tell the two apart.)
 pub const AUTOMATIC_BIT: u64 = 1 << 55;
 
+/// The link between two bài of a liên hoàn run is an exercise of its own, so the run can open it as it opens
+/// a bài. No page has it.
+const LINK_ID: u64 = 13;
+
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 57;
+pub const SNAPSHOT_LEN: usize = 61;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -236,6 +242,12 @@ pub const SNAPSHOT_LEN: usize = 57;
 ///                          (score) and 3 (disqualified), which are the run's
 /// 55 course_tick           liên hoàn: steps since bài 1's start order, the run's clock; 0 elsewhere
 /// 56 verdict               liên hoàn: 0 running | 1 passed | 2 failed (suspended); 0 elsewhere
+/// 57 on_link               liên hoàn: 1 while the car is on the link between bài 6 and bài 7 (then
+///                          `lesson` is 0 and fields 0..53 are the link's: a straight lane), else 0
+/// 58 hazard                liên hoàn link: 0 not yet | 1 the hazard signal sounds (siren, red lamp) |
+///                          2 it has ended and the car has not gone on | 3 over
+/// 59 hazard_elapsed_ms     ms since the signal began; 0 before it
+/// 60 hazard_button         1 while the hazard-lights button is down (TickInput::FLAG_HAZARD)
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
@@ -323,6 +335,7 @@ impl Session {
             9 => Exercise::Rail,
             10 => Exercise::Gear,
             11 => Exercise::Finish,
+            LINK_ID => Exercise::Link,
             7 => Exercise::GhepDoc,
             8 => Exercise::GhepNgang,
             _ => return None,
