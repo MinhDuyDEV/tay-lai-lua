@@ -98,6 +98,7 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
   KEY.order,
   ...KEY.neutral,
   ...KEY.reverse,
+  ...KEY.drive,
   ...GEAR_CODES.map(([c]) => c),
 ]);
 
@@ -132,6 +133,26 @@ export const KEY_LEGEND: ReadonlyArray<{
   { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
 ];
 
+/**
+ * The same legend for an automatic: the lever is a selector with three positions and there is no third
+ * pedal, so the rows that name a clutch or a gear number are replaced by the selector's own row rather
+ * than hidden — a learner has to be told which key moves the car.
+ */
+export const KEY_LEGEND_AUTO: typeof KEY_LEGEND = [
+  { keys: 'E', does: 'Nổ máy' },
+  { keys: 'B', does: 'Thắt / tháo dây an toàn', bai1Only: true },
+  { keys: 'Enter', does: 'Giám khảo phát lệnh xuất phát (đèn xanh)', bai1Only: true },
+  { keys: 'Enter', does: 'Báo đã ghép xong: kết thúc bài và chấm kết quả', park: true },
+  { keys: 'Q / W', does: 'Xi nhan trái / phải: bật, bật cái kia là tắt cái này, bấm lại để tắt', signals: true },
+  { keys: 'P', does: 'Phanh tay nhả / kéo' },
+  // The selector: below 0 is R, 0 is N, above 0 is D on the wire, and the box picks the gear itself.
+  { keys: 'D, N, R', does: 'Cần số: D chạy, N mo, R lùi' },
+  { keys: '↑', does: 'Ga: giữ càng lâu càng mạnh', noFigure: true },
+  { keys: '↓', does: 'Phanh', noFigure: true },
+  { keys: '↓', does: 'Phanh: giữ để dừng hẳn rồi giữ xe đứng yên', park: true },
+  { keys: '← →', does: 'Lái (càng nhanh càng bớt góc)' },
+];
+
 /** The two figures driven at the car's own idle creep: no throttle and no brake on the line. */
 const FIGURE_LESSONS: ReadonlySet<number> = new Set([4, 6]);
 /** Bài 7 and bài 8: the reverse park, where the brake and R are the manoeuvre. */
@@ -144,8 +165,8 @@ const PARK_LESSONS: ReadonlySet<number> = new Set([7, 8]);
  * light, so it needs both pedals — which is why this asks which lesson it is rather than how big the
  * number is.
  */
-export const legendFor = (lesson: number, signals = lesson === 1) =>
-  KEY_LEGEND.filter((entry) => {
+export const legendFor = (lesson: number, signals = lesson === 1, automatic = false) =>
+  (automatic ? KEY_LEGEND_AUTO : KEY_LEGEND).filter((entry) => {
     if (entry.signals) return signals;
     // `park` means "only bài 7 and bài 8": the reverse gear, the end-of-exam key and the brake are that
     // lesson's own. `brake` means "everywhere but the two creep figures", which is the row the road

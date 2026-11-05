@@ -109,7 +109,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (aidParts) {
         const aid = exercise.stop(s, ruleset);
         if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
-        paintAid(aidParts, aid, spanRef.current);
+        paintAid(aidParts, aid, spanRef.current, exercise.automatic);
       }
       if (fig) paintFigure(fig, s, yard, ruleset, park);
       if (gearParts) paintGearCard(gearParts, s, ruleset);
@@ -341,12 +341,16 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
 
       <section className="hud-drive" aria-label="Xe">
         <div className="pedals">
-          <div className="pedal">
-            <div className="track">
-              <div className="fill" ref={clutch} data-pedal="clutch" />
+          {/* An automatic has two pedals: the snapshot's clutch is the converter's slip, not something
+              the learner can press, so it is not drawn as one. */}
+          {exercise.automatic ? null : (
+            <div className="pedal">
+              <div className="track">
+                <div className="fill" ref={clutch} data-pedal="clutch" />
+              </div>
+              <span>Côn</span>
             </div>
-            <span>Côn</span>
-          </div>
+          )}
           <div className="pedal">
             <div className="track">
               <div className="fill" ref={throttle} data-pedal="throttle" />
@@ -439,7 +443,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       <section className="hud-keys" aria-label="Phím">
         <h2>Phím</h2>
         <ul>
-          {legendFor(exercise.lesson, exercise.signals).map((entry) => (
+          {legendFor(exercise.lesson, exercise.signals, exercise.automatic).map((entry) => (
             <li key={entry.keys}>
               <span className="key">{entry.keys}</span>
               {entry.does}
@@ -712,7 +716,7 @@ interface AidParts {
  *
  * It is deliberately the same simple HUD vocabulary as the rest: a track, a fill and a mark, no art.
  */
-function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: number) {
+function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: number, automatic: boolean) {
   if (!aid) {
     parts.el.dataset.state = 'idle';
     parts.fill.style.width = '0%';
@@ -730,7 +734,7 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   parts.el.dataset.key = aid.key;
   parts.fill.style.width = `${fillPct}%`;
   parts.mark.style.left = `${markPct}%`;
-  parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Côn + phanh';
+  parts.key.textContent = automatic ? 'Phanh ↓' : aid.key === 'clutch' ? 'Côn' : 'Côn + phanh';
   parts.inn.textContent = aid.now ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 
