@@ -61,7 +61,10 @@ fn record_while(
 /// rule fires. Recorded at metres, so the window is hit exactly. The first `CRANK_TICKS` are the
 /// unscored cold start; the 330 scored ticks after the order are the run the trace always had.
 pub fn clean_pass() -> Golden {
-    let seed = 1;
+    xuat_phat_pass(1, "xuat_phat_clean")
+}
+
+fn xuat_phat_pass(seed: u64, name: &'static str) -> Golden {
     let inputs = record(seed, 330 + CRANK_TICKS, |v, t| {
         let signalling = v.front_bumper_m < 5.0;
         let mut flags = BELT;
@@ -95,7 +98,7 @@ pub fn clean_pass() -> Golden {
             }
         }
     });
-    Golden { name: "xuat_phat_clean", seed, inputs }
+    Golden { name, seed, inputs }
 }
 
 /// A messy run: cold crank, stall, restart, rev past 4000, a signal switched off far too early, a
@@ -982,9 +985,11 @@ fn ghep_clean(seed: u64, name: &'static str, legs: &[GhepLeg]) -> Golden {
     Golden { name, seed, inputs }
 }
 
-pub fn ghep_doc_clean() -> Golden {
+/// The bay lines, shared by the manual and the automatic goldens: the path depends only on distance and
+/// steering, never on how the speed is made.
+fn ghep_doc_legs() -> [GhepLeg; 8] {
     let pi = core::f64::consts::PI;
-    let legs: [( (f64, f64, f64), (f64, f64, f64), f64, f64); 8] = [
+    [
         ((10.140, 2.520, pi), (9.199, 2.405, 193.9f64 * pi / 180.0), 1.0, 1.0),
         ((9.199, 2.405, 193.9f64 * pi / 180.0), (7.077, 2.473, 162.4f64 * pi / 180.0), 1.0, -1.0),
         ((7.077, 2.473, 162.4f64 * pi / 180.0), (3.768, 2.027, 212.9f64 * pi / 180.0), 1.0, 1.0),
@@ -993,13 +998,12 @@ pub fn ghep_doc_clean() -> Golden {
         ((-0.294, 1.850, 163.9f64 * pi / 180.0), (-2.132, 3.007, 131.7f64 * pi / 180.0), 1.0, -1.0),
         ((-2.132, 3.007, 131.7f64 * pi / 180.0), (-1.141, 0.302, 88.5f64 * pi / 180.0), -1.0, 1.0),
         ((-1.141, 0.302, 88.5f64 * pi / 180.0), (-1.204, -2.148, 88.5f64 * pi / 180.0), -1.0, 0.0),
-    ];
-    ghep_clean(DOC | 1, "ghep_doc_clean", &legs)
+    ]
 }
 
-pub fn ghep_ngang_clean() -> Golden {
+fn ghep_ngang_legs() -> [GhepLeg; 8] {
     let pi = core::f64::consts::PI;
-    let legs: [((f64, f64, f64), (f64, f64, f64), f64, f64); 8] = [
+    [
         ((-5.100, 1.760, 0.0), (-3.919, 1.578, -17.6f64 * pi / 180.0), 1.0, -1.0),
         ((-3.919, 1.578, -17.6f64 * pi / 180.0), (-1.943, 1.476, 11.7f64 * pi / 180.0), 1.0, 1.0),
         ((-1.943, 1.476, 11.7f64 * pi / 180.0), (1.602, 0.429, -44.6f64 * pi / 180.0), 1.0, -1.0),
@@ -1008,8 +1012,15 @@ pub fn ghep_ngang_clean() -> Golden {
         ((2.306, -0.130, -35.9f64 * pi / 180.0), (4.200, -0.851, -5.9f64 * pi / 180.0), 1.0, 1.0),
         ((4.200, -0.851, -5.9f64 * pi / 180.0), (3.401, -0.851, 5.9f64 * pi / 180.0), -1.0, -1.0),
         ((3.401, -0.851, 5.9f64 * pi / 180.0), (3.102, -0.870, 1.5f64 * pi / 180.0), -1.0, 1.0),
-    ];
-    ghep_clean(NGANG | 1, "ghep_ngang_clean", &legs)
+    ]
+}
+
+pub fn ghep_doc_clean() -> Golden {
+    ghep_clean(DOC | 1, "ghep_doc_clean", &ghep_doc_legs())
+}
+
+pub fn ghep_ngang_clean() -> Golden {
+    ghep_clean(NGANG | 1, "ghep_ngang_clean", &ghep_ngang_legs())
 }
 
 /// A messy bay run: no line-up at all. The car drives past the bay, reverses in on full lock
@@ -1083,6 +1094,122 @@ pub fn ghep_ngang_messy() -> Golden {
     ghep_messy(NGANG | 0x0123_4567_89ab, "ghep_ngang_messy")
 }
 
+// ---------------------------------------------------------------------------------------------
+// The automatic. The learner's selector travels in the gear byte (1 is D) and the clutch byte is ignored,
+// so the state-aware clean drivers above, which say what to do at a place and not at a tick, drive an
+// automatic car as they are: only the seed changes. Bài 3 and bài 10 are where an automatic differs
+// (the slope does not hold itself; the gear is not judged), so they have drivers of their own.
+// ---------------------------------------------------------------------------------------------
+
+const AUTO: u64 = crate::AUTOMATIC_BIT;
+
+/// A clean bài 3 on an automatic: creep to the foot of the slope, a pulse of throttle up it, brake to
+/// a stop 0.3 m short of the line, hold the foot brake, then the foot goes from the brake to the throttle.
+pub fn hill_auto_clean() -> Golden {
+    let seed = HILL | AUTO | 1;
+    let mut pulse_from: Option<u32> = None;
+    let mut stopped_at: Option<u32> = None;
+    let mut braking = false;
+    let inputs = record_to_the_end(seed, |v, t| {
+        if v.phase == crate::Phase::Stopped && stopped_at.is_none() {
+            stopped_at = Some(t);
+        }
+        if v.front_bumper_m >= 0.0 && pulse_from.is_none() {
+            pulse_from = Some(t);
+        }
+        match stopped_at {
+            None if t < 20 => TickInput { flags: HANDBRAKE, ..Default::default() },
+            None => {
+                braking |= v.front_bumper_m > 0.0 && stopping_point(v) >= 6.0 - 0.3;
+                if braking {
+                    TickInput { gear: 1, brake: 255, steering: 300, ..Default::default() }
+                } else {
+                    let up = pulse_from.is_some_and(|from| t - from < 80);
+                    TickInput { gear: 1, throttle: if up { 75 } else { 0 }, steering: 300, ..Default::default() }
+                }
+            }
+            Some(at) if t - at < 120 => TickInput { gear: 1, brake: 255, ..Default::default() },
+            Some(_) => TickInput { gear: 1, throttle: 150, steering: -150, ..Default::default() },
+        }
+    });
+    Golden { name: "tu_dong_dung_khoi_hanh_doc_clean", seed, inputs }
+}
+
+/// The fault only an automatic has on this bài: creep alone cannot climb the slope, the car stops
+/// short of the line, nothing holds it, and it rolls back past 500 mm (TUT_DOC, suspended).
+pub fn hill_auto_tut_doc() -> Golden {
+    let seed = HILL | AUTO | 0x0123_4567_89ab;
+    let inputs = record_while(seed, |v, t| !v.disqualified && v.phase != crate::Phase::Done && t < 3000, |_, t| {
+        if t < 20 {
+            TickInput { flags: HANDBRAKE, ..Default::default() }
+        } else {
+            TickInput { gear: 1, ..Default::default() }
+        }
+    });
+    Golden { name: "tu_dong_dung_khoi_hanh_doc_tut_doc", seed, inputs }
+}
+
+/// Bài 10 on an automatic: throttle through zone 1 to well over 24 km/h, then off the throttle and
+/// braked down to a walking pace for zone 2. `fast_zone_2` instead keeps the throttle in zone 2.
+fn gear_auto(seed: u64, name: &'static str, slow_zone_1: bool, fast_zone_2: bool) -> Golden {
+    let g = crate::rules::Ruleset::load().gear;
+    let sign_2 = g.sign_m(1);
+    let inputs = record_to_the_end(seed, |v, t| {
+        if t < 20 {
+            return TickInput { flags: HANDBRAKE, ..Default::default() };
+        }
+        let speed = v.speed_mps;
+        if v.front_bumper_m >= sign_2 {
+            if fast_zone_2 {
+                return TickInput { gear: 1, throttle: 255, ..Default::default() };
+            }
+            return TickInput { gear: 1, brake: if speed > 4.0 { 255 } else { 0 }, ..Default::default() };
+        }
+        if slow_zone_1 {
+            return TickInput { gear: 1, ..Default::default() };
+        }
+        TickInput { gear: 1, throttle: if speed < 8.5 { 255 } else { 0 }, ..Default::default() }
+    });
+    Golden { name, seed, inputs }
+}
+
+pub fn gear_auto_clean() -> Golden {
+    gear_auto(GEAR | AUTO | 1, "tu_dong_thay_doi_so_clean", false, false)
+}
+
+/// Too slow in zone 1 and too fast in zone 2: SAI_TOC_DO twice and no gear row, because the gear is not judged.
+pub fn gear_auto_messy() -> Golden {
+    gear_auto(GEAR | AUTO | 0x0123_4567_89ab, "tu_dong_thay_doi_so_messy", true, true)
+}
+
+/// One clean run of each bài on an automatic (bài 5 on red and on green), and the two faults that are
+/// the automatic's own: the rollback on the slope, and bài 10 charged on the speed only.
+pub fn automatic() -> Vec<Golden> {
+    vec![
+        xuat_phat_pass(AUTO | 1, "tu_dong_xuat_phat_clean"),
+        hill_auto_clean(),
+        hill_auto_tut_doc(),
+        road_stop(CROSSWALK | AUTO | 1, "tu_dong_dung_xe_nhuong_nguoi_di_bo_clean", 0.3, 0),
+        figure_pass(VET | AUTO | 1, "tu_dong_qua_vet_banh_xe_clean"),
+        junction_pass(junction_seed(1) | AUTO, "tu_dong_qua_nga_tu_den_do_clean", true, 0.0, false),
+        junction_pass(junction_seed(3) | AUTO, "tu_dong_qua_nga_tu_den_xanh_clean", false, 0.0, false),
+        figure_pass(CURVE | AUTO | 1, "tu_dong_qua_duong_vong_quanh_co_clean"),
+        ghep_clean(DOC | AUTO | 1, "tu_dong_ghep_doc_clean", &ghep_doc_legs()),
+        ghep_clean(NGANG | AUTO | 1, "tu_dong_ghep_ngang_clean", &ghep_ngang_legs()),
+        road_stop(RAIL | AUTO | 1, "tu_dong_tam_dung_duong_sat_clean", 0.3, 0),
+        gear_auto_clean(),
+        gear_auto_messy(),
+        finish_clean(FINISH | AUTO | 1, "tu_dong_ket_thuc_clean"),
+    ]
+}
+
+/// The manual goldens, then the automatic ones: what `gen_golden` writes and the tests pin.
+pub fn every() -> Vec<Golden> {
+    let mut v = Vec::from(all());
+    v.extend(automatic());
+    v
+}
+
 pub fn all() -> [Golden; 24] {
     [
         clean_pass(),
@@ -1152,7 +1279,7 @@ mod tests {
     /// Every golden's committed hash, in `all()` order. All eight, so `cargo test` pins every one of
     /// them: a zip against a shorter list would silently leave the tail unpinned, and a hash file
     /// full of ffff would still pass.
-    const COMMITTED: [(&str, &str); 24] = [
+    const COMMITTED: [(&str, &str); 38] = [
         ("xuat_phat_clean", include_str!("../../../golden/xuat_phat_clean.hash")),
         ("xuat_phat_messy", include_str!("../../../golden/xuat_phat_messy.hash")),
         ("dung_khoi_hanh_doc_clean", include_str!("../../../golden/dung_khoi_hanh_doc_clean.hash")),
@@ -1177,13 +1304,27 @@ mod tests {
         ("ghep_ngang_messy", include_str!("../../../golden/ghep_ngang_messy.hash")),
         ("thay_doi_so_clean", include_str!("../../../golden/thay_doi_so_clean.hash")),
         ("thay_doi_so_messy", include_str!("../../../golden/thay_doi_so_messy.hash")),
+        ("tu_dong_xuat_phat_clean", include_str!("../../../golden/tu_dong_xuat_phat_clean.hash")),
+        ("tu_dong_dung_khoi_hanh_doc_clean", include_str!("../../../golden/tu_dong_dung_khoi_hanh_doc_clean.hash")),
+        ("tu_dong_dung_khoi_hanh_doc_tut_doc", include_str!("../../../golden/tu_dong_dung_khoi_hanh_doc_tut_doc.hash")),
+        ("tu_dong_dung_xe_nhuong_nguoi_di_bo_clean", include_str!("../../../golden/tu_dong_dung_xe_nhuong_nguoi_di_bo_clean.hash")),
+        ("tu_dong_qua_vet_banh_xe_clean", include_str!("../../../golden/tu_dong_qua_vet_banh_xe_clean.hash")),
+        ("tu_dong_qua_nga_tu_den_do_clean", include_str!("../../../golden/tu_dong_qua_nga_tu_den_do_clean.hash")),
+        ("tu_dong_qua_nga_tu_den_xanh_clean", include_str!("../../../golden/tu_dong_qua_nga_tu_den_xanh_clean.hash")),
+        ("tu_dong_qua_duong_vong_quanh_co_clean", include_str!("../../../golden/tu_dong_qua_duong_vong_quanh_co_clean.hash")),
+        ("tu_dong_ghep_doc_clean", include_str!("../../../golden/tu_dong_ghep_doc_clean.hash")),
+        ("tu_dong_ghep_ngang_clean", include_str!("../../../golden/tu_dong_ghep_ngang_clean.hash")),
+        ("tu_dong_tam_dung_duong_sat_clean", include_str!("../../../golden/tu_dong_tam_dung_duong_sat_clean.hash")),
+        ("tu_dong_thay_doi_so_clean", include_str!("../../../golden/tu_dong_thay_doi_so_clean.hash")),
+        ("tu_dong_thay_doi_so_messy", include_str!("../../../golden/tu_dong_thay_doi_so_messy.hash")),
+        ("tu_dong_ket_thuc_clean", include_str!("../../../golden/tu_dong_ket_thuc_clean.hash")),
     ];
 
     /// The committed `.hash` files must match what the code produces today. A failure means the
     /// simulation changed: re-record with `cargo run -p sim-core --example gen_golden` on purpose.
     #[test]
     fn committed_golden_hashes_match_the_simulation() {
-        let goldens = all();
+        let goldens = every();
         assert_eq!(
             goldens.len(),
             COMMITTED.len(),
@@ -1198,7 +1339,7 @@ mod tests {
     /// The committed `.trace` bytes must be exactly what the generator writes.
     #[test]
     fn committed_golden_traces_match_the_generator() {
-        for g in all() {
+        for g in every() {
             let path = format!("{}/../../golden/{}.trace", env!("CARGO_MANIFEST_DIR"), g.name);
             let on_disk = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
             assert_eq!(on_disk, encode(&g), "golden {} trace drifted", g.name);
@@ -1208,7 +1349,7 @@ mod tests {
     /// Same trace twice: same hash. Guards against hidden state the hash does not cover.
     #[test]
     fn same_trace_run_twice_gives_the_same_hash() {
-        for g in all() {
+        for g in every() {
             let a = run(&g).hash();
             let b = run(&g).hash();
             assert_eq!(a, b, "golden {} is not reproducible", g.name);
@@ -1285,6 +1426,31 @@ mod tests {
         let v = v.view();
         assert_eq!(v.fired_ids(), Vec::<&str>::new(), "clean run must be clean");
         assert_eq!(v.score, 100);
+    }
+
+    /// The automatic goldens are what they claim: a clean run of every bài, then the two faults that are the
+    /// automatic's own. Bài 10 is charged on the speed alone, so the gear rows never appear.
+    #[test]
+    fn automatic_goldens_are_what_they_claim() {
+        for g in automatic() {
+            let s = run(&g);
+            let v = s.view();
+            match g.name {
+                "tu_dong_dung_khoi_hanh_doc_tut_doc" => {
+                    assert_eq!(v.fired("SH.03.TUT_DOC"), 1);
+                    assert!(v.disqualified);
+                }
+                "tu_dong_thay_doi_so_messy" => {
+                    assert_eq!(v.fired_ids(), vec!["SH.SO.SAI_TOC_DO", "SH.SO.SAI_TOC_DO"]);
+                    assert_eq!((v.score, v.phase), (90, crate::Phase::Done));
+                }
+                name => {
+                    assert_eq!(v.fired_ids(), Vec::<&str>::new(), "{name} must be clean");
+                    assert_eq!(v.score, 100, "{name}");
+                    assert!(!v.disqualified, "{name}");
+                }
+            }
+        }
     }
 
     /// The bài 3 goldens must be what they claim: the clean one scores nothing and ends over the
