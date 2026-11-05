@@ -60,6 +60,8 @@ const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1, 5, 11]);
 
 export interface Exercise {
   lesson: Lesson;
+  /** True on the link between bài 6 and bài 7: no per-bài checklist, no stop aid, its own hazard. */
+  link?: boolean;
   /** True when this page drives an automatic: the selector's seed bit, the words and the keys. */
   automatic: boolean;
   title: string;
@@ -177,6 +179,71 @@ const EXERCISES: Record<Lesson, Build> = {
 
 /** The exercise a page runs: the lesson's own, in the transmission the learner chose. */
 export const exerciseFor = (lesson: Lesson, automatic = false): Exercise => EXERCISES[lesson](automatic);
+
+/** The core's exercise id for the link (`LINK_ID` in crates/sim-core/src/lib.rs). */
+const LINK_ID = 13;
+
+/**
+ * The link between bài 6 and bài 7: a straight 60 m lane the car really drives, with one hazard. It is
+ * not a bài: the core's run labels it lesson 0 and no per-bài checklist or stop line applies. The page
+ * still needs an advice line and a cue, and the electrics are the run's (`state.hazard`).
+ */
+export function linkExercise(automatic: boolean): Exercise {
+  return {
+    // The link is not one of the 11 bài; the value 0 is the core's own label (snapshot field 54).
+    lesson: 0 as unknown as Lesson,
+    link: true,
+    automatic,
+    title: 'Đoạn nối — bài 6 sang bài 7',
+    description: 'Đoạn nối 60 m giữa bài 6 và bài 7: đi thẳng, xử lý tình huống nguy hiểm rồi đi tiếp.',
+    seed: seedWord(LINK_ID, 1n, automatic),
+    steps: [],
+    mark: () => {},
+    advice: (state) => linkAdvice(state, automatic),
+    cue: (state) => linkCue(state),
+    stop: () => null,
+    signals: false,
+    stops: false,
+    introKeys: 0,
+  };
+}
+
+/** What the link asks next, from the run's own hazard fields. */
+function linkCue(state: SimState): 'setoff' | 'go' | 'brake' | 'button' | 'wait' | 'release' {
+  if (state.hazard === 1) {
+    if (state.speedMps > 0.1) return 'brake';
+    return state.hazardButton ? 'wait' : 'button';
+  }
+  if (state.hazard === 2) return state.hazardButton ? 'release' : 'go';
+  if (state.handbrake || state.gear === 0) return 'setoff';
+  return 'go';
+}
+
+/** The link's advice line: one sentence for the next act, in the learner's words. */
+function linkAdvice(state: SimState, automatic: boolean): string {
+  if (state.hazard === 1) {
+    if (state.speedMps > 0.1) {
+      return automatic
+        ? 'Nguy hiểm: phanh ↓ dừng xe ngay, rồi bấm H bật tín hiệu nguy hiểm.'
+        : 'Nguy hiểm: đạp côn (Space) và phanh ↓ dừng xe ngay, rồi bấm H bật tín hiệu nguy hiểm.';
+    }
+    return state.hazardButton
+      ? 'Giữ phanh và tín hiệu H cho tới khi tín hiệu kết thúc.'
+      : 'Đã dừng: bấm H bật tín hiệu nguy hiểm và giữ.';
+  }
+  if (state.hazard === 2) {
+    return state.hazardButton
+      ? 'Tín hiệu đã kết thúc: bấm H tắt tín hiệu, rồi đi tiếp.'
+      : 'Đi tiếp tới vạch kết thúc.';
+  }
+  if (state.handbrake) {
+    return automatic
+      ? 'Bấm D rồi P nhả phanh tay, đi thẳng tới vạch kết thúc.'
+      : 'Đạp côn (Space), bấm 1, bấm P nhả phanh tay, rồi đi thẳng tới vạch kết thúc.';
+  }
+  if (state.gear !== 1) return automatic ? 'Bấm D để đi tới.' : 'Đạp côn (Space) và bấm 1 để đi tới.';
+  return 'Đi thẳng tới vạch kết thúc.';
+}
 
 /**
  * Bài 3's stop line is on its slope: the grade under the car is the slope's from the foot on and level

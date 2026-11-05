@@ -9,7 +9,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
-import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
+import { exerciseFor, linkExercise, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
 import LienHoanResult, { type ReplayResult } from './lien-hoan/Result.tsx';
 import { gearOf, gearSignM, type Penalty, type Ruleset } from './ruleset.ts';
@@ -103,12 +103,18 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     const so = transmissionFromUrl();
     if (so !== null) setAutomatic(so);
   }, []);
-  /** The bài the page is showing: the prop on a per-bài page, the core's lesson in a run. */
-  const [lessonNow, setLessonNow] = useState<Lesson>(lesson);
-  const lessonRef = useRef<Lesson>(lesson);
+  /**
+   * The stage the page is showing: the prop on a per-bài page, the core's lesson in a run. The run's
+   * link between bài 6 and bài 7 is lesson 0.
+   */
+  const [lessonNow, setLessonNow] = useState<number>(lesson);
+  const lessonRef = useRef<number>(lesson);
   // Memoised: `exerciseFor` builds the page's object, so a fresh one every render would re-boot the run
   // (and its sim session) on every render. In a liên hoàn run this follows the bài the core swapped to.
-  const base = useMemo(() => exerciseFor(lessonNow, automatic), [lessonNow, automatic]);
+  const base = useMemo(
+    () => (lessonNow === 0 ? linkExercise(automatic) : exerciseFor(lessonNow as Lesson, automatic)),
+    [lessonNow, automatic],
+  );
   // The lesson's own numbers, with only the seed taken from the URL when one is given. The exercise id
   // and the transmission bit are the page's, not the seed's: `?seed=` replaces the low bits only, so an
   // automatic page opened with `?seed=7` still runs the automatic (and bài 1's id 0 stays 0). A run's
@@ -120,15 +126,17 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     const id = base.seed >> 56n;
     return { ...base, seed: (id << 56n) | (base.automatic ? AUTOMATIC_BIT : 0n) | low };
   }, [base, lienHoan, automatic]);
-  // One exercise per bài, built once: a run asks `exerciseOf` which one the core's state belongs to.
+  // One exercise per stage, built once: a run asks `exerciseOf` which one the core's state belongs to.
+  // Stage 0 is the link between bài 6 and bài 7; 1..11 are the bài themselves.
   const exerciseByLesson = useMemo(() => {
-    const all = new Map<Lesson, Exercise>();
-    for (let n = 1; n <= 11; n += 1) all.set(n as Lesson, exerciseFor(n as Lesson, automatic));
+    const all = new Map<number, Exercise>();
+    all.set(0, linkExercise(automatic));
+    for (let n = 1; n <= 11; n += 1) all.set(n, exerciseFor(n as Lesson, automatic));
     return all;
   }, [automatic]);
   const exerciseOf = useCallback(
     (state: SimState) => {
-      const current = lienHoan && state.lesson >= 1 && state.lesson <= 11 ? (state.lesson as Lesson) : lesson;
+      const current = lienHoan && state.lesson >= 0 && state.lesson <= 11 ? state.lesson : lesson;
       return exerciseByLesson.get(current)!;
     },
     [lienHoan, lesson, exerciseByLesson],
@@ -202,9 +210,9 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     const write = () => {
       audio.post(run.state);
       // A liên hoàn run swaps the bài inside the core; the HUD and the scene follow it a render later.
-      if (lienHoan && run.state.lesson >= 1 && run.state.lesson <= 11 && run.state.lesson !== lessonRef.current) {
-        lessonRef.current = run.state.lesson as Lesson;
-        setLessonNow(run.state.lesson as Lesson);
+      if (lienHoan && run.state.lesson >= 0 && run.state.lesson <= 11 && run.state.lesson !== lessonRef.current) {
+        lessonRef.current = run.state.lesson;
+        setLessonNow(run.state.lesson);
       }
       // The run changes without a React render; the result card needs one when it ends (or restarts).
       setDone(run.state.phase === 'done' || run.state.disqualified);
@@ -352,6 +360,10 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
       data-lesson="0"
       data-course-tick="0"
       data-verdict="running"
+      data-on-link="no"
+      data-hazard="0"
+      data-hazard-elapsed-ms="0"
+      data-hazard-button="no"
     >
       <div className="choice" role="group" aria-label="Chọn loại hộp số">
         {([
@@ -408,12 +420,13 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
           <p>Bấm phím bất kỳ để vào xe. Bàn phím là đủ.</p>
           {lienHoan ? (
             <p className="chain-note" data-note="lien-hoan-chain">
-              11 hình nối tiếp nhau, không phải một sân thật: xong mỗi bài, xe được đặt ở vị trí xuất phát của bài
-              kế tiếp — không có đoạn đường lái giữa hai bài.
+              11 bài nối tiếp nhau, không phải một sân thật: giữa bài 6 và bài 7 xe chạy một đoạn nối 60 m có
+              tình huống nguy hiểm; các chỗ còn lại, xong mỗi bài xe được đặt ở vị trí xuất phát của bài kế tiếp —
+              không có đoạn lái nào khác.
             </p>
           ) : null}
           <ul>
-            {legendFor(exercise.lesson, exercise.lesson === 1, automatic).slice(0, exercise.introKeys).map((entry) => (
+            {legendFor(exercise.lesson, exercise.lesson === 1, automatic, exercise.link === true).slice(0, exercise.introKeys).map((entry) => (
               <li key={entry.keys}>
                 <span className="key">{entry.keys}</span>
                 {entry.does}
@@ -493,6 +506,10 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   d.lesson = String(s.lesson);
   d.courseTick = String(s.courseTick);
   d.verdict = s.verdict;
+  d.onLink = s.onLink ? 'yes' : 'no';
+  d.hazard = String(s.hazard);
+  d.hazardElapsedMs = String(Math.round(s.hazardElapsedMs));
+  d.hazardButton = s.hazardButton ? 'yes' : 'no';
   d.replay = run.replay ? (run.replay.done ? 'done' : 'running') : '';
   paintAid(d, exercise.stop(s, ruleset));
   paintScene(d, s, run);

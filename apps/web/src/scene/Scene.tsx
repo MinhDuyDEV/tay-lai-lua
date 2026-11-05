@@ -743,7 +743,9 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
       <ambientLight intensity={0.85} />
       <directionalLight position={[8, 14, 6]} intensity={1.6} />
       <ChaseCamera run={run} toWorld={toWorld} />
-      {exercise.lesson === 3 ? (
+      {exercise.link ? (
+        <RoadCourse run={run} />
+      ) : exercise.lesson === 3 ? (
         <HillCourse ruleset={ruleset} />
       ) : exercise.lesson === 4 || exercise.lesson === 6 ? (
         <FigureCourse run={run} />

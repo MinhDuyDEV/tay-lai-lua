@@ -179,6 +179,14 @@ export interface SimState {
   courseTick: number;
   /** Sa hình liên hoàn: where the run stands. `running` in a per-bài session. */
   verdict: VerdictName;
+  /** 1 while the car is on the link between bài 6 and bài 7 (then `lesson` is 0). */
+  onLink: boolean;
+  /** Link hazard: 0 not yet | 1 the signal sounds | 2 ended, the car has not gone on | 3 over. */
+  hazard: HazardCode;
+  /** Milliseconds since the hazard signal began; 0 before it. */
+  hazardElapsedMs: number;
+  /** True while the hazard-lights button is down (TickInput FLAG_HAZARD, bit 6). */
+  hazardButton: boolean;
   clockS: number;
   contactEpisodeS: number;
   /** Wheel centres FL FR RL RR in the same frame as `carX`/`carY`. */
@@ -189,6 +197,10 @@ export interface SimState {
     readonly [number, number],
   ];
 }
+
+/** The link hazard's snapshot code (field 58): 0 none, 1 signal, 2 ended, 3 over. */
+export type HazardCode = 0 | 1 | 2 | 3;
+const HAZARD_CODES: readonly HazardCode[] = [0, 1, 2, 3];
 
 /** What a wheel's contact patch is on. */
 export type ContactCode = 0 | 1 | 2;
@@ -247,6 +259,12 @@ function verdictName(value: number): VerdictName {
 function contact(v: number): ContactCode {
   if (v !== 0 && v !== 1 && v !== 2) throw new Error(`sim_state contact code ${v} is not in the contract`);
   return v;
+}
+
+/** A hazard code outside 0..3 is a contract drift, not a value to guess at. */
+function hazardCode(v: number): HazardCode {
+  if (!HAZARD_CODES.includes(v as HazardCode)) throw new Error(`sim_state hazard code ${v} is not in the contract`);
+  return v as HazardCode;
 }
 
 /**
@@ -308,6 +326,10 @@ export function readState(block: Float64Array, count: number): SimState {
     lesson: block[F.lesson],
     courseTick: block[F.courseTick],
     verdict: verdictName(block[F.verdict]),
+    onLink: block[F.onLink] !== 0,
+    hazard: hazardCode(block[F.hazard]),
+    hazardElapsedMs: block[F.hazardElapsedMs],
+    hazardButton: block[F.hazardButton] !== 0,
     wheels: [
       [block[F.wheels], block[F.wheels + 1]],
       [block[F.wheels + 2], block[F.wheels + 3]],

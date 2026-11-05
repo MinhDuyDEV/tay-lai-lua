@@ -238,6 +238,10 @@ function startState() {
     lesson: 0,
     courseTick: 0,
     verdict: 'running' as const,
+    onLink: false,
+    hazard: 0 as const,
+    hazardElapsedMs: 0,
+    hazardButton: false,
   };
   return s;
 }

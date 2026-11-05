@@ -16,6 +16,8 @@ export const FLAG = {
   HANDBRAKE: 1 << 3,
   RIGHT: 1 << 4,
   ORDER: 1 << 5,
+  /** The hazard-lights button, a level while held (TickInput bit 6). */
+  HAZARD: 1 << 6,
 } as const;
 
 /**
@@ -62,6 +64,8 @@ export const KEY = {
   reverse: ['KeyR'],
   /** Automatic only: the selector's D. */
   drive: ['KeyD'],
+  /** The link's hazard-lights button, a toggle like the handbrake. */
+  hazard: 'KeyH',
 } as const;
 const GEAR_CODES: ReadonlyArray<readonly [string, number]> = [1, 2, 3, 4, 5].flatMap((g) => [
   [`Digit${g}`, g] as const,
@@ -96,6 +100,7 @@ export const HANDLED_CODES: ReadonlySet<string> = new Set([
   KEY.signalRight,
   KEY.handbrake,
   KEY.order,
+  KEY.hazard,
   ...KEY.neutral,
   ...KEY.reverse,
   ...KEY.drive,
@@ -112,6 +117,8 @@ export const KEY_LEGEND: ReadonlyArray<{
   /** Shown only where the reverse gear and the end-of-exam key are part of the lesson (bài 7, 8). */
   park?: true;
   signals?: true;
+  /** Shown only on the link between bài 6 and bài 7, where the hazard button is the lesson. */
+  hazard?: true;
 }> = [
   { keys: 'E', does: 'Nổ máy (cần về số 0 hoặc đạp côn)' },
   { keys: 'B', does: 'Thắt / tháo dây an toàn', bai1Only: true },
@@ -119,6 +126,7 @@ export const KEY_LEGEND: ReadonlyArray<{
   { keys: 'Enter', does: 'Báo đã ghép xong: kết thúc bài và chấm kết quả', park: true },
   { keys: 'Q / W', does: 'Xi nhan trái / phải: bật, bật cái kia là tắt cái này, bấm lại để tắt', signals: true },
   { keys: 'P', does: 'Phanh tay nhả / kéo' },
+  { keys: 'H', does: 'Bật / tắt tín hiệu nguy hiểm', hazard: true },
   { keys: 'Space hoặc Shift', does: 'Côn: giữ để đạp, nhả từ từ để vào điểm bắt' },
   { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)', noFigure: true },
   { keys: '1–5, R, N', does: 'Vào số (phải đạp côn hết cỡ)', park: true },
@@ -145,6 +153,7 @@ export const KEY_LEGEND_AUTO: typeof KEY_LEGEND = [
   { keys: 'Enter', does: 'Báo đã ghép xong: kết thúc bài và chấm kết quả', park: true },
   { keys: 'Q / W', does: 'Xi nhan trái / phải: bật, bật cái kia là tắt cái này, bấm lại để tắt', signals: true },
   { keys: 'P', does: 'Phanh tay nhả / kéo' },
+  { keys: 'H', does: 'Bật / tắt tín hiệu nguy hiểm', hazard: true },
   // The selector: below 0 is R, 0 is N, above 0 is D on the wire, and the box picks the gear itself.
   { keys: 'D, N, R', does: 'Cần số: D chạy, N mo, R lùi' },
   { keys: '↑', does: 'Ga: giữ càng lâu càng mạnh', noFigure: true },
@@ -165,8 +174,9 @@ const PARK_LESSONS: ReadonlySet<number> = new Set([7, 8]);
  * light, so it needs both pedals — which is why this asks which lesson it is rather than how big the
  * number is.
  */
-export const legendFor = (lesson: number, signals = lesson === 1, automatic = false) =>
+export const legendFor = (lesson: number, signals = lesson === 1, automatic = false, hazard = false) =>
   (automatic ? KEY_LEGEND_AUTO : KEY_LEGEND).filter((entry) => {
+    if (entry.hazard) return hazard;
     if (entry.signals) return signals;
     // `park` means "only bài 7 and bài 8": the reverse gear, the end-of-exam key and the brake are that
     // lesson's own. `brake` means "everywhere but the two creep figures", which is the row the road
@@ -215,6 +225,8 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
   /** The turn stalk: 0 off, 1 left, 2 right. Pressing a side cancels the other, as a real stalk does. */
   let signal = 0;
   let handbrake = true;
+  /** The link's hazard-lights button: a level flag while down, toggled by one key like the handbrake. */
+  let hazard = false;
   let ordered = false;
   let crankLeft = 0;
   let hint: string | null = null;
@@ -231,6 +243,7 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
       gear = 0;
       handbrake = true;
       signal = 0;
+      hazard = false;
       crankLeft = 0;
       ordered = false;
     },
@@ -243,6 +256,7 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
         else if (code === KEY.signalLeft) signal = signal === 1 ? 0 : 1;
         else if (code === KEY.signalRight) signal = signal === 2 ? 0 : 2;
         else if (code === KEY.handbrake) handbrake = !handbrake;
+        else if (code === KEY.hazard) hazard = !hazard;
         else if (code === KEY.order) ordered = true;
         else if (code === KEY.engine) {
           if (view.engineOn) say('Máy đã nổ rồi.');
@@ -288,6 +302,7 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
       if (signal === 1) flags |= FLAG.LEFT;
       if (signal === 2) flags |= FLAG.RIGHT;
       if (handbrake) flags |= FLAG.HANDBRAKE;
+      if (hazard) flags |= FLAG.HAZARD;
       if (ordered) flags |= FLAG.ORDER;
       if (crankLeft > 0) {
         flags |= FLAG.IGNITION;

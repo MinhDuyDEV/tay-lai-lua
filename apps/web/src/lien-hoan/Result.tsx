@@ -26,6 +26,11 @@ export interface LienHoanResultProps {
 }
 
 /** The run's clock as mm:ss, from the course tick (60 steps a second, from bài 1's order). */
+/** Where a fault happened: a bài number, or the link between bài 6 and bài 7 (lesson 0). */
+export function placeText(lesson: number): string {
+  return lesson === 0 ? 'Đoạn nối' : `Bài ${lesson}`;
+}
+
 export function clockText(courseTick: number): string {
   const total = Math.max(0, Math.floor(courseTick / 60));
   const minutes = Math.floor(total / 60);
@@ -79,7 +84,7 @@ export default function LienHoanResult({
                 <span className="points">{p.disqualify ? 'Đình chỉ' : `−${p.points} điểm`}</span>
               </p>
               <p className="where" data-fault-where>
-                Bài {p.lesson} · {clockText(p.tick)}
+                {placeText(p.lesson)} · {clockText(p.tick)}
               </p>
               <blockquote>{p.source.quote}</blockquote>
               <cite>{sourceLabel(p.source)}</cite>

@@ -1463,8 +1463,75 @@ async function readLienHoanResult(page) {
   });
 }
 
+/**
+ * The link between bài 6 and bài 7, driven from the page alone. It is a real 60 m lane: set off,
+ * approach the hazard, brake to a stop (clutch + brake on the manual), press H, hold through the
+ * signal, release H before going on. `ignoreHazard` is the fault learner who drives straight through:
+ * the core charges KHONG_THUC_HIEN at 5 s and the run carries on. The end is the next bài (7).
+ */
+async function driveLink(page, { allowed, automatic = false, ignoreHazard = false }) {
+  const key = page.keyboard;
+  await pageReady(page);
+  await key.press('KeyX');
+  await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  await key.press('KeyE');
+  await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
+  // The HUD swaps its exercise a render after the core swaps the stage; wait for the link's own line.
+  await until(page, 'the link page', `d.exercise === '0' && d.onLink === 'yes'`, allowed);
+  const held = new Set();
+  const hold = async (want) => {
+    for (const k of [...held]) if (!want.has(k)) { await key.up(k); held.delete(k); }
+    for (const k of want) if (!held.has(k)) { await key.down(k); held.add(k); }
+  };
+  // An automatic's stop is the brake alone; a manual's is clutch and brake together, so the stop
+  // cannot stall the engine.
+  const stopPedals = new Set(automatic ? ['ArrowDown'] : ['Space', 'ArrowDown']);
+  let seen = '';
+  const deadline = Date.now() + WAIT_MS;
+  while (Date.now() < deadline) {
+    const d = await readStage(page);
+    const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
+    if (bad.length) throw new Error(`unexpected penalty ${bad} on the link at ${d.bumper} m\nstate: ${JSON.stringify(d)}`);
+    if (d.lesson === '7') break;
+    const r = await page.$eval('.advice', (el) => ({ cue: el.dataset.cue ?? '', text: el.textContent ?? '' }));
+    if (r.cue !== seen) {
+      seen = r.cue;
+      console.log(`     the line on the link at ${d.bumper} m (hazard ${d.hazard}, ${d.hazardElapsedMs} ms): ${r.text.trim().slice(0, 110)}`);
+      await page.waitForTimeout(AUTO_REACTION_MS);
+      if (r.cue === 'setoff') {
+        if (automatic) {
+          await key.press('KeyD');
+          await until(page, 'gear D', `d.gear === '1'`, allowed);
+          await key.press('KeyP');
+          await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+        } else {
+          await key.down('Space');
+          await until(page, 'clutch down', `Number(d.clutch) > 0.99`, allowed);
+          await key.press('Digit1');
+          await until(page, 'gear 1', `d.gear === '1'`, allowed);
+          await key.press('KeyP');
+          await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+          await key.up('Space');
+        }
+      } else if (r.cue === 'brake' && !ignoreHazard) {
+        await hold(stopPedals);
+      } else if (r.cue === 'button' && !ignoreHazard) {
+        if (d.hazardButton !== 'yes') await key.press('KeyH');
+      } else if (r.cue === 'release' && !ignoreHazard) {
+        if (d.hazardButton === 'yes') await key.press('KeyH');
+      } else if (r.cue === 'go') {
+        await hold(new Set());
+      }
+      // 'wait' keeps the pedals and the button down.
+    }
+    await page.waitForTimeout(50);
+  }
+  await hold(new Set());
+  await until(page, 'the link to end', `d.lesson === '7'`, allowed);
+}
+
 /** The whole run, bài 1 to bài 11, driven only through the page. */
-async function driveWholeRun(page, { automatic = false, allowed = [], belt = true } = {}) {
+async function driveWholeRun(page, { automatic = false, allowed = [], belt = true, ignoreHazard = false } = {}) {
   await drive(page, { belt, allowed, automatic, end: `d.lesson === '2'` });
   // Bài 2: the crosswalk road. The run starts it on the step after bài 1, so the road pair is its
   // own set-off, stop and go, exactly as the per-bài section drives them.
@@ -1474,7 +1541,9 @@ async function driveWholeRun(page, { automatic = false, allowed = [], belt = tru
   await driveHill(page, { finish: 'pull-away', allowed, automatic, end: `d.lesson === '4'` });
   await driveFigure(page, { allowed, automatic, end: `d.lesson === '5'` });
   await driveJunction(page, { allowed, arrive: 'red', automatic, end: `d.lesson === '6'` });
-  await driveFigure(page, { allowed, automatic, end: `d.lesson === '7'` });
+  await driveFigure(page, { allowed, automatic, end: `d.lesson === '0'` });
+  await driveLink(page, { allowed, automatic, ignoreHazard });
+  await until(page, 'bài 7 page', `d.exercise === '7'`, allowed);
   await driveParkPage(page, { allowed, automatic, until: `d.lesson === '8'` });
   await driveParkPage(page, { allowed, automatic, until: `d.lesson === '9'` });
   await roadSetOff(page, allowed, automatic);
@@ -1577,6 +1646,37 @@ async function faultLienHoan() {
   }
 }
 
+/** The link hazard ignored: the car drives on, KHONG_THUC_HIEN is charged at 5 s, and the result
+ * screen must still show the code, −10, the ruleset quote, “Đoạn nối” and the run time. */
+async function faultHazardLienHoan() {
+  const id = 'SH.CHUNG.NGUY_HIEM.KHONG_THUC_HIEN';
+  const { page, problems } = await fresh('/lien-hoan', { width: 640, height: 400 });
+  try {
+    const run = await driveWholeRun(page, { automatic: false, allowed: [id], ignoreHazard: true });
+    if (run.final.score !== '90' || run.final.verdict !== 'passed' || run.final.disqualified !== 'no') {
+      throw new Error(`the hazard fault run is not a pass at 90: ${JSON.stringify(run.final)}`);
+    }
+    if (run.result.faults.length !== 1 || run.result.faults[0].id !== id) {
+      throw new Error(`the result screen lists ${JSON.stringify(run.result.faults)}, not just ${id}`);
+    }
+    const fault = run.result.faults[0];
+    const rule = ruleset.rules.find((r) => r.id === id);
+    if (fault.lesson !== '0') throw new Error(`the link fault is marked lesson ${fault.lesson}, not 0`);
+    if (!fault.where.startsWith('Đoạn nối · ')) throw new Error(`the link fault is not marked “Đoạn nối”: ${fault.where}`);
+    if (!/^\d\d:\d\d$/.test(fault.where.replace(/^Đoạn nối · /, ''))) {
+      throw new Error(`the link fault has no run time: ${fault.where}`);
+    }
+    if (fault.points !== '−10 điểm') throw new Error(`the fault shows "${fault.points}", not "−10 điểm"`);
+    if (fault.quote !== rule.source.quote) throw new Error(`the fault quote is not the ruleset's own: ${fault.quote}`);
+    if (run.result.quote !== ruleset.scoring.source.quote) throw new Error('the pass quote is not the ruleset\u2019s own');
+    console.log(`     liên hoàn hazard fault: ${fault.id} ${fault.points} — ${fault.where}; score ${run.final.score}, hash ${run.hash}`);
+    await replayLienHoan(page, run);
+    if (problems.length) throw new Error(problems.join('\n'));
+  } finally {
+    await page.close();
+  }
+}
+
 {
   // Each run is one real-time sitting on its own page, the way the per-bài sections drive: the bay
   // and the slope cues are timed for a 250–300 ms learner, and a second live page on the same
@@ -1587,6 +1687,8 @@ async function faultLienHoan() {
     cleanLienHoan('số tự động', '/lien-hoan?so=tu-dong', true));
   await check('liên hoàn fault: bài 1 without the belt → result screen names SH.01.DAY_AN_TOAN −5, its quote, bài 1 and the run clock', () =>
     faultLienHoan());
+  await check('liên hoàn hazard fault: the link hazard ignored → SH.CHUNG.NGUY_HIEM.KHONG_THUC_HIEN −10 on “Đoạn nối”, score 90, replay same hash', () =>
+    faultHazardLienHoan());
 }
 
 } finally {

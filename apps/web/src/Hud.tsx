@@ -60,6 +60,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const stepEls = useRef(new Map<string, HTMLLIElement>());
   const audioEl = useRef<HTMLParagraphElement>(null);
   const hillEl = useRef<HTMLElement>(null);
+  const hazardEl = useRef<HTMLParagraphElement>(null);
   const advice = useRef<HTMLParagraphElement>(null);
   const aidEl = useRef<HTMLDivElement>(null);
   const aidFill = useRef<HTMLDivElement>(null);
@@ -86,6 +87,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const park = exercise.lesson === 7 || exercise.lesson === 8;
   /** Bài 10: the three signs and the two zones, and the one speed both zones are judged at. */
   const gearLesson = exercise.lesson === 10;
+  /** The link between bài 6 and bài 7: no per-bài card, one hazard lamp and the advice line. */
+  const link = exercise.link === true;
   const figureEl = useRef<HTMLElement>(null);
   const gearEl = useRef<HTMLElement>(null);
   /** Bài 10 on an automatic: the note the ruleset carries, or a page that says why it has none. */
@@ -109,6 +112,18 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (gear.current) gear.current.textContent = s.gear === 0 ? 'N' : s.gear === -1 ? 'R' : String(s.gear);
       if (bumper.current) bumper.current.textContent = s.frontBumperM.toFixed(2);
       if (hill) paintHill(hill, s, ruleset, exercise.lesson);
+      if (hazardEl.current) {
+        const h = s.hazard;
+        hazardEl.current.dataset.state = h === 1 ? 'on' : h === 2 ? 'ended' : h === 3 ? 'over' : 'off';
+        hazardEl.current.textContent =
+          h === 1
+            ? '⚠ NGUY HIỂM — phanh dừng xe và bật tín hiệu H'
+            : h === 2
+              ? 'Tín hiệu đã kết thúc — tắt H rồi đi tiếp'
+              : h === 3
+                ? 'Đã xử lý tình huống'
+                : 'Đoạn nối giữa bài 6 và bài 7';
+      }
       if (aidParts) {
         const aid = exercise.stop(s, ruleset);
         if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
@@ -258,6 +273,18 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
               </p>
             </>
           ) : null}
+        </section>
+      ) : null}
+
+      {link ? (
+        <section className="hud-hill hud-link" aria-label="Đoạn nối">
+          <p className="hazard-lamp" ref={hazardEl} data-state="off">
+            Đoạn nối giữa bài 6 và bài 7
+          </p>
+          <p className="advice" ref={advice} />
+          <p className="aid-note" data-note="link">
+            Đoạn nối là đường thật: đi thẳng tới vạch kết thúc. Tình huống nguy hiểm phải phanh dừng và bật tín hiệu H.
+          </p>
         </section>
       ) : null}
 
@@ -461,7 +488,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       <section className="hud-keys" aria-label="Phím">
         <h2>Phím</h2>
         <ul>
-          {legendFor(exercise.lesson, exercise.signals, exercise.automatic).map((entry) => (
+          {legendFor(exercise.lesson, exercise.signals, exercise.automatic, link).map((entry) => (
             <li key={entry.keys}>
               <span className="key">{entry.keys}</span>
               {entry.does}

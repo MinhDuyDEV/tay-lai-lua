@@ -385,6 +385,48 @@ body {
   line-height: 1.35;
 }
 
+/* The link between bài 6 and bài 7: a hazard lamp across the card and the advice line. */
+.hud-link {
+  grid-template-columns: 1fr;
+  max-width: 560px;
+}
+
+.hud-link .hazard-lamp {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.hud-link .hazard-lamp[data-state='on'] {
+  border-color: var(--bad);
+  background: rgba(255, 107, 107, 0.2);
+  color: #fff;
+  animation: hazard-blink 0.6s steps(2, start) infinite;
+}
+
+.hud-link .hazard-lamp[data-state='ended'] {
+  border-color: var(--accent);
+  background: rgba(240, 196, 25, 0.16);
+  color: var(--text);
+}
+
+.hud-link .hazard-lamp[data-state='over'] {
+  border-color: var(--good);
+  background: rgba(95, 209, 138, 0.14);
+  color: var(--text);
+}
+
+@keyframes hazard-blink {
+  50% {
+    background: rgba(255, 107, 107, 0.45);
+  }
+}
+
 /* The transmission switch: above the overlay, because it is chosen before the car is entered. */
 
 .choice {
