@@ -81,3 +81,17 @@ fn bai_10_on_an_automatic_judges_the_speed_only() {
     let v = fast.view();
     assert_eq!((v.fired("SH.SO.SAI_TOC_DO"), v.fired("SH.SO.SAI_SO"), v.fired("SH.SO.SAI_CA_HAI")), (1, 0, 0));
 }
+
+#[test]
+fn bai_10_never_reached_is_charged_on_the_speed_not_the_gear() {
+    // Parked for the whole 240 s cap: neither sign is reached, and the gear rows still stay out.
+    let mut s = auto(GEAR);
+    for _ in 0..60 * 250 {
+        s.step(TickInput { flags: TickInput::FLAG_HANDBRAKE, ..Default::default() });
+        if s.view().phase == Phase::Done {
+            break;
+        }
+    }
+    let v = s.view();
+    assert_eq!((v.fired("SH.SO.SAI_TOC_DO"), v.fired("SH.SO.SAI_SO"), v.fired("SH.SO.SAI_CA_HAI")), (2, 0, 0));
+}

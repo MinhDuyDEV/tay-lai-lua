@@ -144,7 +144,7 @@ const EXERCISE_SHIFT: u32 = 56;
 /// Bit 55, the top bit of the seed proper: the learner drives an automatic. It is the only bit that
 /// says so, so the exercise byte (`trace[7]`) and every reader that looks at that byte are untouched.
 /// `Session::new` is the one place that splits it off; the rest of the core sees the seed without it,
-/// so an automatic attempt meets the same light and the same everything else as its manual twin.
+/// so an automatic attempt meets the same light as its manual twin. (The PRNG and the hash take the whole seed, bit included: the PRNG's draws are never read, and the hash should tell the two apart.)
 pub const AUTOMATIC_BIT: u64 = 1 << 55;
 
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.

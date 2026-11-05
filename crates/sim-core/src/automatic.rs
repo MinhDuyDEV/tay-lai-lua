@@ -31,7 +31,7 @@ impl Driveline {
     /// The controls the manual car takes this tick, from the learner's.
     pub fn translate(&mut self, a: &Automatic, car: &Car, c: Controls) -> Controls {
         let speed = car.speed_mps.abs();
-        let g = usize::from(self.gear.unsigned_abs());
+        let g = self.gear as usize;
         if self.gear < 4 && speed > a.up_mps[g - 1] {
             self.gear += 1;
         } else if self.gear > 1 && speed < a.down_mps[g - 2] {
