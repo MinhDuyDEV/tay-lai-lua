@@ -9,7 +9,7 @@
 //!   sim_course(handle, out_ptr, cap) -> n         writes n <= cap f64 figure records, or 0 for an
 //!                                                exercise with no figure
 
-use crate::{Event, Session, TickInput};
+use crate::{Event, Sim, TickInput};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sim_alloc(len: usize) -> *mut u8 {
@@ -38,7 +38,9 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// * 8 — bài 8 (Ghép xe ngang vào nơi đỗ);
 /// * 9 — bài 9 (Tạm dừng ở chỗ có đường sắt chạy qua);
 /// * 10 — bài 10 (Thay đổi số trên đường bằng);
-/// * 11 — bài 11 (Kết thúc).
+/// * 11 — bài 11 (Kết thúc);
+/// * 12 — sa hình liên hoàn: bài 1 to 11 in one run (`Sim::LienHoan`). The low bits are shared by every
+///   bài of the run, so bài 5 meets the light it would meet on its own page.
 ///
 /// Bit 55 (`AUTOMATIC_BIT`) says the learner drives an automatic: the wire's gear byte is then the selector
 /// (below 0 R, 0 N, above 0 D) and the clutch byte is ignored. `Session::new` is the only reader of that bit.
@@ -47,8 +49,8 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// light and a different attempt meets red, green or yellow. Any other exercise id is refused: this
 /// returns a null handle, and the caller must not use it, rather than quietly running bài 1.
 #[unsafe(no_mangle)]
-pub extern "C" fn sim_create(seed: u64) -> *mut Session {
-    match Session::new(seed) {
+pub extern "C" fn sim_create(seed: u64) -> *mut Sim {
+    match Sim::new(seed) {
         Some(s) => Box::into_raw(Box::new(s)),
         None => core::ptr::null_mut(),
     }
@@ -58,7 +60,7 @@ pub extern "C" fn sim_create(seed: u64) -> *mut Session {
 /// `s` must come from `sim_create` and not be used afterwards; the null handle of a refused
 /// `sim_create` is accepted and ignored.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_destroy(s: *mut Session) {
+pub unsafe extern "C" fn sim_destroy(s: *mut Sim) {
     if !s.is_null() {
         drop(unsafe { Box::from_raw(s) });
     }
@@ -67,7 +69,7 @@ pub unsafe extern "C" fn sim_destroy(s: *mut Session) {
 /// # Safety
 /// `s` is a live session; `input` points at `TickInput::WIRE_LEN` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_step(s: *mut Session, input: *const u8) {
+pub unsafe extern "C" fn sim_step(s: *mut Sim, input: *const u8) {
     let bytes = unsafe { &*(input as *const [u8; TickInput::WIRE_LEN]) };
     unsafe { &mut *s }.step(TickInput::from_wire(bytes));
 }
@@ -75,14 +77,14 @@ pub unsafe extern "C" fn sim_step(s: *mut Session, input: *const u8) {
 /// # Safety
 /// `s` is a live session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_hash(s: *const Session) -> u64 {
+pub unsafe extern "C" fn sim_hash(s: *const Sim) -> u64 {
     unsafe { &*s }.hash()
 }
 
 /// # Safety
 /// `s` is a live session; `out` has room for `cap` records.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_drain_events(s: *mut Session, out: *mut u8, cap: usize) -> usize {
+pub unsafe extern "C" fn sim_drain_events(s: *mut Sim, out: *mut u8, cap: usize) -> usize {
     let events = unsafe { &mut *s }.drain_events();
     let n = events.len().min(cap);
     for (i, e) in events.into_iter().take(n).enumerate() {
@@ -100,7 +102,7 @@ pub unsafe extern "C" fn sim_drain_events(s: *mut Session, out: *mut u8, cap: us
 /// # Safety
 /// `s` is a live session; `out` has room for `cap * 8` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) -> usize {
+pub unsafe extern "C" fn sim_state(s: *const Sim, out: *mut u8, cap: usize) -> usize {
     let snap = unsafe { &*s }.snapshot();
     let n = snap.len().min(cap);
     for (i, v) in snap.into_iter().take(n).enumerate() {
@@ -149,7 +151,7 @@ pub unsafe extern "C" fn sim_state(s: *const Session, out: *mut u8, cap: usize) 
 /// # Safety
 /// `s` is a live session; when `cap` is large enough, `out` has room for `cap * 8` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sim_course(s: *const Session, out: *mut u8, cap: usize) -> usize {
+pub unsafe extern "C" fn sim_course(s: *const Sim, out: *mut u8, cap: usize) -> usize {
     let block = unsafe { &*s }.course_block();
     if block.is_empty() || block.len() > cap {
         return block.len();
@@ -163,6 +165,6 @@ pub unsafe extern "C" fn sim_course(s: *const Session, out: *mut u8, cap: usize)
 
 /// The figure block, for the scenario tests. Not exported to wasm.
 #[cfg(test)]
-pub fn course_block_for_test(s: &Session) -> Vec<f64> {
+pub fn course_block_for_test(s: &crate::Session) -> Vec<f64> {
     s.course_block()
 }

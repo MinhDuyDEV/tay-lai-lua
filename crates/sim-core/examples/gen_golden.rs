@@ -9,11 +9,11 @@
 fn main() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     std::fs::create_dir_all(format!("{root}/golden")).expect("create golden/");
-    for g in sim_core::golden::every() {
+    for g in sim_core::golden::every().into_iter().chain(sim_core::golden::lien_hoan()) {
         let trace = format!("{root}/golden/{}.trace", g.name);
         std::fs::write(&trace, sim_core::golden::encode(&g)).expect("write trace");
         let hash = format!("{root}/golden/{}.hash", g.name);
-        std::fs::write(&hash, sim_core::golden::hash_line(&sim_core::golden::run(&g)))
+        std::fs::write(&hash, sim_core::golden::hash_line_any(&sim_core::golden::run_any(&g)))
             .expect("write hash");
         println!("{}: {} inputs -> {}", g.name, g.inputs.len(), hash);
     }

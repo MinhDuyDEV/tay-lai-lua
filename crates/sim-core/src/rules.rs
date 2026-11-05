@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 pub const EMBEDDED: &str = include_str!("../../../content/rulesets/tt108-2026.json");
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Ruleset {
     pub id: String,
     pub scoring: Scoring,
@@ -26,6 +26,8 @@ pub struct Ruleset {
     pub park: Park,
     /// Bài 10: the signs and the speed the two 25 m zones are judged at.
     pub gear: Gear,
+    /// Sa hình liên hoàn: the numbers the run as a whole is judged on.
+    pub lien_hoan: LienHoan,
     /// The automatic gearbox, read only when the seed asks for it (`AUTOMATIC_BIT`).
     pub automatic: Automatic,
     pub rules: Vec<Rule>,
@@ -33,7 +35,7 @@ pub struct Ruleset {
 
 /// The automatic gearbox as the simulator models it. Every number is the simulator's own
 /// assumption (`automatic.assumption` in the ruleset), not a figure from the law.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Automatic {
     /// Engine speed at which the torque converter carries all the torque. Below it the share carried
     /// grows with the square of the engine speed, so it is small at idle (the creep) and closes as the
@@ -46,7 +48,7 @@ pub struct Automatic {
 
 /// Bài 10 — thay đổi số trên đường bằng (Hình 17). Positions are metres from the start line, the
 /// same axis as `Road`; the readings the law leaves open are under `assumptions` (`gear_*`).
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Gear {
     /// The first sign ("Bắt đầu tăng số, tăng tốc độ"), metres from the start line.
     pub first_sign_m: f64,
@@ -81,7 +83,7 @@ impl Gear {
 /// `start_line_x_m` is the one axis of the scene: the start line is at 0, the stop line at
 /// `stop_line_m()`, the crosswalk 1,0 m past it (bài 2), the outer rail 5,0 m past it (bài 9), the
 /// finish line `finish_offset_m` past it (bài 11).
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Road {
     /// Where the car's front bumper starts, metres from the start line (negative = short of it).
     pub start_front_bumper_m: f64,
@@ -134,7 +136,7 @@ impl Road {
 
 /// Bài 5: the junction figure and its light cycle. The route itself is built by `course.rs` from
 /// these numbers, so the figure that is drawn and the figure that is scored are one figure.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Junction {
     pub approach_length_m: f64,
     pub stop_zone_length_m: f64,
@@ -186,7 +188,7 @@ impl Junction {
 /// The figures of bài 4 and bài 6 (QCVN 15 mục 2.1.15.4 and 2.1.15.6). Only the inputs live here;
 /// the geometry itself is generated in `course.rs`, so a figure and what is scored on it cannot
 /// drift apart.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct SaHinh {
     /// Width of a limit line's painted band, and the thickness everything is drawn with.
     pub line_width_m: f64,
@@ -214,7 +216,7 @@ pub struct SaHinh {
 /// Bài 7 (ghép xe dọc, Hình 13) and bài 8 (ghép xe ngang, Hình 14). The bay sizes are the law's
 /// own formulas on the car's own `a` and `b`; the geometry is built in `course.rs` from these
 /// numbers, so the bay that is drawn and the bay that is scored are one bay.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Park {
     /// SAI_HINH: how far the car centre may sit outside (lane ∪ bay).
     pub outside_margin_m: f64,
@@ -231,7 +233,7 @@ pub struct Park {
 /// The five bay dimensions, each carrying the sentence it comes from. The arithmetic is
 /// `Park::doc_length_m` and its neighbours; this block is the verbatim quote, so a reader can check
 /// the code against the law without leaving the file they are in.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Formulas {
     #[serde(rename = "Ld")]
     pub ld: Source,
@@ -283,13 +285,19 @@ impl Park {
     }
 }
 
-#[derive(Deserialize)]
+/// The whole run: its time limit (`assumptions.lien_hoan_time_limit`).
+#[derive(Deserialize, Clone)]
+pub struct LienHoan {
+    pub time_limit_s: f64,
+}
+
+#[derive(Deserialize, Clone)]
 pub struct Scoring {
     pub base: i32,
     pub pass: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Course {
     pub start_line_x_m: f64,
     pub start_line_width_m: f64,
@@ -304,7 +312,7 @@ pub struct Course {
 /// Bài 3's course: the longitudinal road profile and the numbers the stop is judged against.
 /// Every length is metres along the road; x is the course axis, the foot of the slope at `foot_x_m`.
 /// Flat before the foot and, downhill not being modelled, flat after the slope.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Hill {
     pub foot_x_m: f64,
     pub slope_length_m: f64,
@@ -347,7 +355,7 @@ impl Hill {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Vehicle {
     pub length_m: f64,
     pub width_m: f64,
@@ -357,7 +365,7 @@ pub struct Vehicle {
     pub wheel_radius_m: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Drivetrain {
     pub idle_target_rpm: f64,
     pub stall_rpm: f64,
@@ -379,7 +387,7 @@ pub struct Drivetrain {
     pub drag_n_per_mps2: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Gears {
     #[serde(rename = "-1")]
     pub reverse: f64,
@@ -410,7 +418,7 @@ impl Gears {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Rule {
     pub id: String,
     pub code: u16,
@@ -447,7 +455,7 @@ pub enum Repeat {
     Each,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Source {
     pub doc: String,
     pub loc: String,

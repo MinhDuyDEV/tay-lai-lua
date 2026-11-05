@@ -1092,9 +1092,52 @@
         "loc": "Phụ lục III, Bài thay đổi số trên đường bằng — bảng lỗi",
         "quote": "Thời gian thực hiện bài sát hạch, cứ quá 02 phút, trừ 05 điểm."
       }
+    },
+    {
+      "id": "SH.KT.DUOI_80",
+      "code": 49,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "DISQUALIFY"
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài kết thúc (B: bài 11), bảng lỗi",
+        "quote": "Điểm sát hạch dưới 80 điểm, bị đình chỉ sát hạch."
+      }
+    },
+    {
+      "id": "SH.KT.TONG_THOI_GIAN",
+      "code": 50,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {
+        "seconds": 3.0
+      },
+      "penalty": {
+        "kind": "POINTS",
+        "points": 1
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Bài kết thúc (B: bài 11), bảng lỗi; thời gian: Yêu cầu chung (mục 2.2.3)",
+        "quote": "đ) Tổng thời gian thực hiện các bài sát hạch quá quy định, cứ 03 giây trừ 01 điểm."
+      }
     }
   ],
   "assumptions": [
+    {
+      "field": "lien_hoan_time_limit",
+      "value": "‘quá quy định’ của SH.KT.TONG_THOI_GIAN là 18 phút (SH.CHUNG.THOI_GIAN, hạng B), tính trên đồng hồ cả lượt: từ bước đầu tiên được tính điểm của bài 1 tới khi hết bài 11; −1 điểm cho mỗi 3 giây đầy đủ quá 18:00",
+      "why": "Thông tư cho thời gian sát hạch trong hình (18 phút hạng B) và cho mức trừ khi tổng thời gian quá quy định, nhưng không nói đồng hồ bắt đầu từ lúc nào. Đồng hồ cả lượt bắt đầu cùng đồng hồ của bài 1 (lệnh xuất phát) để phần chờ lệnh không bị tính. Các mốc ‘đến bài’ (SH.X.TONG_THOI_GIAN) thì Thông tư không công bố nên không tính."
+    },
+    {
+      "field": "lien_hoan_chain",
+      "value": "11 bài được nối theo thứ tự 1 → 11; mỗi bài chạy nguyên bộ luật, hình học và đồng hồ của chính nó; sang bài kế tiếp xe được đặt lại ở vị trí xuất phát của bài đó, đứng yên, động cơ nổ máy. Điểm cả lượt là 100 trừ mọi lỗi của mọi bài; một bài bị đình chỉ thì cả lượt dừng; sau bài 11 điểm dưới 80 là SH.KT.DUOI_80 (đình chỉ), từ 80 trở lên là đạt",
+      "why": "Thông tư: ‘Từ bài sát hạch số 2 đến bài sát hạch số 10 thực hiện theo thứ tự phù hợp với diện tích của sân sát hạch’ và đình chỉ khi ‘không thực hiện đúng trình tự các bài sát hạch’. Bộ luật chưa có bản đồ sân liền nên chưa có đường nối giữa các bài, chưa có lỗi sai trình tự hay xi nhan ngoài bài. Điểm đạt: ‘từ 80 điểm trở lên’ (scoring.pass)."
+    },
     {
       "field": "start_order_tick",
       "value": 1,
@@ -1500,6 +1543,9 @@
       "why": "Hai văn bản mâu thuẫn. TT 108/2026/TT-BCA Phụ lục III cho hạng B ‘chuyển số tự động (bao gồm cả xe ô tô điện)’ thi cùng 11 bài, kể cả bài thay đổi số ‘từ số 1 lên số 2 và trên 24km/h’, không có quy định riêng cho xe số tự động. QCVN 15:2026/BCA mục 2.1.15.11 đặt tên hình là ‘Bài sát hạch thay đổi số trên đường bằng, trừ xe sử dụng loại số tự động’. Chưa có ý kiến của Cục CSGT hoặc trung tâm sát hạch; đây là phương án tạm (docs/architecture.md, câu hỏi mở số 1): vẫn bắt người học đi qua bài và đạt tốc độ, nhưng không có cần số để chấm. Người học phải thấy ghi chú này, trích cả hai văn bản."
     }
   ],
+  "lien_hoan": {
+    "time_limit_s": 1080.0
+  },
   "gear": {
     "first_sign_m": 20.0,
     "first_sign": {

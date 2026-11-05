@@ -311,21 +311,22 @@ fn sim_course_reports_the_length_it_needs_and_writes_nothing_when_short() {
     assert!(kinds.contains(&5.0), "the centreline is exported");
 
     // The foreign function itself: a short buffer writes nothing and returns the need.
+    let s = crate::Sim::Bai(s);
     let mut small = vec![0xAAu8; 64];
-    let need = unsafe { crate::abi::sim_course(&s as *const Session, small.as_mut_ptr(), 8) };
+    let need = unsafe { crate::abi::sim_course(&s as *const crate::Sim, small.as_mut_ptr(), 8) };
     assert_eq!(need, block.len(), "a short buffer reports the whole figure's length");
     assert!(small.iter().all(|b| *b == 0xAA), "and writes nothing");
 
     let mut buf = vec![0u8; block.len() * 8];
-    let wrote = unsafe { crate::abi::sim_course(&s as *const Session, buf.as_mut_ptr(), block.len()) };
+    let wrote = unsafe { crate::abi::sim_course(&s as *const crate::Sim, buf.as_mut_ptr(), block.len()) };
     assert_eq!(wrote, block.len());
     let values: Vec<f64> = buf.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
     assert_eq!(values, block, "the export is the block");
 
     // An exercise without a figure writes nothing and asks for nothing.
-    let start = Session::new(1).unwrap();
+    let start = crate::Sim::Bai(Session::new(1).unwrap());
     let mut buf = vec![0u8; 64];
-    assert_eq!(unsafe { crate::abi::sim_course(&start as *const Session, buf.as_mut_ptr(), 8) }, 0);
+    assert_eq!(unsafe { crate::abi::sim_course(&start as *const crate::Sim, buf.as_mut_ptr(), 8) }, 0);
 }
 
 // ---------------------------------------------------------------------------------------------

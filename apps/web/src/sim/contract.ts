@@ -81,10 +81,16 @@ export const F = {
   finishSignal: 52,
   /** Bài 7/8: consecutive still-and-inside ticks so far. */
   holdTicks: 53,
+  /** Sa hình liên hoàn: the bài being driven, 1..11; 0 in a per-bài session. */
+  lesson: 54,
+  /** Liên hoàn: steps since bài 1's start order, the run's clock. */
+  courseTick: 55,
+  /** Liên hoàn: 0 running | 1 passed | 2 failed. */
+  verdict: 56,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 54;
+export const STATE_LEN = 57;
 
 /**
  * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses

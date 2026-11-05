@@ -65,7 +65,13 @@ pub fn clean_pass() -> Golden {
 }
 
 fn xuat_phat_pass(seed: u64, name: &'static str) -> Golden {
-    let inputs = record(seed, 330 + CRANK_TICKS, |v, t| {
+    xuat_phat_run(seed, name, false)
+}
+
+/// The same pass, kept going until the bài is done (the bumper 10 m past the line), as a bài 1 goes on
+/// inside a liên hoàn run. The step count is the only difference, so the first 350 inputs are the golden's.
+fn xuat_phat_run(seed: u64, name: &'static str, to_the_end: bool) -> Golden {
+    let driver = |v: &crate::View, t: u32| {
         let signalling = v.front_bumper_m < 5.0;
         let mut flags = BELT;
         if signalling {
@@ -97,7 +103,12 @@ fn xuat_phat_pass(seed: u64, name: &'static str) -> Golden {
                 TickInput { gear: 1, clutch: 60, steering: 0, flags, ..Default::default() }
             }
         }
-    });
+    };
+    let inputs = if to_the_end {
+        record_to_the_end(seed, driver)
+    } else {
+        record(seed, 330 + CRANK_TICKS, driver)
+    };
     Golden { name, seed, inputs }
 }
 
@@ -1102,6 +1113,7 @@ pub fn ghep_ngang_messy() -> Golden {
 // ---------------------------------------------------------------------------------------------
 
 const AUTO: u64 = crate::AUTOMATIC_BIT;
+const LIEN_HOAN: u64 = crate::chain::LIEN_HOAN_ID << 56;
 
 /// A clean bài 3 on an automatic: creep to the foot of the slope, a pulse of throttle up it, brake to
 /// a stop 0.3 m short of the line, hold the foot brake, then the foot goes from the brake to the throttle.
@@ -1203,6 +1215,77 @@ pub fn automatic() -> Vec<Golden> {
     ]
 }
 
+/// The inputs of `g` up to and including the step that ends its bài: what the same bài costs inside a
+/// liên hoàn run, where the next bài starts on the step after.
+pub(crate) fn to_the_end(g: &Golden) -> Vec<TickInput> {
+    let mut s = Session::new(g.seed).expect("a known exercise");
+    for (i, &input) in g.inputs.iter().enumerate() {
+        s.step(input);
+        if s.view().phase == crate::Phase::Done {
+            return g.inputs[..=i].to_vec();
+        }
+    }
+    panic!("golden {} never reaches the end of its bài", g.name);
+}
+
+fn lien_hoan_from(seed: u64, name: &'static str, bai: Vec<Golden>) -> Golden {
+    Golden { name, seed, inputs: bai.iter().flat_map(to_the_end).collect() }
+}
+
+/// The clean run of each bài in order, once on a manual and once on an automatic: the parts of the
+/// liên hoàn goldens.
+pub(crate) fn lien_hoan_bai() -> [Vec<Golden>; 2] {
+    let manual = vec![
+        xuat_phat_run(1, "xuat_phat_clean", true),
+        crosswalk_clean(),
+        hill_clean(),
+        vet_clean(),
+        junction_red_clean(),
+        curve_clean(),
+        ghep_doc_clean(),
+        ghep_ngang_clean(),
+        rail_clean(),
+        gear_golden_clean(),
+        finish_golden_clean(),
+    ];
+    let mut automatic = automatic();
+    automatic.retain(|g| g.name != "tu_dong_xuat_phat_clean");
+    automatic.push(xuat_phat_run(AUTO | 1, "tu_dong_xuat_phat_clean", true));
+    let auto = [
+        "tu_dong_xuat_phat_clean",
+        "tu_dong_dung_xe_nhuong_nguoi_di_bo_clean",
+        "tu_dong_dung_khoi_hanh_doc_clean",
+        "tu_dong_qua_vet_banh_xe_clean",
+        "tu_dong_qua_nga_tu_den_do_clean",
+        "tu_dong_qua_duong_vong_quanh_co_clean",
+        "tu_dong_ghep_doc_clean",
+        "tu_dong_ghep_ngang_clean",
+        "tu_dong_tam_dung_duong_sat_clean",
+        "tu_dong_thay_doi_so_clean",
+        "tu_dong_ket_thuc_clean",
+    ]
+    .map(|name| {
+        let i = automatic.iter().position(|g| g.name == name).expect("an automatic golden by that name");
+        automatic.swap_remove(i)
+    });
+    [manual, Vec::from(auto)]
+}
+
+/// The seed word of a liên hoàn run: bài 5's red-light golden's low bits, the only bài that reads them.
+pub(crate) fn lien_hoan_seed(automatic: bool) -> u64 {
+    LIEN_HOAN | if automatic { AUTO } else { 0 } | (junction_seed(1) & (AUTO - 1))
+}
+
+/// The two liên hoàn goldens: the clean run of every bài, one after the other, on a manual and on an
+/// automatic.
+pub fn lien_hoan() -> Vec<Golden> {
+    let [manual, auto] = lien_hoan_bai();
+    vec![
+        lien_hoan_from(lien_hoan_seed(false), "lien_hoan_clean", manual),
+        lien_hoan_from(lien_hoan_seed(true), "tu_dong_lien_hoan_clean", auto),
+    ]
+}
+
 /// The manual goldens, then the automatic ones: what `gen_golden` writes and the tests pin.
 pub fn every() -> Vec<Golden> {
     let mut v = Vec::from(all());
@@ -1237,6 +1320,19 @@ pub fn all() -> [Golden; 24] {
         gear_golden_clean(),
         gear_golden_messy(),
     ]
+}
+
+/// Replay a golden of either kind, a bài or a whole liên hoàn run.
+pub fn run_any(g: &Golden) -> crate::Sim {
+    let mut s = crate::Sim::new(g.seed).expect("a known exercise");
+    for &input in &g.inputs {
+        s.step(input);
+    }
+    s
+}
+
+pub fn hash_line_any(s: &crate::Sim) -> String {
+    format!("{:016x}\n", s.hash())
 }
 
 pub fn run(g: &Golden) -> Session {
@@ -1333,6 +1429,23 @@ mod tests {
         for (g, committed) in goldens.iter().zip(COMMITTED) {
             assert_eq!(g.name, committed.0);
             assert_eq!(hash_line(&run(g)), committed.1, "golden {} drifted", g.name);
+        }
+    }
+
+    /// The two liên hoàn goldens, pinned the same way: hash and trace bytes, replayed through `Sim`.
+    #[test]
+    fn the_lien_hoan_goldens_match_their_committed_files() {
+        let committed = [
+            ("lien_hoan_clean", include_str!("../../../golden/lien_hoan_clean.hash")),
+            ("tu_dong_lien_hoan_clean", include_str!("../../../golden/tu_dong_lien_hoan_clean.hash")),
+        ];
+        let goldens = lien_hoan();
+        assert_eq!(goldens.len(), committed.len());
+        for (g, (name, hash)) in goldens.iter().zip(committed) {
+            assert_eq!(g.name, name);
+            assert_eq!(hash_line_any(&run_any(g)), hash, "golden {name} drifted");
+            let path = format!("{}/../../golden/{name}.trace", env!("CARGO_MANIFEST_DIR"));
+            assert_eq!(std::fs::read(&path).unwrap(), encode(g), "golden {name} trace drifted");
         }
     }
 

@@ -11,6 +11,7 @@
 
 mod abi;
 mod automatic;
+mod chain;
 mod course;
 mod exercise;
 pub mod golden;
@@ -35,6 +36,8 @@ mod scenarios_ghep;
 mod scenarios_gear;
 #[cfg(test)]
 mod scenarios_automatic;
+#[cfg(test)]
+mod scenarios_lien_hoan;
 
 use exercise::{DT, Exercise, Signal, State};
 use hash::Hash;
@@ -148,7 +151,7 @@ const EXERCISE_SHIFT: u32 = 56;
 pub const AUTOMATIC_BIT: u64 = 1 << 55;
 
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
-pub const SNAPSHOT_LEN: usize = 54;
+pub const SNAPSHOT_LEN: usize = 57;
 
 /// One snapshot of the run: a flat `f64` array, so a JS `Float64Array` over the wasm buffer needs
 /// no alignment logic. **This list is the field order** — the single place the wire layout of
@@ -228,10 +231,66 @@ pub const SNAPSHOT_LEN: usize = 54;
 /// 52 finish_signal         bài 7/8: 0 | 1, the yard's signal has been given (the run is then Done)
 /// 53 signal_hold_ticks     bài 7/8: consecutive still-and-inside ticks so far, so the page can show
 ///                          how far through the hold the car is; 0 outside the bay or while moving
+/// 54 lesson                sa hình liên hoàn: the bài being driven, 1..=11; 0 in a per-bài session.
+///                          In a liên hoàn run fields 0..53 are the current bài's own, except 2
+///                          (score) and 3 (disqualified), which are the run's
+/// 55 course_tick           liên hoàn: steps since bài 1's start order, the run's clock; 0 elsewhere
+/// 56 verdict               liên hoàn: 0 running | 1 passed | 2 failed (suspended); 0 elsewhere
 /// ```
 pub type Snapshot = [f64; SNAPSHOT_LEN];
 
 pub use exercise::Phase;
+
+/// What `sim_create` opens: one bài, or the whole liên hoàn run (exercise id 12). Every method is the
+/// one of the same name on `Session`; the run only adds the course around the bài it holds.
+pub enum Sim {
+    Bai(Session),
+    LienHoan(Box<chain::Chain>),
+}
+
+impl Sim {
+    pub fn new(seed: u64) -> Option<Self> {
+        if (seed & !AUTOMATIC_BIT) >> EXERCISE_SHIFT == chain::LIEN_HOAN_ID {
+            return Some(Sim::LienHoan(Box::new(chain::Chain::new(seed, Ruleset::load()))));
+        }
+        Session::new(seed).map(Sim::Bai)
+    }
+
+    pub fn step(&mut self, input: TickInput) {
+        match self {
+            Sim::Bai(s) => s.step(input),
+            Sim::LienHoan(c) => c.step(input),
+        }
+    }
+
+    pub fn hash(&self) -> u64 {
+        match self {
+            Sim::Bai(s) => s.hash(),
+            Sim::LienHoan(c) => c.hash(),
+        }
+    }
+
+    pub fn drain_events(&mut self) -> Vec<Event> {
+        match self {
+            Sim::Bai(s) => s.drain_events(),
+            Sim::LienHoan(c) => c.drain_events(),
+        }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        match self {
+            Sim::Bai(s) => s.snapshot(),
+            Sim::LienHoan(c) => c.snapshot(),
+        }
+    }
+
+    pub fn course_block(&self) -> Vec<f64> {
+        match self {
+            Sim::Bai(s) => s.course_block(),
+            Sim::LienHoan(c) => c.course_block(),
+        }
+    }
+}
 
 pub struct Session {
     rules: Ruleset,
