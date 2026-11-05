@@ -87,10 +87,18 @@ export const F = {
   courseTick: 55,
   /** Liên hoàn: 0 running | 1 passed | 2 failed. */
   verdict: 56,
+  /** Liên hoàn: 1 while the car is on the link between bài 6 and bài 7 (then `lesson` is 0). */
+  onLink: 57,
+  /** Liên hoàn link: 0 no hazard yet | 1 the signal sounds | 2 ended, the car has not gone on | 3 over. */
+  hazard: 58,
+  /** Milliseconds since the hazard signal began; 0 before it. */
+  hazardElapsedMs: 59,
+  /** 1 while the hazard-lights button is down (TickInput FLAG_HAZARD, bit 6). */
+  hazardButton: 60,
 } as const;
 
 /** How many f64 values `sim_state` must return for this build to trust what it reads. */
-export const STATE_LEN = 57;
+export const STATE_LEN = 61;
 
 /**
  * Phase codes `sim_state` writes: 0 waiting, 1 launched, 2 past line, 3 done, 4 stopped. Bài 3 uses
