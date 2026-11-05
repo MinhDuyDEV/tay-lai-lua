@@ -187,6 +187,13 @@ export interface DriveView {
 export interface Driver {
   /** The 8 TickInput bytes for the next tick. */
   step(held: ReadonlySet<string>, pressed: readonly string[], view: DriveView): Uint8Array;
+  /**
+   * Put the lever, the handbrake and the stalk back as a parked car has them at the start of a bài:
+   * neutral, handbrake on, signal off. A liên hoàn run calls this when it swaps to the next bài, so a
+   * gear left in at the end of one bài cannot stall the car at the start of the next. Belt and engine
+   * are not toggles this touches: the law asks for them once, not at every bài.
+   */
+  resetToggles(): void;
   /** Pedal positions 0..1 as last sent, for tests and for the HUD before the first state arrives. */
   readonly pedals: { throttle: number; brake: number; clutch: number; steer: number };
   /** A short Vietnamese reason why the last key press did nothing, or null. */
@@ -219,6 +226,12 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
 
   return {
     pedals,
+    resetToggles() {
+      gear = 0;
+      handbrake = true;
+      signal = 0;
+      crankLeft = 0;
+    },
     get hint() {
       return hint;
     },

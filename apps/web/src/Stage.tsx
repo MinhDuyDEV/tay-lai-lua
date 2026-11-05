@@ -11,9 +11,10 @@ import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
 import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
+import LienHoanResult, { type ReplayResult } from './lien-hoan/Result.tsx';
 import { gearOf, gearSignM, type Penalty, type Ruleset } from './ruleset.ts';
-import { createRun, type Run } from './run.ts';
-import { AUTOMATIC_BIT, lightName, openSession, zoneName, type Session, type SimState } from './sim/session.ts';
+import { createRun, RESTART_CODES, type Run } from './run.ts';
+import { AUTOMATIC_BIT, lightName, openSession, seedWord, zoneName, type Session, type SimState } from './sim/session.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -23,6 +24,8 @@ export interface StageProps {
   lesson: Lesson;
   ruleset: Ruleset;
   wasmUrl: string;
+  /** True for the whole 11-bài run: the exercise follows the core's lesson, not this prop. */
+  lienHoan?: boolean;
 }
 
 /** The window surface the end-to-end test uses to read the recorded run. */
@@ -37,6 +40,28 @@ declare global {
 }
 
 const NO_PENALTIES: readonly Penalty[] = [];
+
+/** The run exercise id (`crates/sim-core/src/chain.rs`, `LIEN_HOAN_ID`). */
+const LIEN_HOAN_ID = 12;
+/**
+ * The low bits a liên hoàn run starts with: bài 5's red-light seed (`junction_seed(1)` in the core's
+ * goldens). Every other bài ignores the low bits, so this is the same address a learner gets from
+ * `/thi/5` with its own default seed.
+ */
+const RUN_SEED_LOW = 1n;
+/** How many recorded ticks a replay feeds per animation frame: ~24× real time, with the scene live. */
+const REPLAY_TICKS_PER_FRAME = 24;
+
+/** Split a recorded trace: the seed word, then one 8-byte record per tick. */
+function splitTrace(trace: Uint8Array): { seed: bigint; inputs: Uint8Array[] } {
+  if (trace.length < 8 || (trace.length - 8) % 8 !== 0) {
+    throw new Error(`a replay trace must be 8 + 8n bytes, got ${trace.length}`);
+  }
+  const view = new DataView(trace.buffer, trace.byteOffset, trace.byteLength);
+  const inputs: Uint8Array[] = [];
+  for (let at = 8; at < trace.length; at += 8) inputs.push(trace.slice(at, at + 8));
+  return { seed: view.getBigUint64(0, true), inputs };
+}
 
 /**
  * The transmission the learner picked: `?so=tu-dong` in the address, or the switch on the page. Read
@@ -71,25 +96,43 @@ function seedOverride(): bigint | null {
   return low;
 }
 
-export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
+export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: StageProps) {
   // The manual car until the URL or the switch says otherwise: the server render has no URL.
   const [automatic, setAutomatic] = useState(false);
   useEffect(() => {
     const so = transmissionFromUrl();
     if (so !== null) setAutomatic(so);
   }, []);
+  /** The bài the page is showing: the prop on a per-bài page, the core's lesson in a run. */
+  const [lessonNow, setLessonNow] = useState<Lesson>(lesson);
+  const lessonRef = useRef<Lesson>(lesson);
   // Memoised: `exerciseFor` builds the page's object, so a fresh one every render would re-boot the run
-  // (and its sim session) on every render.
-  const base = useMemo(() => exerciseFor(lesson, automatic), [lesson, automatic]);
+  // (and its sim session) on every render. In a liên hoàn run this follows the bài the core swapped to.
+  const base = useMemo(() => exerciseFor(lessonNow, automatic), [lessonNow, automatic]);
   // The lesson's own numbers, with only the seed taken from the URL when one is given. The exercise id
   // and the transmission bit are the page's, not the seed's: `?seed=` replaces the low bits only, so an
-  // automatic page opened with `?seed=7` still runs the automatic (and bài 1's id 0 stays 0).
+  // automatic page opened with `?seed=7` still runs the automatic (and bài 1's id 0 stays 0). A run's
+  // seed word is exercise id 12, the transmission bit, and the same low bits for every bài.
   const exercise = useMemo(() => {
     const low = seedOverride();
+    if (lienHoan) return { ...base, seed: seedWord(LIEN_HOAN_ID, low ?? RUN_SEED_LOW, automatic) };
     if (low === null) return base;
     const id = base.seed >> 56n;
     return { ...base, seed: (id << 56n) | (base.automatic ? AUTOMATIC_BIT : 0n) | low };
-  }, [base]);
+  }, [base, lienHoan, automatic]);
+  // One exercise per bài, built once: a run asks `exerciseOf` which one the core's state belongs to.
+  const exerciseByLesson = useMemo(() => {
+    const all = new Map<Lesson, Exercise>();
+    for (let n = 1; n <= 11; n += 1) all.set(n as Lesson, exerciseFor(n as Lesson, automatic));
+    return all;
+  }, [automatic]);
+  const exerciseOf = useCallback(
+    (state: SimState) => {
+      const current = lienHoan && state.lesson >= 1 && state.lesson <= 11 ? (state.lesson as Lesson) : lesson;
+      return exerciseByLesson.get(current)!;
+    },
+    [lienHoan, lesson, exerciseByLesson],
+  );
   const root = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -98,6 +141,15 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
   const [entered, setEntered] = useState(false);
   const [done, setDone] = useState(false);
   const [bootProblem, setBootProblem] = useState<string | null>(null);
+  // Replay: the result screen hands the recorded trace back to a fresh session, which feeds it a few
+  // ticks a frame. `epoch` forces a fresh boot when the same button is pressed twice.
+  const [mode, setMode] = useState<'drive' | 'replay'>('drive');
+  const [replayTrace, setReplayTrace] = useState<Uint8Array | null>(null);
+  const [replayExpected, setReplayExpected] = useState<string | null>(null);
+  const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [epoch, setEpoch] = useState(0);
+  const replayReported = useRef(false);
+  const core = useRef<Promise<(seed: bigint) => Session> | null>(null);
   const audio = useEngineAudio();
 
   // The ruleset's own numbers, so the HUD's red line is the scorer's red line.
@@ -108,21 +160,26 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
     let created: Run | null = null;
 
     const boot = async () => {
-      let open: () => Session;
+      core.current ??= loadCore(wasmUrl);
+      let open: (seed: bigint) => Session;
       try {
-        open = await loadCore(wasmUrl, exercise.seed);
+        open = await core.current;
       } catch (error) {
         if (!cancelled) setBootProblem((error as Error).message);
         return;
       }
       if (cancelled) return;
+      const recorded = mode === 'replay' && replayTrace ? splitTrace(replayTrace) : null;
+      const seed = recorded ? recorded.seed : exercise.seed;
       created = createRun({
-        exercise,
+        exercise: exerciseByLesson.get(lesson)!,
+        exerciseOf,
         ruleset,
-        openSession: open,
+        openSession: () => open(seed),
         target: window,
         handledCodes: HANDLED_CODES,
         automatic,
+        replay: recorded ? { inputs: recorded.inputs, ticksPerFrame: REPLAY_TICKS_PER_FRAME } : undefined,
         onPenalty: (penalty) => setPenalties((prev) => [...prev, penalty]),
         onRestart: () => setPenalties(NO_PENALTIES),
       });
@@ -136,20 +193,31 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       created?.dispose();
       runRef.current = null;
     };
-  }, [exercise, ruleset, wasmUrl, automatic]);
+    // `exercise.seed` is a primitive: a liên hoàn run's lesson changes the exercise object, not the seed.
+  }, [exercise.seed, exerciseByLesson, exerciseOf, lesson, ruleset, wasmUrl, automatic, mode, replayTrace, epoch]);
 
   // Publish the numbers the test polls, every frame, on the one root element.
   useEffect(() => {
     if (!run) return;
     const write = () => {
       audio.post(run.state);
+      // A liên hoàn run swaps the bài inside the core; the HUD and the scene follow it a render later.
+      if (lienHoan && run.state.lesson >= 1 && run.state.lesson <= 11 && run.state.lesson !== lessonRef.current) {
+        lessonRef.current = run.state.lesson as Lesson;
+        setLessonNow(run.state.lesson as Lesson);
+      }
       // The run changes without a React render; the result card needs one when it ends (or restarts).
       setDone(run.state.phase === 'done' || run.state.disqualified);
+      if (run.replay && run.replay.done && !replayReported.current) {
+        replayReported.current = true;
+        const actual = run.hash();
+        setReplayResult({ actual, match: actual === replayExpected });
+      }
       if (root.current) paint(root.current, run, exercise, ruleset, glOk, audio.state(), audio.level(), entered);
     };
     write();
     return run.onFrame(write);
-  }, [run, exercise, ruleset, glOk, audio, entered]);
+  }, [run, exercise, lienHoan, ruleset, glOk, audio, entered, replayExpected]);
 
   useEffect(() => {
     if (!run) return;
@@ -171,6 +239,50 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
 
   // The run owns restart (Esc/Backspace and this button alike); `onRestart` clears the feed.
   const restart = useCallback(() => runRef.current?.restart(), []);
+
+  /** The result screen's replay: feed the recorded trace to a fresh session, same seed, same hash. */
+  const startReplay = useCallback(() => {
+    const current = runRef.current;
+    if (!current) return;
+    const expected = current.hash();
+    const bytes = Uint8Array.from(atob(current.traceBase64()), (c) => c.charCodeAt(0));
+    replayReported.current = false;
+    setPenalties(NO_PENALTIES);
+    setDone(false);
+    setReplayTrace(bytes);
+    setReplayExpected(expected);
+    setReplayResult(null);
+    setMode('replay');
+  }, []);
+
+  /** Leave a replay (or a finished run) and boot a fresh run from bài 1. */
+  const startOver = useCallback(() => {
+    replayReported.current = false;
+    lessonRef.current = lesson;
+    setLessonNow(lesson);
+    setPenalties(NO_PENALTIES);
+    setDone(false);
+    setReplayTrace(null);
+    setReplayExpected(null);
+    setReplayResult(null);
+    setMode('drive');
+    setEpoch((n) => n + 1);
+  }, [lesson]);
+
+  // A replay has no keyboard run behind it; Esc and Backspace still restart the whole run, as on
+  // every other page. In drive mode the run itself handles them.
+  useEffect(() => {
+    if (!lienHoan || mode !== 'replay') return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!RESTART_CODES.includes(event.code)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      startOver();
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [lienHoan, mode, startOver]);
 
   // The first key only enters the car. It is taken in the capture phase and stopped there, so the
   // keyboard module never sees it and it cannot count as an order or a toggle.
@@ -236,6 +348,10 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-finish-signal="no"
       data-hold-ticks="0"
       data-so="san"
+      data-run={lienHoan ? 'yes' : 'no'}
+      data-lesson="0"
+      data-course-tick="0"
+      data-verdict="running"
     >
       <div className="choice" role="group" aria-label="Chọn loại hộp số">
         {([
@@ -288,10 +404,16 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
 
       {!entered ? (
         <div className="overlay" role="dialog" aria-label="Vào xe">
-          <h1>{exercise.title}</h1>
+          <h1>{lienHoan ? 'Sa hình liên hoàn — 11 bài' : exercise.title}</h1>
           <p>Bấm phím bất kỳ để vào xe. Bàn phím là đủ.</p>
+          {lienHoan ? (
+            <p className="chain-note" data-note="lien-hoan-chain">
+              11 hình nối tiếp nhau, không phải một sân thật: xong mỗi bài, xe được đặt ở vị trí xuất phát của bài
+              kế tiếp — không có đoạn đường lái giữa hai bài.
+            </p>
+          ) : null}
           <ul>
-            {legendFor(lesson, lesson === 1, automatic).slice(0, exercise.introKeys).map((entry) => (
+            {legendFor(exercise.lesson, exercise.lesson === 1, automatic).slice(0, exercise.introKeys).map((entry) => (
               <li key={entry.keys}>
                 <span className="key">{entry.keys}</span>
                 {entry.does}
@@ -301,17 +423,35 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
         </div>
       ) : null}
 
-      {done && entered ? (
-        <div className="overlay result" role="dialog" aria-label="Kết quả" data-bad={run?.state.disqualified ? 'yes' : 'no'}>
-          <h1>{run?.state.disqualified ? 'Đình chỉ' : `Kết quả: ${run?.state.score} điểm`}</h1>
-          <p>{penalties.length === 0 ? 'Không có lỗi.' : `${penalties.length} lỗi.`}</p>
-          <p>
-            Bấm <span className="key">Esc</span> hoặc nút bên dưới để làm lại.
-          </p>
-          <button type="button" onClick={restart}>
-            Làm lại
-          </button>
-        </div>
+      {done && entered && run ? (
+        lienHoan ? (
+          <LienHoanResult
+            run={run}
+            ruleset={ruleset}
+            penalties={penalties}
+            replayResult={replayResult}
+            replayExpected={replayExpected}
+            onReplay={startReplay}
+            onRestart={startOver}
+          />
+        ) : (
+          <div className="overlay result" role="dialog" aria-label="Kết quả" data-bad={run.state.disqualified ? 'yes' : 'no'}>
+            <h1>{run.state.disqualified ? 'Đình chỉ' : `Kết quả: ${run.state.score} điểm`}</h1>
+            <p>{penalties.length === 0 ? 'Không có lỗi.' : `${penalties.length} lỗi.`}</p>
+            <p>
+              Bấm <span className="key">Esc</span> hoặc nút bên dưới để làm lại.
+            </p>
+            <button type="button" onClick={restart}>
+              Làm lại
+            </button>
+          </div>
+        )
+      ) : null}
+
+      {lienHoan && mode === 'replay' && !done ? (
+        <p className="notice replay" data-replay="running">
+          Đang chạy lại lượt vừa chạy ở tốc độ nhanh — cùng đầu vào, cùng hash.
+        </p>
       ) : null}
 
       {bootProblem ? <p className="notice boot">{bootProblem}</p> : null}
@@ -349,6 +489,11 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
   d.so = exercise.automatic ? 'tu-dong' : 'san';
+  d.exercise = String(s.lesson > 0 ? s.lesson : exercise.lesson);
+  d.lesson = String(s.lesson);
+  d.courseTick = String(s.courseTick);
+  d.verdict = s.verdict;
+  d.replay = run.replay ? (run.replay.done ? 'done' : 'running') : '';
   paintAid(d, exercise.stop(s, ruleset));
   paintScene(d, s, run);
   d.entered = entered ? 'yes' : 'no';
@@ -391,12 +536,13 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
 }
 
 /** Fetch sim.wasm once. A module that will not instantiate fails here, not on the first key. */
-async function loadCore(wasmUrl: string, seed: bigint): Promise<() => Session> {
+async function loadCore(wasmUrl: string): Promise<(seed: bigint) => Session> {
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`Không nạp được ${wasmUrl}: HTTP ${response.status}`);
   const bytes = await response.arrayBuffer();
-  openSession(bytes, seed).dispose();
-  return () => openSession(bytes, seed);
+  // Bài 1's seed word: any known exercise instantiates the same module.
+  openSession(bytes, seedWord(0, 1n, false)).dispose();
+  return (seed) => openSession(bytes, seed);
 }
 
 /**

@@ -235,6 +235,9 @@ function startState() {
     hullInside: false,
     finishSignal: false,
     holdTicks: 0,
+    lesson: 0,
+    courseTick: 0,
+    verdict: 'running' as const,
   };
   return s;
 }

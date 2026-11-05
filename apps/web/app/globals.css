@@ -490,6 +490,98 @@ body {
   color: var(--bad);
 }
 
+/* The liên hoàn result: every fault with its quote needs more room than the per-bài card. */
+.overlay.result.lien-hoan {
+  max-width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.overlay.result.lien-hoan h1 {
+  text-align: center;
+}
+
+.overlay.result.lien-hoan .result-line,
+.overlay.result.lien-hoan .result-clock,
+.overlay.result.lien-hoan .result-hint {
+  text-align: center;
+  width: 100%;
+}
+
+.overlay.result.lien-hoan .result-quote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overlay.result.lien-hoan .result-faults {
+  width: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.overlay.result.lien-hoan .result-faults h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.overlay.result.lien-hoan .result-faults ul {
+  max-height: 34vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.overlay.result.lien-hoan .result-faults li {
+  display: block;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.overlay.result.lien-hoan .result-faults .rule {
+  color: var(--text);
+}
+
+.overlay.result.lien-hoan .result-faults .points {
+  margin-left: 8px;
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.overlay.result.lien-hoan .result-faults blockquote {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+}
+
+.overlay.result.lien-hoan .result-faults cite {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.overlay.result.lien-hoan .result-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  width: 100%;
+}
+
+.overlay.result.lien-hoan .replay-result {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(95, 209, 138, 0.12);
+  color: var(--text);
+}
+
+.overlay.result.lien-hoan .replay-result[data-replay-match='no'] {
+  background: rgba(255, 107, 107, 0.14);
+}
+
 .notice {
   position: absolute;
   left: 12px;

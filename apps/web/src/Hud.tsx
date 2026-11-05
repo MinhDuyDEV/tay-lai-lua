@@ -72,10 +72,10 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const holdTimer = useRef<HoldTimer>(newHoldTimer());
   /** The widest gap the aid has been seen at, so the bar's scale does not jump as the car rolls up. */
   const spanRef = useRef(12);
-  /** The figure's centreline, read once from the core; the same polyline the scene draws. */
-  const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run]);
+  /** The figure's centreline, read from the core; a liên hoàn run replaces it when the bài changes. */
+  const centre = useMemo(() => run.course.find((r) => r.kind === 5)?.points ?? [], [run, run.course]);
   /** Bài 7/8: the area and the bay, read once from the core's own course. */
-  const yard = useMemo(() => exercise.park?.(run.course) ?? null, [run, exercise]);
+  const yard = useMemo(() => exercise.park?.(run.course) ?? null, [run, run.course, exercise]);
   const bai3 = exercise.lesson === 3;
   /** Bài 2, 9 and 11: one straight road, a stop line, and one thing past it. */
   const road = exercise.lesson === 2 || exercise.lesson === 9 || exercise.lesson === 11;
@@ -174,7 +174,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       }
     });
     return stop;
-  }, [run, exercise, ruleset, rpmLimit, audio, centre]);
+  }, [run, exercise, ruleset, rpmLimit, audio, centre, yard]);
 
   return (
     <div className="hud">

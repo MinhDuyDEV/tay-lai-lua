@@ -92,7 +92,7 @@ async function cruiseUntil(page, what, cond, allowed) {
 }
 
 /** One whole run of bài 1 from the keyboard. `belt` false leaves the seat belt unfastened. */
-async function drive(page, { belt, allowed, automatic = false }) {
+async function drive(page, { belt, allowed, automatic = false, end = `d.phase === 'done'` }) {
   const key = page.keyboard;
 
   // The first key only enters the car (and starts the audio); it must not count as an action.
@@ -135,7 +135,7 @@ async function drive(page, { belt, allowed, automatic = false }) {
     await page.waitForTimeout(AUTO_REACTION_MS);
     await key.press('KeyQ');
     await until(page, 'left signal off', `d.signal === 'off'`, allowed);
-    await until(page, 'end of the exercise', `d.phase === 'done'`, allowed);
+    await until(page, 'end of the exercise', end, allowed);
     return;
   }
 
@@ -156,7 +156,7 @@ async function drive(page, { belt, allowed, automatic = false }) {
   await key.press('KeyQ');
   await until(page, 'left signal off', `d.signal === 'off'`, allowed);
 
-  await cruiseUntil(page, 'end of the exercise', `d.phase === 'done'`, allowed);
+  await cruiseUntil(page, 'end of the exercise', end, allowed);
 }
 
 // Bài 3's learner acts on what the page tells them, a human lag later: the advice line carries the
@@ -181,7 +181,7 @@ async function anyCue(page, what, allowed) {
  * with the handbrake. Then `finish` either pulls away (handbrake method) or lets the handbrake go with
  * the clutch up and no throttle. Every key waits on the published state.
  */
-async function driveHill(page, { finish, allowed, throttle = false, automatic = false }) {
+async function driveHill(page, { finish, allowed, throttle = false, automatic = false, end = `d.phase === 'done'` }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -260,7 +260,7 @@ async function driveHill(page, { finish, allowed, throttle = false, automatic = 
     await until(page, 'clutch at the bite', `Number(d.clutch) <= 0.65`, allowed);
     await key.press('KeyP');
     await until(page, 'handbrake released on the slope', `d.handbrake === 'no'`, allowed);
-    await until(page, 'over the stop line', `d.phase === 'done'`, allowed);
+    await until(page, 'over the stop line', end, allowed);
     await key.up('ArrowUp');
   } else {
     await until(page, 'clutch fully up', `Number(d.clutch) <= 0.05`, allowed);

@@ -101,6 +101,10 @@ export type PhaseName = 'waiting' | 'launched' | 'past-line' | 'done' | 'stopped
 /** Signal codes: 0 off, 1 left, 2 right. */
 export type SignalName = 'off' | 'left' | 'right';
 
+/** Liên hoàn's verdict field (56): where the whole run stands. */
+export type VerdictName = 'running' | 'passed' | 'failed';
+const VERDICT_NAMES: readonly VerdictName[] = ['running', 'passed', 'failed'];
+
 export interface SimState {
   tick: number;
   phase: PhaseName;
@@ -161,6 +165,12 @@ export interface SimState {
   finishSignal: boolean;
   /** Bài 7/8: consecutive ticks still and inside the bay. */
   holdTicks: number;
+  /** Sa hình liên hoàn: the bài being driven, 1..11; 0 in a per-bài session. */
+  lesson: number;
+  /** Sa hình liên hoàn: steps since bài 1's start order (the run's clock); 0 in a per-bài session. */
+  courseTick: number;
+  /** Sa hình liên hoàn: where the run stands. `running` in a per-bài session. */
+  verdict: VerdictName;
   clockS: number;
   contactEpisodeS: number;
   /** Wheel centres FL FR RL RR in the same frame as `carX`/`carY`. */
@@ -215,6 +225,14 @@ function coded<T extends number>(names: readonly string[], value: number, what: 
     throw new Error(`sim_state ${what} ${value} is not in the contract`);
   }
   return value as T;
+}
+
+/** A verdict code outside 0..2 is a contract drift, not a value to guess at. */
+function verdictName(value: number): VerdictName {
+  if (!Number.isInteger(value) || value < 0 || value >= VERDICT_NAMES.length) {
+    throw new Error(`sim_state verdict ${value} is not in the contract`);
+  }
+  return VERDICT_NAMES[value];
 }
 
 /** A contact code outside 0..2 is a contract drift, not a value to guess at. */
@@ -279,6 +297,9 @@ export function readState(block: Float64Array, count: number): SimState {
     hullInside: block[F.hullInside] !== 0,
     finishSignal: block[F.finishSignal] !== 0,
     holdTicks: block[F.holdTicks],
+    lesson: block[F.lesson],
+    courseTick: block[F.courseTick],
+    verdict: verdictName(block[F.verdict]),
     wheels: [
       [block[F.wheels], block[F.wheels + 1]],
       [block[F.wheels + 2], block[F.wheels + 3]],

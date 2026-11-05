@@ -341,6 +341,12 @@ export interface Penalty {
   source: RuleSource;
   /** True when the row disqualifies instead of subtracting points. */
   disqualify: boolean;
+  /**
+   * The bài the fault was charged in, 1..11, when the run knows it; 0 on a per-bài page. `tick` is
+   * the run's course clock in a liên hoàn run, so the two together say where on the course it
+   * happened.
+   */
+  lesson: number;
 }
 
 /** One place that answers "what does this event code mean", for the HUD and the test alike. */
@@ -348,7 +354,7 @@ export function describe(ruleset: Ruleset, code: number): Rule | undefined {
   return ruleset.rules.find((r) => r.code === code);
 }
 
-export function toPenalty(ruleset: Ruleset, event: { tick: number; code: number; points: number }): Penalty {
+export function toPenalty(ruleset: Ruleset, event: { tick: number; code: number; points: number }, lesson = 0): Penalty {
   const rule = describe(ruleset, event.code);
   if (!rule) {
     // A code the app's ruleset does not know is a version skew between sim.wasm and the content
@@ -362,6 +368,7 @@ export function toPenalty(ruleset: Ruleset, event: { tick: number; code: number;
     id: rule.id,
     source: rule.source,
     disqualify: rule.penalty.kind === 'DISQUALIFY',
+    lesson,
   };
 }
 

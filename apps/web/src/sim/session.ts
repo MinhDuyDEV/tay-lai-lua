@@ -57,9 +57,12 @@ export interface Session {
   readonly state: SimState;
   /**
    * The figure this exercise is drawn on, read once from the core so the picture and the scoring
-   * share one set of polylines. Empty for bài 1 and bài 3.
+   * share one set of polylines. Empty for bài 1 and bài 3. A liên hoàn run changes its figure when
+   * the bài changes; `refreshCourse` is how the page asks for the new one.
    */
   readonly course: readonly CourseRecord[];
+  /** Re-read `sim_course`, for a run that has just swapped to the next bài. */
+  refreshCourse(): readonly CourseRecord[];
   /** Advance exactly one 1/60 s tick with these 8 TickInput bytes. */
   step(input: Uint8Array): StepResult;
   /** The core's state hash: 16 lowercase hex digits. */
@@ -194,6 +197,9 @@ function wasmSession(exports: Exports, seed: bigint): Session {
       return state;
     },
     course,
+    refreshCourse() {
+      return readCourse(exports, handle);
+    },
     step(input) {
       const copy = input.slice();
       records.push(copy);
