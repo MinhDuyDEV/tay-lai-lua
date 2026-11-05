@@ -61,14 +61,14 @@ interface Result {
  * One whole run. The set-up keys (clutch, gear, handbrake) follow the checklist `latency.pedals`
  * late; the arrow keys follow the polled cue `latency.steer` late. Nothing else drives the car.
  */
-function drive(lesson: 4 | 6, latency: Latency, { steer = true } = {}): Result {
+function drive(lesson: 4 | 6, latency: Latency, { steer = true, automatic = false } = {}): Result {
   const session = openSession(
     wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
-    seedWord(lesson),
+    seedWord(lesson, 1n, automatic),
   );
   const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
   const pace = paceFigure(ruleset);
-  const driver = createDriver();
+  const driver = createDriver({ automatic });
   const setup: Set<string>[] = [];
   let held = new Set<string>();
   let s: SimState = session.state;
@@ -84,12 +84,18 @@ function drive(lesson: 4 | 6, latency: Latency, { steer = true } = {}): Result {
   for (let t = 0; t < 9000 && !(s.phase === 'done' || s.disqualified); t += 1) {
     const k = new Set<string>();
     // The way the page's own checklist says to set off: clutch to the floor, gear 1, handbrake off,
-    // clutch up, and only then (never, here) the throttle.
-    if (s.gear !== 1) {
-      k.add('Space');
-      if (s.clutch > 0.95) k.add('Digit1');
+    // clutch up, and only then (never, here) the throttle. An automatic has no clutch and no gear
+    // number: D and the handbrake, then the car's own creep.
+    if (automatic) {
+      if (s.gear <= 0) k.add('KeyD');
+      if (s.gear > 0 && s.handbrake) k.add('KeyP');
+    } else {
+      if (s.gear !== 1) {
+        k.add('Space');
+        if (s.clutch > 0.95) k.add('Digit1');
+      }
+      if (s.gear === 1 && s.handbrake) k.add('KeyP');
     }
-    if (s.gear === 1 && s.handbrake) k.add('KeyP');
     setup.push(k);
 
     const cue = cueFigure(s, centre, ruleset);
@@ -113,8 +119,8 @@ function drive(lesson: 4 | 6, latency: Latency, { steer = true } = {}): Result {
     if (arrow && steer) down.add(arrow);
     // Speed: the advice line says "đừng ga, cứ để xe tự bò", so the throttle is never touched. If the
     // car is ever above the line's pace the line says "nhả ga"; with no throttle held there is nothing
-    // to release, so the learner brakes.
-    if (s.gear === 1 && !s.handbrake && s.clutch < 0.05 && s.speedMps > pace + 0.15) down.add('ArrowDown');
+    // to release, so the learner brakes. An automatic cannot stall, so the brake is safe there too.
+    if ((automatic ? s.gear > 0 : s.gear === 1) && !s.handbrake && s.speedMps > pace + 0.15) down.add('ArrowDown');
     const pressed = [...down].filter((code) => !held.has(code));
     held = down;
     session.step(driver.step(down, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
@@ -131,9 +137,10 @@ function drive(lesson: 4 | 6, latency: Latency, { steer = true } = {}): Result {
 }
 
 /** Every lag combination; returns what went wrong, in a form the failure message can print. */
-function sweep(lesson: 4 | 6, options: { steer?: boolean } = {}): string[] {
+function sweep(lesson: 4 | 6, options: { steer?: boolean; automatic?: boolean } = {}): string[] {
   const failures: string[] = [];
-  for (const steerLag of STEER_LAG) {
+  const steerLags = options.automatic ? ([9, 18, 24] as const) : STEER_LAG;
+  for (const steerLag of steerLags) {
     for (const pedalLag of PEDAL_LAG) {
       const r = drive(lesson, { steer: steerLag, pedals: pedalLag }, options);
       const clean = r.finished && r.score === 100 && r.contact === WHEELS_CLEAR;
@@ -158,6 +165,21 @@ test('bài 6: following the polled page cue 100 to 500 ms late (and 600 for marg
 test('bài 4 fails when the learner never steers, so the steering cue is what passes it', () => {
   const failures = sweep(4, { steer: false });
   assert.notEqual(failures.length, 0, 'the figure passes without steering, so the sweep proves nothing');
+});
+
+test('bài 4 on an automatic: the page cue 150, 300 and 400 ms late finishes with 100, no line touched', () => {
+  assert.deepEqual(sweep(4, { automatic: true }), []);
+});
+
+test('bài 6 on an automatic: the page cue 150, 300 and 400 ms late finishes with 100, no line touched', () => {
+  assert.deepEqual(sweep(6, { automatic: true }), []);
+});
+
+test('the automatic figures fail when the learner never steers, so the cue is what passes them', () => {
+  for (const lesson of [4, 6] as const) {
+    const failures = sweep(lesson, { automatic: true, steer: false });
+    assert.notEqual(failures.length, 0, `bài ${lesson} passes on an automatic without steering, so the sweep proves nothing`);
+  }
 });
 
 test('bài 6 fails when the learner never steers, so the steering cue is what passes it', () => {

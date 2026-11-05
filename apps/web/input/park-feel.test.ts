@@ -40,7 +40,24 @@ for (const lesson of [7, 8] as const) {
     }
     assert.deepEqual(bad, [], `cells that did not finish clean and early: ${bad.join(' | ')}`);
   });
+
+  test(`bài ${lesson} on an automatic: the page alone brings a 150 / 300 / 400 ms reader to 100 and the finish signal`, () => {
+    const bad: string[] = [];
+    for (const [react, phase] of CELLS) {
+      const o = drivePark(lesson, react, phase, 150, 1, { automatic: true });
+      console.log(`     bài ${lesson} auto react ${react} phase ${phase}: score ${o.score} signal ${o.signal} run ${o.runS.toFixed(0)} s [${o.pents}]`);
+      if (!clean(o)) {
+        bad.push(`${react}/${phase}: ${o.score} ${o.signal ? 'signal' : 'no signal'} ${o.runS.toFixed(0)} s [${o.pents}]`);
+      }
+    }
+    assert.deepEqual(bad, [], `automatic cells that did not finish clean and early: ${bad.join(' | ')}`);
+  });
 }
+
+// The automatic has no red control for the bar's calibration: measured, both broken leads (a fixed one
+// and one calibrated to the wrong reader) still finish both bays at 100 on an automatic, because its
+// creep leaves the planner enough room that the bar's lead is not what decides the cell. A control
+// that stays green on automatic would prove nothing, so it is not added.
 
 // The gate has to be able to go red: two broken versions of the bar's lead must each fail a cell they fail today.
 test('the gate is red when the lead is not calibrated, and when it is calibrated to the wrong reader', () => {

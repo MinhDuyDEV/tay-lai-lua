@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import { gearCue, adviceGear, GEAR_POLICY } from '../src/gear.ts';
 import { gearSignM } from '../src/ruleset.ts';
 import type { SimState } from '../src/sim/session.ts';
-import { describeCell, driveGear, pageKeys, PHASE_MS, REACT_MS, ruleset, type ShowPage } from './gear-model.ts';
+import { describeCell, driveGear, pageKeys, pageShow, PHASE_MS, REACT_MS, ruleset, type ShowPage } from './gear-model.ts';
 
 const signs = (() => {
   const gear = ruleset.gear!;
@@ -41,6 +41,32 @@ function sweep(page?: ShowPage, reacts: readonly number[] = REACT_MS): string[] 
 
 test('bài 10: reading the line 150–400 ms late, at every poll phase, scores 100 with no charge at all', () => {
   assert.deepEqual(sweep(), []);
+});
+
+test('bài 10 on an automatic: reading the line 150–400 ms late, at every poll phase, scores 100 with no charge at all', () => {
+  const failures: string[] = [];
+  const page = pageShow(true);
+  for (const react of REACT_MS) {
+    for (const phase of PHASE_MS) {
+      const o = driveGear(react, phase, page, 150, true);
+      if (!o.finished || o.disqualified || o.score !== 100 || o.pents.length > 0) {
+        failures.push(describeCell(react, phase, o));
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
+// The automatic's own rule: with the box shifting itself only the speed is judged, so the one mistake
+// left is the pace — a learner who creeps the whole road is charged SAI_TOC_DO at sign 2 and never a
+// gear row, because an automatic has no gear to be wrong in.
+test('bài 10 on an automatic that never takes the throttle: SAI_TOC_DO −5, and SAI_SO / SAI_CA_HAI never fire', () => {
+  const page = pageShow(true);
+  const creep = { advice: page.advice, cue: page.cue, keys: () => [] as string[] };
+  const o = driveGear(300, 25, creep, 150, true);
+  assert.deepEqual(o.pents, ['SH.SO.SAI_TOC_DO'], describeCell(300, 25, o));
+  assert.equal(o.score, 95);
+  assert.ok(o.finished && !o.disqualified, describeCell(300, 25, o));
 });
 
 test('bài 10: the downshift is what the gate watches — it never stalls and never over-revs the engine', () => {

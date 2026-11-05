@@ -54,8 +54,8 @@ export interface Variant {
 
 export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 1, variant: Variant = {}): Outcome {
   const jitterMs = variant.jitterMs ?? 40;
-  const ex = exerciseFor(lesson);
   const automatic = variant.automatic === true;
+  const ex = exerciseFor(lesson, automatic);
   const session = openSession(bytes(), seedWord(lesson, 1n, automatic));
   const yard = yardOf(parkRects(session.course)!);
   const driver = createDriver({ automatic });

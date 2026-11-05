@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type { Ruleset } from '../src/ruleset.ts';
+import { exerciseFor } from '../src/exercise.ts';
 import { STATE_LEN, readState, type SimState } from '../src/sim/contract.ts';
 import { seedWord } from '../src/sim/session.ts';
 import { cueBai3 } from '../src/steps.ts';
@@ -243,4 +244,180 @@ test('the same sweep fails when nothing holds the car on the slope between the s
     assert.ok(/codes=\[(13|7|13,7|7,13)\]/.test(line), `failed for another reason: ${line}`);
   }
   assert.ok(failures.some((line) => line.includes(`${CODE.TUT_DOC}`)), 'no failure was the rollback itself');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Bài 3 on an automatic. The page's own cue (`exerciseFor(3, true)`'s `cue`: 'throttle' at the foot
+// of the slope, 'brake' when the aid says now) and the advice line's stop sentence. A learner who
+// does nothing but creep cannot climb the 10 % grade: the car stops 0.82 m short (A > 0.5, measured,
+// CHUA_DEN_VACH), and then rolls back. So the pulse and the brake are load-bearing, and the red test
+// below is the proof.
+// ---------------------------------------------------------------------------------------------
+
+interface AutoOptions {
+  reactMs: number;
+  /** The poll's phase inside its 50 ms period. */
+  phaseMs?: number;
+  /** false is the learner who reads only the checklist's D and P and ignores every cue after them. */
+  follow?: boolean;
+  /** Time between letting the foot brake go at the stop and the throttle arriving (the page says together). */
+  launchGapMs?: number;
+}
+
+interface AutoResult {
+  finished: boolean;
+  disqualified: boolean;
+  score: number;
+  /** A as the core recorded the stop, metres. */
+  A: number;
+  stoppedInA: boolean;
+  rollbackMax: number;
+  cues: string[];
+  codes: number[];
+}
+
+/** One whole automatic run on bài 3, from the page's cue and stop sentence, late by `reactMs`. */
+function driveAuto3(opts: AutoOptions): AutoResult {
+  const { reactMs, phaseMs = 0, follow = true, launchGapMs = 0 } = opts;
+  const ex = exerciseFor(3, true);
+  const handle = x.sim_create(seedWord(3, 1n, true));
+  assert.notEqual(handle, 0, 'sim.wasm refused the automatic bài 3 seed word');
+  const inPtr = x.sim_alloc(8);
+  const statePtr = x.sim_alloc(STATE_LEN * 8);
+  const evPtr = x.sim_alloc(8 * 64);
+  const read = () => {
+    const n = x.sim_state(handle, statePtr, STATE_LEN);
+    return readState(new Float64Array(x.memory.buffer, statePtr, STATE_LEN), n);
+  };
+  const driver = createDriver({ automatic: true });
+  let s: SimState = read();
+  const lateTicks = Math.round(((reactMs + phaseMs) / 1000) * 60);
+  const pollTicks = Math.max(1, Math.round((50 / 1000) * 60));
+  const queue: { at: number; held: Set<string>; pressed: string[] }[] = [];
+  let held = new Set<string>();
+  let lastSig = '';
+  let lastD = -Infinity;
+  let lastP = -Infinity;
+  let stage: 'setup' | 'approach' | 'launch' | 'failed' = 'setup';
+  const cues: string[] = [];
+  const codes: number[] = [];
+  const out: AutoResult = { finished: false, disqualified: false, score: 0, A: 0, stoppedInA: false, rollbackMax: 0, cues, codes };
+
+  for (let t = 0; t < 3600 && !(s.phase === 'done' || s.disqualified) && stage !== 'failed'; t += 1) {
+    if (t % pollTicks === 0) {
+      if (stage === 'setup') {
+        // The checklist: the selector, then the handbrake. A tap that did not take is made again.
+        const code = s.gear <= 0 ? 'KeyD' : s.handbrake ? 'KeyP' : null;
+        if (code === 'KeyD' && t - lastD > 40) { lastD = t; queue.push({ at: t + lateTicks, held: new Set(), pressed: [code] }); }
+        if (code === 'KeyP' && t - lastP > 40) { lastP = t; queue.push({ at: t + lateTicks, held: new Set(), pressed: [code] }); }
+        if (!code) stage = 'approach';
+      } else if (stage === 'approach' && s.phase === 'stopped') {
+        const a = s.stopGapAM;
+        out.A = a;
+        out.stoppedInA = a >= 0 && a <= MAX_A;
+        if (!out.stoppedInA) {
+          // The page says "dừng lệch vạch ... bấm Esc": the learner does not launch from a bad stop.
+          stage = 'failed';
+        } else {
+          // "Khởi hành: nhả phanh ↓ và giữ ga ↑" — the brake lets go and the throttle lands with it,
+          // unless this is the learner whose throttle comes `launchGapMs` after the brake.
+          queue.push({ at: t + lateTicks, held: new Set(), pressed: [] });
+          queue.push({ at: t + lateTicks + Math.round((launchGapMs / 1000) * 60), held: new Set(['ArrowUp']), pressed: [] });
+          stage = 'launch';
+        }
+      } else if (stage === 'approach') {
+        const cue = follow ? ex.cue!(s, ruleset, []) : null;
+        const sig = cue ?? 'coast';
+        if (sig !== lastSig) {
+          lastSig = sig;
+          if (cue) cues.push(cue);
+          const want = cue === 'throttle' ? new Set(['ArrowUp']) : cue === 'brake' ? new Set(['ArrowDown']) : new Set<string>();
+          queue.push({ at: t + lateTicks, held: want, pressed: [] });
+        }
+      }
+    }
+    const pressed: string[] = [];
+    while (queue.length && queue[0].at <= t) {
+      const e = queue.shift()!;
+      held = e.held;
+      pressed.push(...e.pressed);
+    }
+    const r = sessionStep(handle, inPtr, driver.step(held, pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
+    s = read();
+    for (const code of r) codes.push(code);
+    out.rollbackMax = Math.max(out.rollbackMax, s.rollbackM);
+  }
+  out.finished = s.phase === 'done' && !s.disqualified;
+  out.disqualified = s.disqualified;
+  out.score = s.score;
+  if (stage === 'failed') out.A = s.stopGapAM;
+  x.sim_destroy(handle);
+  return out;
+}
+
+/** One tick of the core, with the events it charged (by code). */
+function sessionStep(handle: number, inPtr: number, bytes: Uint8Array): number[] {
+  new Uint8Array(x.memory.buffer, inPtr, 8).set(bytes);
+  x.sim_step(handle, inPtr);
+  const evPtr = x.sim_alloc(8 * 64);
+  const n = x.sim_drain_events(handle, evPtr, 64);
+  const mem = new DataView(x.memory.buffer);
+  const codes = Array.from({ length: n }, (_, i) => mem.getUint16(evPtr + i * 8 + 4, true));
+  x.sim_free(evPtr, 8 * 64);
+  return codes;
+}
+
+const AUTO_PHASES = [0, 12, 25, 37] as const;
+
+test('bài 3 on an automatic: a learner reading the page cue 150 / 300 / 400 ms late stops inside A and pulls away with 100', () => {
+  const failures: string[] = [];
+  let low = Infinity;
+  let high = -Infinity;
+  for (const reactMs of [150, 300, 400] as const) {
+    for (const phaseMs of AUTO_PHASES) {
+      const r = driveAuto3({ reactMs, phaseMs });
+      low = Math.min(low, r.A);
+      high = Math.max(high, r.A);
+      if (!r.finished || r.score !== 100 || r.codes.length > 0 || !r.stoppedInA || r.rollbackMax > MAX_ROLLBACK) {
+        failures.push(
+          `react ${reactMs} phase ${phaseMs}: score ${r.score} finished ${r.finished} A ${r.A.toFixed(3)} inA ${r.stoppedInA} rollback ${r.rollbackMax.toFixed(3)} cues [${r.cues}] codes [${r.codes}]`,
+        );
+      }
+    }
+  }
+  console.log(`     automatic A over ${3 * AUTO_PHASES.length} cells: ${low.toFixed(3)} to ${high.toFixed(3)} m of ${MAX_A}`);
+  assert.deepEqual(failures, []);
+});
+
+// The red control: creep, D selected and P off, and never a pedal after that. The car cannot climb
+// the grade, so it stops 0.82 m short of the line (A > 0.5): the pulse and the brake cue are what the
+// 100 above rests on. Measured, this is the same stop the Lead's own creep made (gap 0.82 m).
+test('bài 3 on an automatic: a learner who ignores the cue does NOT score 100 — the creep stops short of A', () => {
+  const r = driveAuto3({ reactMs: 300, follow: false });
+  console.log(`     automatic creep: A ${r.A.toFixed(2)} m, score ${r.score}, inA ${r.stoppedInA}, codes [${r.codes}]`);
+  assert.equal(r.stoppedInA, false, `the creep stopped inside A (${r.A.toFixed(3)} m): the sweep proves nothing about the cue`);
+  assert.equal(r.finished, false, 'the creep finished the bài without ever taking the cue');
+  assert.ok(r.score < 100, `the creep scored ${r.score}`);
+  const shortCode = (ruleset.rules as { id: string; code: number }[]).find((x) => x.id === 'SH.03.CHUA_DEN_VACH')!.code;
+  assert.ok(r.codes.includes(shortCode), `the stop short of the line was not charged: [${r.codes}]`);
+});
+
+// The automatic's own fault, and the one fault path the brief asks for on this bài: stopped inside A,
+// the foot brake lets go and nothing holds the car; the throttle arrives 600 ms later. The car rolls
+// back past the law's 500 mm and the core suspends the run (TUT_DOC). The page does not teach this:
+// its sentence hands the car from the brake to the throttle together.
+test('bài 3 on an automatic: the brake let go with nothing to hold the car rolls back past 500 mm and is suspended', () => {
+  // Measured: released from a stop inside A with the throttle still 600 ms away, the car rolls back
+  // 0.20 m and gets away — the converter at idle pushes against the grade. The law's 500 mm is passed
+  // after about 1.4 s of nothing holding it, so the run below waits 1.8 s before the throttle; the
+  // fault is the learner's, not the page's (the page says hand the brake to the throttle at once).
+  const r = driveAuto3({ reactMs: 300, launchGapMs: 1800 });
+  console.log(`     automatic rollback: ${r.rollbackMax.toFixed(2)} m, A ${r.A.toFixed(2)} m, codes [${r.codes}]`);
+  assert.equal(r.stoppedInA, true, `the fault run did not stop inside A (${r.A.toFixed(3)} m)`);
+  assert.ok(r.disqualified, 'the rollback past 500 mm did not suspend the run');
+  assert.ok(r.codes.includes(CODE.TUT_DOC), `TUT_DOC did not fire: [${r.codes}]`);
+  const rule = (ruleset.rules as { id: string; penalty: { kind: string; points?: number }; source: { quote: string } }[])
+    .find((x) => x.id === 'SH.03.TUT_DOC')!;
+  assert.equal(rule.penalty.kind, 'DISQUALIFY', 'TUT_DOC is not the suspension the page shows');
+  assert.ok(rule.source.quote.includes('tụt dốc'), `the rule quote moved: ${rule.source.quote}`);
 });

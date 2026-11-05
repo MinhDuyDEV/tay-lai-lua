@@ -66,6 +66,8 @@ interface Outcome {
   disqualified: boolean;
   score: number;
   contact: string;
+  /** The distance A the core recorded at the stop (0 for a run with no stop). */
+  stopA: number;
   clockMs: number;
   /** The most the car did in the turn, km/h — what the lane edge in the arc is about. */
   vTurnKmh: number;
@@ -79,11 +81,11 @@ interface Outcome {
  * The turn's steering key comes from `cue` (the same `data-cue` the figures are driven by), not from
  * the words: one key, held while the cue names it, let go when it says straight.
  */
-function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number): Outcome {
-  const ex = exerciseFor(lesson as 5);
-  const session: Session = openSession(bytes(), seedWord(lesson, seed));
+function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number, automatic = false): Outcome {
+  const ex = exerciseFor(lesson as 5, automatic);
+  const session: Session = openSession(bytes(), seedWord(lesson, seed, automatic));
   const centre = session.course.find((r) => r.kind === 5)?.points ?? [];
-  const driver = createDriver();
+  const driver = createDriver({ automatic });
   let s: SimState = session.state;
   const pents: string[] = [];
   const hold = new Set<string>();
@@ -117,10 +119,11 @@ function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number): O
         seen = ask;
         later(() => {
           // A stop the aid is timing holds the pedals down whatever else the line says meanwhile: the
-          // learner's car is held at the line until the sentence says to go.
+          // learner's car is held at the line until the sentence says to go. An automatic's stop is
+          // the brake alone (the converter makes the clutch byte meaningless).
           if (aidHeld || ask.brake) {
             hold.delete('ArrowUp');
-            hold.add('Space');
+            if (!automatic) hold.add('Space');
             hold.add('ArrowDown');
           } else if (ask.throttle === 'hold') {
             hold.delete('ArrowDown');
@@ -144,7 +147,7 @@ function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number): O
       if (aid && aidDue === null && aid.now) aidDue = now + AID_LATE_MS;
       if (aid && aidDue !== null && now >= aidDue) {
         hold.delete('ArrowUp');
-        hold.add('Space');
+        if (!automatic) hold.add('Space');
         hold.add('ArrowDown');
         aidDue = Infinity;
         aidHeld = true;
@@ -156,8 +159,12 @@ function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number): O
       if (now >= queue[i].at) queue.splice(i, 1)[0].fn();
     }
     // The checklist's own set-up, in the first sentences' words: clutch down for the gear, handbrake
-    // off with P, and the clutch up again once the car is in gear and free.
-    if (s.gear !== 1) {
+    // off with P, and the clutch up again once the car is in gear and free. An automatic picks D and
+    // P and has no pedal to hold.
+    if (automatic) {
+      if (s.gear <= 0) press('KeyD', now);
+      else if (s.handbrake) press('KeyP', now);
+    } else if (s.gear !== 1) {
       hold.add('Space');
       if (s.clutch > 0.96) press('Digit1', now);
     } else if (s.handbrake) {
@@ -182,6 +189,7 @@ function drive(lesson: number, seed: bigint, reactMs: number, pollMs: number): O
     disqualified: s.disqualified,
     score: s.score,
     contact: s.contact.join(''),
+    stopA: s.stopGapAM,
     clockMs: s.clockMs,
     vTurnKmh: vTurn * 3.6,
     pents: [...new Set(pents)],
@@ -194,12 +202,12 @@ const describeRun = (seed: bigint, reactMs: number, pollMs: number, r: Outcome) 
   `turn ${r.vTurnKmh.toFixed(1)} km/h, contact ${r.contact}, charged [${r.pents.join(', ')}]`;
 
 /** Every reaction at every poll, on both arrivals: the gate the sentence has to clear. */
-function sweep(): string[] {
+function sweep(automatic = false): string[] {
   const failures: string[] = [];
   for (const seed of [GREEN_ARRIVAL, RED_ARRIVAL]) {
     for (const pollMs of POLL_MS) {
       for (const reactMs of REACT_MS) {
-        const r = drive(5, seed, reactMs, pollMs);
+        const r = drive(5, seed, reactMs, pollMs, automatic);
         if (!r.finished || r.score !== 100) failures.push(describeRun(seed, reactMs, pollMs, r));
       }
     }
@@ -209,6 +217,19 @@ function sweep(): string[] {
 
 test('bài 5: reading the advice line 250–400 ms late clears the junction with 100 on a green and a red arrival', () => {
   assert.deepEqual(sweep(), []);
+});
+
+test('bài 5 on an automatic: reading the advice line 150–400 ms late clears the junction with 100 on a green and a red arrival', () => {
+  const failures: string[] = [];
+  for (const seed of [GREEN_ARRIVAL, RED_ARRIVAL]) {
+    for (const pollMs of POLL_MS) {
+      for (const reactMs of [150, ...REACT_MS]) {
+        const r = drive(5, seed, reactMs, pollMs, true);
+        if (!r.finished || r.score !== 100) failures.push(describeRun(seed, reactMs, pollMs, r));
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
 });
 
 // The band the words can serve is 200-400 ms, not the 150-400 the brief asks for, and this test is
@@ -250,6 +271,17 @@ function driveNoThrottle(seed: bigint): Outcome {
 // Bài 11 is the other half of the same journey: cross the finish line with the right signal, then stop
 // past it. Its advice has no countdown and no stop before the line (KHONG_QUA_VACH is a suspension for
 // exactly that), so the reader must get through it without a stop aid at all.
+test('bài 11 on an automatic: reading the advice line at 150–400 ms finishes the crossing with 100 and no stop before the line', () => {
+  const failures: string[] = [];
+  for (const pollMs of POLL_MS) {
+    for (const reactMs of [150, ...REACT_MS]) {
+      const r = drive(11, 1n, reactMs, pollMs, true);
+      if (!r.finished || r.score !== 100) failures.push(describeRun(1n, reactMs, pollMs, r));
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
 test('bài 11: reading the advice line finishes the crossing with 100 and no stop before the line', () => {
   const failures: string[] = [];
   for (const pollMs of POLL_MS) {

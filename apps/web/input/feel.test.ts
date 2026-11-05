@@ -8,6 +8,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { exerciseFor } from '../src/exercise.ts';
+import type { StepId } from '../src/steps.ts';
+import { openSession, seedWord, type SimState } from '../src/sim/session.ts';
 import { DT, FEEL, createDriver } from './driver.ts';
 
 const WASM = new URL('../../../build/sim.wasm', import.meta.url);
@@ -121,4 +124,88 @@ test('the same sweep fails when the clutch does not slow down at the bite', () =
   } finally {
     clutch.liftBite = kept;
   }
+});
+
+/**
+ * Bài 1 on an automatic, from the page's checklist alone: the seven steps `exerciseFor(1, true)`
+ * publishes and `markBai1` ticks off, one key each (E, B, Enter, Q, D, P, then Q again at the 5 m
+ * mark). The car needs no throttle — the checklist says it creeps across on its own — so a learner who
+ * follows it presses no pedal at all. The learner polls, waits `reactMs` plus the poll's phase after
+ * the next step appears, and taps that step's key.
+ */
+interface AutoRun {
+  finished: boolean;
+  disqualified: boolean;
+  score: number;
+  bumper: number;
+  codes: number[];
+}
+
+function driveAuto1(reactMs: number, pollMs: number, phaseMs: number): AutoRun {
+  const ex = exerciseFor(1, true);
+  const wasmBytes = readFileSync(WASM);
+  const session = openSession(
+    wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
+    seedWord(0, 1n, true),
+  );
+  const driver = createDriver({ automatic: true });
+  const codeOf: Record<string, string> = {
+    engine: 'KeyE',
+    belt: 'KeyB',
+    order: 'Enter',
+    signal: 'KeyQ',
+    gear: 'KeyD',
+    away: 'KeyP',
+    off: 'KeyQ',
+  };
+  let s: SimState = session.state;
+  const done = new Set<StepId>();
+  const codes: number[] = [];
+  /** What the learner has decided, landing `lateTicks` later: a tap, in the order it was made. */
+  const queue: { at: number; code: string }[] = [];
+  const lateTicks = Math.round(((reactMs + phaseMs) / 1000) * 60);
+  const pollTicks = Math.max(1, Math.round((pollMs / 1000) * 60));
+  let nextPoll = 0;
+  let seen = '';
+  for (let t = 0; t < 2400 && !(s.phase === 'done' || s.disqualified); t += 1) {
+    if (t >= nextPoll) {
+      nextPoll = t + pollTicks;
+      ex.mark(done, s, ruleset);
+      const next = ex.steps.find((step) => !done.has(step.id));
+      const id = next?.id ?? '';
+      // The checklist's last step is the signal off "ở 05 m sau vạch": it is not a thing to do yet
+      // while the car is still short of that mark, so the learner waits for the place it names.
+      const early = id === 'off' && s.frontBumperM < ruleset.course.signal_off_early_m;
+      // The next step is a new instruction: tap its key one reaction later. The same step staying on
+      // screen is not a new press (Q is a toggle).
+      if (id && !early && id !== seen) {
+        seen = id;
+        const code = codeOf[id];
+        if (code) queue.push({ at: t + lateTicks, code });
+      }
+    }
+    const pressed: string[] = [];
+    while (queue.length && queue[0].at <= t) pressed.push(queue.shift()!.code);
+    const r = session.step(driver.step(new Set(), pressed, { speedMps: s.speedMps, engineOn: s.engineOn }));
+    s = r.state;
+    for (const e of r.events) codes.push(e.code);
+  }
+  const out = { finished: s.phase === 'done' && !s.disqualified, disqualified: s.disqualified, score: s.score, bumper: s.frontBumperM, codes };
+  session.dispose();
+  return out;
+}
+
+const ruleset = JSON.parse(readFileSync(new URL('../../../content/rulesets/tt108-2026.json', import.meta.url), 'utf8'));
+
+test('bài 1 on an automatic: the checklist alone takes a 150 / 300 / 400 ms reader across the line with 100', () => {
+  const failures: string[] = [];
+  for (const reactMs of [150, 300, 400]) {
+    for (const phaseMs of [0, 12, 25, 37]) {
+      const r = driveAuto1(reactMs, 50, phaseMs);
+      if (!r.finished || r.score !== 100 || r.codes.length > 0) {
+        failures.push(`react ${reactMs} phase ${phaseMs}: score ${r.score} finished ${r.finished} bumper ${r.bumper.toFixed(2)} codes [${r.codes}]`);
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
 });

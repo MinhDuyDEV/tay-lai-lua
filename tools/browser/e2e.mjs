@@ -24,6 +24,8 @@ const ruleset = JSON.parse(readFileSync(args.get('ruleset') ?? here('../../conte
 // Software GL through ANGLE/SwiftShader: the same path on a headless Linux runner and on a Mac.
 const CHROMIUM_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 const WAIT_MS = 45_000;
+// The automatic sections' learner: the 300 ms the owner's outcome names.
+const AUTO_REACTION_MS = 300;
 // RMS of the analyser, full scale 1.0. The processor's peak is 0.22; anything above this is a signal.
 const AUDIBLE = 0.002;
 
@@ -90,7 +92,7 @@ async function cruiseUntil(page, what, cond, allowed) {
 }
 
 /** One whole run of bài 1 from the keyboard. `belt` false leaves the seat belt unfastened. */
-async function drive(page, { belt, allowed }) {
+async function drive(page, { belt, allowed, automatic = false }) {
   const key = page.keyboard;
 
   // The first key only enters the car (and starts the audio); it must not count as an action.
@@ -119,6 +121,23 @@ async function drive(page, { belt, allowed }) {
 
   await key.press('KeyQ');
   await until(page, 'left signal on', `d.signal === 'left'`, allowed);
+
+  if (automatic) {
+    // The checklist for an automatic: D, P, and the car creeps on its own. No clutch, no gear number,
+    // and the throttle is never needed.
+    await key.press('KeyD');
+    await until(page, 'gear D', `d.gear === '1'`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+    await until(page, 'moving', `Number(d.speed) > 0.5`, allowed);
+    await until(page, 'bumper past 4 m', `Number(d.bumper) >= 4.0`, allowed);
+    // The learner reads the 5 m mark and reacts: the key lands inside the 4–6 m window.
+    await page.waitForTimeout(AUTO_REACTION_MS);
+    await key.press('KeyQ');
+    await until(page, 'left signal off', `d.signal === 'off'`, allowed);
+    await until(page, 'end of the exercise', `d.phase === 'done'`, allowed);
+    return;
+  }
 
   await key.down('Space');
   await until(page, 'clutch pressed down', `Number(d.clutch) > 0.95`, allowed);
@@ -162,11 +181,44 @@ async function anyCue(page, what, allowed) {
  * with the handbrake. Then `finish` either pulls away (handbrake method) or lets the handbrake go with
  * the clutch up and no throttle. Every key waits on the published state.
  */
-async function driveHill(page, { finish, allowed, throttle = false }) {
+async function driveHill(page, { finish, allowed, throttle = false, automatic = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+
+  if (automatic) {
+    // D and P; the car creeps to the foot of the slope by itself. The page's own automatic cues:
+    // 'throttle' for the pulse up the slope, then 'brake' when the bar says the key should land.
+    await key.press('KeyD');
+    await until(page, 'gear D', `d.gear === '1'`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+    await until(page, 'the throttle cue at the foot of the slope', cue('throttle'), allowed);
+    await page.waitForTimeout(AUTO_REACTION_MS);
+    await key.down('ArrowUp');
+    await until(page, 'the pulse to end', `(document.querySelector('.advice')?.dataset.cue ?? '') !== 'throttle'`, allowed);
+    await page.waitForTimeout(AUTO_REACTION_MS);
+    await key.up('ArrowUp');
+    await until(page, 'the brake cue', cue('brake'), allowed);
+    await page.waitForTimeout(AUTO_REACTION_MS);
+    await key.down('ArrowDown');
+    await until(page, 'stopped', `d.phase === 'stopped'`, allowed);
+    if (finish === 'roll-back') {
+      // The learner takes the stop, then lets the brake go and never reaches for the throttle:
+      // nothing holds the car, and the grade rolls it back past the law's 500 mm.
+      await key.up('ArrowDown');
+      await until(page, 'suspended by the rollback', `d.disqualified === 'yes'`, allowed);
+      return;
+    }
+    // The page's launch sentence: the brake lets go and the throttle lands with it.
+    await page.waitForTimeout(AUTO_REACTION_MS);
+    await key.up('ArrowDown');
+    await key.down('ArrowUp');
+    await until(page, 'over the stop line', `d.phase === 'done'`, allowed);
+    await key.up('ArrowUp');
+    return;
+  }
 
   // Before the first tick the snapshot already says clutch 1.00, so wait for ticks that consumed the key.
   const tick = Number((await readStage(page)).tick);
@@ -227,7 +279,7 @@ async function driveHill(page, { finish, allowed, throttle = false }) {
  * than being papered over. `throttle` is the learner who keeps the throttle down: the line must tell
  * them so in words.
  */
-async function driveFigure(page, { allowed, throttle = false }) {
+async function driveFigure(page, { allowed, throttle = false, automatic = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -235,16 +287,24 @@ async function driveFigure(page, { allowed, throttle = false }) {
   await key.press('KeyE');
   await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
 
-  // Set-off exactly as the advice line words it: clutch to the floor, gear 1, handbrake off.
-  const tick = Number((await readStage(page)).tick);
-  await key.down('Space');
-  await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
-  await key.press('Digit1');
-  await until(page, 'gear 1', `d.gear === '1'`, allowed);
-  await key.press('KeyP');
-  await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
-  await key.up('Space');
-  if (throttle) await key.down('ArrowUp');
+  if (automatic) {
+    // The automatic checklist: D, P, the car's own creep.
+    await key.press('KeyD');
+    await until(page, 'gear D', `d.gear === '1'`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+  } else {
+    // Set-off exactly as the advice line words it: clutch to the floor, gear 1, handbrake off.
+    const tick = Number((await readStage(page)).tick);
+    await key.down('Space');
+    await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
+    await key.press('Digit1');
+    await until(page, 'gear 1', `d.gear === '1'`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+    await key.up('Space');
+    if (throttle) await key.down('ArrowUp');
+  }
 
   // Hold the arrow key the line names, and only that one. The learner polls the line, and when it
   // differs from what they last acted on they wait FIGURE_REACTION_MS and then press what *that*
@@ -252,6 +312,8 @@ async function driveFigure(page, { allowed, throttle = false }) {
   // check, and the stricter one: re-reading after the wait would hide a cue that comes too late.
   let heldDir = null;
   let seen = '';
+  // The manual figure is driven at the edge of its spec; the automatic section is the outcome's 300 ms.
+  const reactMs = automatic ? AUTO_REACTION_MS : FIGURE_REACTION_MS;
   const finishAt = Date.now() + WAIT_MS;
   while (Date.now() < finishAt) {
     const d = await readStage(page);
@@ -264,7 +326,7 @@ async function driveFigure(page, { allowed, throttle = false }) {
       seen = name;
       // The advice line's own words, printed once per change: this is what the learner would read.
       console.log(`     at ${Number(d.progress).toFixed(1)} m the line says: ${(await page.$eval('.advice', (el) => el.textContent)).trim()}`);
-      await page.waitForTimeout(FIGURE_REACTION_MS);
+      await page.waitForTimeout(reactMs);
       const dir = name === 'left' ? 'ArrowLeft' : name === 'right' ? 'ArrowRight' : null;
       if (dir !== heldDir) {
         if (heldDir) await key.up(heldDir);
@@ -292,13 +354,15 @@ async function driveFigure(page, { allowed, throttle = false }) {
  *   park   — P once (handbrake); enter — Enter (the finish); data-gear-wanted — 1 or R with the pedal down
  */
 const PARK_REACTION_MS = 300;
-async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'done' || d.disqualified === 'yes'`, maxMs = 240_000 }) {
+async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'done' || d.disqualified === 'yes'`, maxMs = 240_000, automatic = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
   await key.press('KeyE');
   await until(page, 'engine on', `d.engineOn === 'yes'`, allowed);
+  // An automatic's pedal word is the brake alone; a manual's is clutch and brake together.
+  const pedals = (extra = []) => new Set([...extra, ...(automatic ? ['ArrowDown'] : ['Space', 'ArrowDown'])]);
   const held = new Set();
   const hold = async (want) => {
     for (const k of [...held]) if (!want.has(k)) { await key.up(k); held.delete(k); }
@@ -334,7 +398,7 @@ async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'do
     if (pulse === 'counting') {
       if (r.bar === 'now') {
         await page.waitForTimeout(PARK_REACTION_MS);
-        await hold(new Set([...steer, 'Space', 'ArrowDown']));
+        await hold(pedals(steer));
         pulse = 'braking';
         pressedAt = Date.now();
       }
@@ -366,13 +430,15 @@ async function driveParkPage(page, { allowed, until: stopWhen = `d.phase === 'do
       const want = new Set();
       if (r.cue === 'left') want.add('ArrowLeft');
       if (r.cue === 'right') want.add('ArrowRight');
-      if (r.pedal !== 'creep') { want.add('Space'); want.add('ArrowDown'); }
+      if (r.pedal !== 'creep') for (const k of pedals()) want.add(k);
       await hold(want);
       if (r.pedal === 'enter') await key.press('Enter');
     }
     // Repeated each poll: a press the core ignored (clutch not yet down) is asked for again by the same line.
     if (r.pedal === 'park' && Date.now() - lastP > 1500) { await key.press('KeyP'); lastP = Date.now(); }
-    if (r.gear && d.gear !== r.gear && Number(d.clutch) > 0.97) await key.press(r.gear === '1' ? 'Digit1' : 'KeyR');
+    if (r.gear && d.gear !== r.gear && (automatic || Number(d.clutch) > 0.97)) {
+      await key.press(r.gear === '1' ? (automatic ? 'KeyD' : 'Digit1') : 'KeyR');
+    }
     await page.waitForTimeout(50);
   }
   await hold(new Set());
@@ -538,12 +604,19 @@ try {
 //  * bài 11 is crossed with the right signal, which the page's own legend names.
 const ROAD_POLL_MS = 50;
 
-/** Set the car going as the checklist words it: clutch, gear 1, handbrake off, clutch up. */
-async function roadSetOff(page, allowed) {
+/** Set the car going as the checklist words it: clutch, gear 1, handbrake off, clutch up; or D, P. */
+async function roadSetOff(page, allowed, automatic = false) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
+  if (automatic) {
+    await key.press('KeyD');
+    await until(page, 'gear D', `d.gear === '1'`, allowed);
+    await key.press('KeyP');
+    await until(page, 'handbrake released', `d.handbrake === 'no'`, allowed);
+    return;
+  }
   const tick = Number((await readStage(page)).tick);
   await key.down('Space');
   await until(page, 'clutch pressed down', `Number(d.tick) > ${tick} + 5 && Number(d.clutch) > 0.99`, allowed);
@@ -561,7 +634,7 @@ async function roadSetOff(page, allowed) {
  * The learner never touches the throttle: the car idles along at its own creep, which is the speed
  * the aid is built for, and the advice line's "để xe tự bò" is the instruction they followed.
  */
-async function roadStop(page, { allowed, pressAt = null }) {
+async function roadStop(page, { allowed, pressAt = null, automatic = false }) {
   const key = page.keyboard;
   const deadline = Date.now() + WAIT_MS;
   let pressed = false;
@@ -570,9 +643,19 @@ async function roadStop(page, { allowed, pressAt = null }) {
     const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
     if (bad.length) throw new Error(`unexpected penalty ${bad} while approaching: ${JSON.stringify(d)}`);
     if (d.phase === 'stopped' || d.phase === 'done' || d.disqualified === 'yes') break;
-    const gated = pressAt === null ? d.aidKey !== '' && d.aidEtaMs !== '' && Number(d.aidEtaMs) === 0 : Number(d.lineGap) <= pressAt;
+    // The automatic learner is 300 ms behind the page's *word* ("bấm ngay", `data-aid-now`), not
+    // behind the bar's mark; pressing at the mark and then waiting a reaction is double-late.
+    const gated =
+      pressAt === null
+        ? automatic
+          ? d.aidNow === '1'
+          : d.aidKey !== '' && d.aidEtaMs !== '' && Number(d.aidEtaMs) === 0
+        : Number(d.lineGap) <= pressAt;
     if (gated && !pressed) {
-      await key.down('Space');
+      // The automatic section's learner is the 300 ms one: the bar says the key should land now, the
+      // hand takes its reaction, and the converter's push is what the aid's extra lead is for.
+      if (automatic) await page.waitForTimeout(AUTO_REACTION_MS);
+      if (!automatic) await key.down('Space');
       await key.down('ArrowDown');
       pressed = true;
       console.log(`     the aid said now at ${d.aidGapMm} mm (gap ${d.lineGap} m, speed ${d.speed} m/s, zone ${d.zone})`);
@@ -593,16 +676,21 @@ async function roadStop(page, { allowed, pressAt = null }) {
  * by the handbrake: handbrake off and let the pedal up) and from the start of bài 11, which has no
  * stop before its finish line.
  */
-async function roadGo(page, { allowed, cond, signal = false }) {
+async function roadGo(page, { allowed, cond, signal = false, automatic = false }) {
   const key = page.keyboard;
   const now = await readStage(page);
   if (now.handbrake === 'yes') {
     await key.press('KeyP');
     await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
   }
-  if (now.clutch !== '0.00') await key.up('Space');
-  // From a cold start the checklist's own way: clutch, gear 1, handbrake off, clutch up.
-  if (now.gear !== '1') {
+  if (!automatic && now.clutch !== '0.00') await key.up('Space');
+  // From a cold start the checklist's own way: clutch, gear 1, handbrake off, clutch up; or D, P.
+  if (automatic) {
+    if (now.gear !== '1') {
+      await key.press('KeyD');
+      await until(page, 'gear D', `d.gear === '1'`, allowed);
+    }
+  } else if (now.gear !== '1') {
     await key.down('Space');
     await until(page, 'clutch down', `Number(d.clutch) > 0.9`, allowed);
     await key.press('Digit1');
@@ -622,7 +710,7 @@ async function roadGo(page, { allowed, cond, signal = false }) {
   // Stop past the line: clutch and brake. A run the exercise has already ended (bài 11 ends on the
   // tick the car stops past the finish line) needs nothing more, and a handbrake press after that
   // would never be seen by the core.
-  await key.down('Space');
+  if (!automatic) await key.down('Space');
   await key.down('ArrowDown');
   await page
     .waitForFunction(() => {
@@ -758,21 +846,30 @@ const JUNCTION_AID_REACT_MS = 250;
  * `steerOut` is the one exception, and it is not a driver: it holds a wrong wheel on purpose, so the
  * lane-edge failure can be provoked.
  */
-async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false }) {
+async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false, automatic = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
   await until(page, 'enter the car', `d.entered === 'yes'`, allowed);
-  await key.down('Space');
-  await until(page, 'clutch down', `Number(d.clutch) > 0.99`, allowed);
-  // The core ignores a gear key on a tick when the clutch was not already fully down (`ShiftGear`
-  // reads the pedal it saw last tick), so a press landing on the way down does nothing. Press, then
-  // look: retrying is what a learner does when the lever does not go in the first time.
-  for (let i = 0; i < 12 && (await readStage(page)).gear !== '1'; i += 1) {
-    await key.press('Digit1');
-    await page.waitForTimeout(120);
+  if (automatic) {
+    // The automatic checklist: D, then P. No clutch, no gear number.
+    for (let i = 0; i < 12 && (await readStage(page)).gear !== '1'; i += 1) {
+      await key.press('KeyD');
+      await page.waitForTimeout(120);
+    }
+    await until(page, 'gear D', `d.gear === '1'`, allowed);
+  } else {
+    await key.down('Space');
+    await until(page, 'clutch down', `Number(d.clutch) > 0.99`, allowed);
+    // The core ignores a gear key on a tick when the clutch was not already fully down (`ShiftGear`
+    // reads the pedal it saw last tick), so a press landing on the way down does nothing. Press, then
+    // look: retrying is what a learner does when the lever does not go in the first time.
+    for (let i = 0; i < 12 && (await readStage(page)).gear !== '1'; i += 1) {
+      await key.press('Digit1');
+      await page.waitForTimeout(120);
+    }
+    await until(page, 'gear 1', `d.gear === '1'`, allowed);
   }
-  await until(page, 'gear 1', `d.gear === '1'`, allowed);
   await key.press('KeyP');
   await until(page, 'handbrake off', `d.handbrake === 'no'`, allowed);
   await key.up('Space');
@@ -784,6 +881,10 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
   let seen = '';
   /** The line acts after REACT_MS, as a person reading it does. */
   const REACT_MS = JUNCTION_REACT_MS;
+  // The bar's own countdown: the manual section's measured 250 ms band, and the 300 ms line the
+  // automatic's sentences are read at (its slower car builds less speed past the bar, so the same
+  // lead is a wider band here).
+  const aidReact = automatic ? AUTO_REACTION_MS : JUNCTION_AID_REACT_MS;
   const pending = [];
   const later = (fn, reactMs = REACT_MS) => pending.push({ at: Date.now() + reactMs, fn });
 
@@ -803,9 +904,13 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
     // The aid is the one thing that is not a sentence: the bar's own countdown, which the line tells
     // the learner to follow ("phanh khi thanh đếm ngược báo").
     if (pressAid && !braked && d.aidNow === '1') {
-      later(async () => { await up('ArrowUp'); await down('Space'); await down('ArrowDown'); }, JUNCTION_AID_REACT_MS);
+      later(async () => {
+        await up('ArrowUp');
+        if (!automatic) await down('Space');
+        await down('ArrowDown');
+      }, aidReact);
       braked = true;
-      console.log(`     the bar said now at ${d.aidGapMm} mm (light ${d.light}, gap ${d.lineGap} m)`);
+      console.log(`     the bar said now at ${d.aidGapMm} mm (light ${d.light}, gap ${d.lineGap} m, speed ${d.speed} m/s)`);
     }
 
     // Everything else is the sentence. Each branch is one of the page's own instructions.
@@ -839,7 +944,9 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
   for (const { fn } of pending.splice(0)) void fn;
   // A run that provokes the lane edge is steered off the line on purpose and may be suspended before
   // it reaches the stop line at all, so it has no arrival colour to check.
-  if (!steerOut && met !== arrive) throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival`);
+  if (!steerOut && met !== arrive) {
+    throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival\nstate: ${JSON.stringify(await readStage(page))}`);
+  }
   await until(page, 'end of the junction', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
   const end = await readStage(page);
   return { ...end, met };
@@ -916,7 +1023,7 @@ let junctionRed = null;
 // 30 km/h" but misses its "bấm 2", so the car runs the first zone in first gear at a speed the sentence
 // named — wrong gear, right speed, which is SH.SO.SAI_SO and not SAI_CA_HAI. 'none' follows the words.
 const GEAR_REACTION_MS = 300;
-async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) {
+async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, automatic = false }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -931,9 +1038,15 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) 
       const el = document.querySelector('.advice');
       return { cue: el.dataset.cue ?? '', text: el.textContent ?? '' };
     });
-  // The keys a cue word asks for: the page's own vocabulary, read as words a learner reads.
+  // The keys a cue word asks for: the page's own vocabulary, read as words a learner reads. An
+  // automatic's `ready` asks for D (a tap, below), and the box shifts itself, so no word asks for a
+  // gear number and no word asks for a clutch.
   const keysOf = (cue) =>
-    cue === 'runup' || cue === 'pull' ? ['ArrowUp'] : cue === 'brake' ? ['ArrowDown'] : cue === 'ready' || cue === 'shift2' || cue === 'shift1' ? ['Space'] : [];
+    automatic
+      ? cue === 'runup' || cue === 'pull' ? ['ArrowUp'] : cue === 'brake' ? ['ArrowDown'] : []
+      : cue === 'runup' || cue === 'pull' ? ['ArrowUp'] : cue === 'brake' ? ['ArrowDown'] : cue === 'ready' || cue === 'shift2' || cue === 'shift1' ? ['Space'] : [];
+  /** Every sentence the learner read, for the automatic's "no stall words" check. */
+  const texts = [];
   let seen = '';
   let lastTap = new Map();
   const end = Date.now() + maxMs;
@@ -944,7 +1057,7 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) 
     if (d.phase === 'done' || d.disqualified === 'yes') break;
     const r = await read();
     const wantGear = r.cue === 'ready' || r.cue === 'shift1' ? 1 : r.cue === 'shift2' ? 2 : 0;
-    const tap = wantGear === 1 ? 'Digit1' : wantGear === 2 ? 'Digit2' : null;
+    const tap = automatic ? (wantGear === 1 ? 'KeyD' : null) : wantGear === 1 ? 'Digit1' : wantGear === 2 ? 'Digit2' : null;
     // The mistake: the up-shift's gear word is read but its "bấm 2" is missed, so the car goes through
     // the first zone in first gear. The throttle is held to a speed just above the judged 24 and no
     // further — first gear's own 4 000 rpm line is 31 km/h, and a learner who did read "trên 24 km/h"
@@ -963,12 +1076,13 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) 
     const asked = r.cue;
     if (asked !== seen) {
       seen = asked;
+      texts.push(r.text);
       console.log(`     the line says [${asked}] at ${d.bumper} m: ${r.text.trim().slice(0, 120)}`);
       await page.waitForTimeout(GEAR_REACTION_MS);
-      await hold(new Set(keysOf(asked)));
+      await hold(new Set(automatic && skip === 'throttle' ? [] : keysOf(asked)));
     }
     // The gear and the handbrake are taps, and a tap that did not take is made again one reaction on.
-    if (tap && wantGear && d.gear !== String(wantGear) && Number(d.clutch) > 0.95 && Date.now() - (lastTap.get(tap) ?? 0) > GEAR_REACTION_MS + 300) {
+    if (tap && wantGear && d.gear !== String(wantGear) && (automatic || Number(d.clutch) > 0.95) && Date.now() - (lastTap.get(tap) ?? 0) > GEAR_REACTION_MS + 300) {
       lastTap.set(tap, Date.now());
       await page.waitForTimeout(GEAR_REACTION_MS);
       await key.press(tap);
@@ -982,7 +1096,7 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) 
   }
   await hold(new Set());
   await until(page, 'the run to end', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
-  return readStage(page);
+  return { ...(await readStage(page)), texts };
 }
 
 {
@@ -1144,6 +1258,169 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000 }) 
         await page.close();
       });
     }
+  }
+
+  // ---- số tự động: the owner's journey, all 11 bài, screen only, 300 ms late --------------------
+  //
+  // Every page is opened with `?so=tu-dong`, so the switch, `data-so` and `exerciseFor(lesson, true)`
+  // are the page's own; #stage must say `data-so="tu-dong"` and the trace header's exercise id must be
+  // the lesson, as the manual sections check. The learner is the same one the manual sections use,
+  // with the automatic set-off (D, P, no clutch, no gear number) and no throttle where the car creeps.
+  // The two automatic-only faults come after the clean grid: bài 3's rollback and bài 10's speed row.
+  {
+    const autoStage = async (page, lesson) => {
+      const d = await readStage(page);
+      if (d.so !== 'tu-dong') throw new Error(`data-so is "${d.so}", not "tu-dong"`);
+      if (d.exercise !== String(lesson)) throw new Error(`the page says exercise ${d.exercise}, not ${lesson}`);
+      if (d.score !== '100' || d.penalties !== '') throw new Error(`the page starts at score ${d.score} with [${d.penalties}]`);
+      return d;
+    };
+    /** One clean automatic journey: `run(page)` drives it; then the page and the trace must agree. */
+    const autoOne = async (lesson, run, { path = `/thi/${lesson}?so=tu-dong`, after } = {}) => {
+      const { page, problems } = await fresh(path);
+      await autoStage(page, lesson);
+      await run(page);
+      const d = await readStage(page);
+      if (d.phase !== 'done' || d.disqualified !== 'no' || d.score !== '100' || d.penalties !== '') {
+        throw new Error(`not a clean automatic finish: ${JSON.stringify(d)}`);
+      }
+      const trace = await page.evaluate(() => window.__thi.trace());
+      const exerciseId = Buffer.from(trace, 'base64')[7];
+      // Bài 1's seed word carries exercise id 0 (the core's "xuất phát" slot is 0, the page's lesson
+      // is 1); every other lesson's byte is its own number.
+      const wantId = lesson === 1 ? 0 : lesson;
+      if (exerciseId !== wantId) throw new Error(`the trace header carries exercise id ${exerciseId}, not ${wantId}`);
+      console.log(`     số tự động bài ${lesson}: score ${d.score}, exercise id ${exerciseId}`);
+      if (after) await after(page, d);
+      if (problems.length) throw new Error(problems.join('\n'));
+      await page.close();
+    };
+
+    await check('số tự động bài 1: the checklist alone, 300 ms, score 100', () =>
+      autoOne(1, (page) => drive(page, { belt: true, allowed: [], automatic: true }), { path: '/thi?so=tu-dong' }));
+
+    for (const lesson of [2, 9]) {
+      await check(`số tự động bài ${lesson}: stop inside A on the countdown, go on past the line, score 100`, () =>
+        autoOne(lesson, async (page) => {
+          await roadSetOff(page, [], true);
+          const atStop = await roadStop(page, { allowed: [], automatic: true });
+          if (Number(atStop.stopA) < 0 || Number(atStop.stopA) > ruleset.road.max_a_m) {
+            throw new Error(`A ${atStop.stopA} m is outside the window`);
+          }
+          console.log(`     số tự động bài ${lesson}: A ${atStop.stopA} m of ${ruleset.road.max_a_m} m`);
+          // The exercise ends at the stop line + `end_past_line_m`; the page stops stepping there, so
+          // the learner watches the phase itself rather than a distance it will never reach.
+          await roadGo(page, { allowed: [], cond: `d.phase === 'done'`, automatic: true });
+        }));
+    }
+
+    await check('số tự động bài 3: pulse and brake from the page cues, launch with the foot brake, score 100', () =>
+      autoOne(3, async (page) => {
+        await driveHill(page, { finish: 'pull-away', allowed: [], automatic: true });
+        const d = await readStage(page);
+        if (Number(d.stopA) < 0 || Number(d.stopA) > ruleset.hill.max_a_m) throw new Error(`A ${d.stopA} m is outside the window`);
+        if (Number(d.rollback) > ruleset.hill.max_rollback_m) throw new Error(`rolled back ${d.rollback} m`);
+        console.log(`     số tự động bài 3: A ${d.stopA} m, rollback ${d.rollback} m`);
+      }));
+
+    for (const lesson of [4, 6]) {
+      await check(`số tự động bài ${lesson}: follow the page cue 300 ms late, no line touched, score 100`, () =>
+        autoOne(lesson, async (page) => {
+          await driveFigure(page, { allowed: [], automatic: true });
+          const d = await readStage(page);
+          if (d.contact !== '0000') throw new Error(`a wheel finished on contact ${d.contact}`);
+        }));
+    }
+
+    await check('số tự động bài 5: red arrival, stop inside A, wait, signal and turn, score 100', () =>
+      autoOne(5, (page) => driveJunction(page, { allowed: [], arrive: 'red', automatic: true }), {
+        path: `/thi/5?seed=${JUNCTION_RED_SEED}&so=tu-dong`,
+      }));
+
+    for (const lesson of [7, 8]) {
+      await check(`số tự động bài ${lesson}: the advice line alone brings the car into the bay, score 100`, () =>
+        autoOne(lesson, (page) => driveParkPage(page, { allowed: [], automatic: true })));
+    }
+
+    {
+      // The ruleset's own assumption, which the page must show word for word: both texts disagree and
+      // the learner is told which one this page follows.
+      const assumption = ruleset.assumptions.find((a) => a.field === 'gear_automatic');
+      if (!assumption) throw new Error('the ruleset has no assumptions.gear_automatic');
+      await check('số tự động bài 10: the advice line alone scores 100; the speed-only note quotes both texts; no stall words', () =>
+        autoOne(10, async (page) => {
+          const run = await driveGearPage(page, { allowed: [], automatic: true });
+          const d = await readStage(page);
+          if (d.signsPassed !== '3') throw new Error(`${d.signsPassed} of the three signs passed`);
+          const note = await page.$eval('[data-note="gear-automatic"]', (el) => el.textContent);
+          if (!note.includes(assumption.value) || !note.includes(assumption.why)) {
+            throw new Error('the gear-automatic note is not the ruleset\u2019s own two texts');
+          }
+          // The stall words are not offered: no clutch pedal, no clutch or gear-number key, and no
+          // sentence in the whole run names a clutch or a stall.
+          const clutchPedals = await page.$$eval('[data-pedal="clutch"]', (els) => els.length);
+          if (clutchPedals) throw new Error('the automatic page draws a clutch pedal');
+          const keys = await page.$$eval('.hud-keys li .key', (els) => els.map((e) => e.textContent));
+          if (!keys.includes('D, N, R')) throw new Error(`the legend does not name the selector: ${keys}`);
+          if (keys.some((k) => k.includes('Space') || k.includes('Côn') || k.includes('1–5'))) {
+            throw new Error(`the legend offers a clutch or a gear number: ${keys}`);
+          }
+          const stall = run.texts.filter((t) => /côn|chết máy/i.test(t));
+          if (stall.length) throw new Error(`the automatic advice offered a clutch or a stall: ${stall[0]}`);
+          console.log(`     số tự động bài 10: note quotes both texts, ${run.texts.length} sentences, none about a clutch`);
+        }));
+    }
+
+    // The automatic's own rollback fault: stopped inside A, the foot brake lets go and the learner
+    // never reaches for the throttle. Nothing holds the car; the grade rolls it back past 500 mm.
+    await check('số tự động bài 3 fault: brake let go with nothing holding the car → SH.03.TUT_DOC, đình chỉ, quote shown', async () => {
+      const { page, problems } = await fresh('/thi/3?so=tu-dong');
+      await autoStage(page, 3);
+      await driveHill(page, { finish: 'roll-back', allowed: ['SH.03.TUT_DOC'], automatic: true });
+      const d = await readStage(page);
+      if (!d.penalties.split(' ').includes('SH.03.TUT_DOC')) throw new Error(`SH.03.TUT_DOC did not fire: ${JSON.stringify(d)}`);
+      if (d.disqualified !== 'yes') throw new Error('the rollback did not suspend the run');
+      const rule = ruleset.rules.find((r) => r.id === 'SH.03.TUT_DOC');
+      const shown = await page.$eval('[data-penalty="SH.03.TUT_DOC"] blockquote', (e) => e.textContent);
+      if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+      const points = await page.$eval('[data-penalty="SH.03.TUT_DOC"] .points', (e) => e.textContent);
+      if (points !== 'Đình chỉ') throw new Error(`the HUD says "${points}", not "Đình chỉ"`);
+      console.log(`     số tự động bài 3 fault: ${d.penalties}, rollback ${d.rollback} m`);
+      if (problems.length) throw new Error(problems.join('\n'));
+      await page.close();
+    });
+
+    // The automatic's own rule on bài 10: the box shifts itself, so only the speed is judged. A learner
+    // who never takes the throttle creeps the whole road: SAI_TOC_DO once at sign 2, and neither of the
+    // gear rows, because there is no gear for the learner to be wrong in.
+    await check('số tự động bài 10 fault: no throttle → SH.SO.SAI_TOC_DO −5, and no SAI_SO / SAI_CA_HAI', async () => {
+      const id = 'SH.SO.SAI_TOC_DO';
+      const { page, problems } = await fresh('/thi/10?so=tu-dong');
+      await autoStage(page, 10);
+      const d = await driveGearPage(page, { allowed: [id], skip: 'throttle', automatic: true });
+      const fired = d.penalties.split(' ').filter(Boolean);
+      if (fired.length !== 1 || fired[0] !== id) throw new Error(`expected only ${id}, charged [${fired}]`);
+      if (d.lastPenalty !== id) throw new Error(`data-last-penalty is "${d.lastPenalty}", not ${id}`);
+      if (d.lastPenaltyPoints !== '5') throw new Error(`data-last-penalty-points is "${d.lastPenaltyPoints}", not 5`);
+      if (d.score !== '95') throw new Error(`score ${d.score}, expected 95`);
+      const rule = ruleset.rules.find((r) => r.id === id);
+      if (d.lastPenaltyQuote !== rule.source.quote) throw new Error('data-last-penalty-quote is not the ruleset\u2019s quote');
+      const shown = await page.$eval(`[data-penalty="${id}"] blockquote`, (e) => e.textContent);
+      if (shown !== rule.source.quote) throw new Error(`quote shown "${shown}" is not the ruleset's "${rule.source.quote}"`);
+      const points = await page.$eval(`[data-penalty="${id}"] .points`, (e) => e.textContent);
+      if (points !== '−5 điểm') throw new Error(`the HUD says "${points}", not "−5 điểm"`);
+      console.log(`     số tự động bài 10 fault: ${id} at sign 2, ${points}, score ${d.score}`);
+      if (problems.length) throw new Error(problems.join('\n'));
+      await page.close();
+    });
+
+    await check('số tự động bài 11: right signal across the finish line, then a stop, score 100', () =>
+      autoOne(11, async (page) => {
+        await roadSetOff(page, [], true);
+        await roadGo(page, { allowed: [], cond: `Number(d.bumper) > 21.3`, signal: true, automatic: true });
+        const d = await readStage(page);
+        if (d.zone !== 'past-finish') throw new Error(`zone is "${d.zone}" past the finish line`);
+      }));
   }
 
 } finally {

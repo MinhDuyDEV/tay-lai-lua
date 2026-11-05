@@ -94,21 +94,29 @@ export function pageKeys(cue: GearCue): string[] {
 }
 
 /** The page under test: the exercise's own two functions, plus the key groups its words ask for. */
-export function pageShow(): ShowPage {
-  const ex = exerciseFor(LESSON as 10);
+export function pageShow(automatic = false): ShowPage {
+  const ex = exerciseFor(LESSON as 10, automatic);
   return { advice: (s, rs) => ex.advice(s, rs, []), cue: (s, rs) => ex.cue(s, rs, []) };
 }
+
+/**
+ * An automatic's words ask for the selector and the two pedals only: `ready` is D (and P, a tap the
+ * caller makes), and the box shifts itself, so no cue names a gear to tap and nothing names a clutch.
+ */
+const autoKeys = (cue: GearCue): string[] =>
+  cue === 'runup' || cue === 'pull' ? ['ArrowUp'] : cue === 'brake' ? ['ArrowDown'] : [];
 
 export function driveGear(
   reactMs: number,
   phaseMs: number,
   page: ShowPage = pageShow(),
   maxS = 150,
+  automatic = false,
 ): Outcome {
   const show = page;
-  const keysOf = page.keys ?? pageKeys;
-  const session: Session = openSession(bytes(), seedWord(LESSON));
-  const driver = createDriver();
+  const keysOf = page.keys ?? (automatic ? autoKeys : pageKeys);
+  const session: Session = openSession(bytes(), seedWord(LESSON, 1n, automatic));
+  const driver = createDriver({ automatic });
   let s: SimState = session.state;
   const held = new Set<string>();
   const owed: string[] = [];
@@ -128,7 +136,7 @@ export function driveGear(
   /** When the learner's last tap of each key landed: a retry has to be a full re-read later. */
   const tappedAt = new Map<string, number>();
   const late = reactMs;
-  const tapOf = (g: number) => (g === 1 ? 'Digit1' : 'Digit2');
+  const tapOf = (g: number) => (automatic ? 'KeyD' : g === 1 ? 'Digit1' : 'Digit2');
   const retryMs = POLL_MS + late;
   /** The signs, from the core's own ruleset, so the message reads the axis the judge uses. */
   const gear = ruleset.gear!;
@@ -158,7 +166,7 @@ export function driveGear(
         // Same word still on screen: the learner re-presses only what did not take — the clutch was not
         // down yet, or the lever stayed where it was — and not before a full re-read has gone by.
         const want = gearWanted(cue);
-        if (want && s.gear !== want && s.clutch >= 0.96 && now - (tappedAt.get(tapOf(want)) ?? -Infinity) > retryMs) {
+        if (want && s.gear !== want && (automatic || s.clutch >= 0.96) && now - (tappedAt.get(tapOf(want)) ?? -Infinity) > retryMs) {
           decideTap(tapOf(want));
         }
         if (cue === 'ready' && s.handbrake && now - (tappedAt.get('KeyP') ?? -Infinity) > retryMs) decideTap('KeyP');
