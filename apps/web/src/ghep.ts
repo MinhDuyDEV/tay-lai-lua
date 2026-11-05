@@ -750,6 +750,7 @@ export function adviceGhep(
   ruleset: Ruleset,
   lesson: GhepLesson,
   reactionS = READ_S,
+  automatic = false,
 ): string {
   const name = lesson === 7 ? 'bài 7' : 'bài 8';
   const bayW = yard.bay[2] - yard.bay[0];
@@ -758,8 +759,12 @@ export function adviceGhep(
   if (s.finishSignal || s.phase === 'done') {
     return `Đã có tín hiệu báo kết thúc: thân xe nằm trọn trong ô ${name}. Bấm Enter để kết thúc, Esc để làm lại.`;
   }
-  if (!s.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
-  if (s.gear === 0) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số, rồi bấm P nhả phanh tay.';
+  if (!s.engineOn) return automatic ? 'Máy đã tắt. Bấm E để nổ lại.' : 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (s.gear === 0) {
+    return automatic
+      ? 'Bấm D để vào số tiến, rồi bấm P nhả phanh tay.'
+      : 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số, rồi bấm P nhả phanh tay.';
+  }
   if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả.';
 
   const cue = cueGhep(s, yard, ruleset, reactionS);
@@ -781,12 +786,20 @@ export function adviceGhep(
     const inBay = hullInsideBay({ x: s.carX, y: s.carY, h: s.heading }, yard, ruleset);
     // A timed pulse has its own sentence (key and time); the distance is on the card beside it.
     if (!inBay && outside > 0 && outside < 1.2 && cue.holdMs === 0) {
-      return `Còn ${m(outside)} thân xe ngoài ô: lùi thêm thật chậm (R, giữ côn ở điểm bắt) cho hết thân xe vào, rồi giữ phanh ↓.`;
+      return automatic
+        ? `Còn ${m(outside)} thân xe ngoài ô: lùi thêm thật chậm (R) cho hết thân xe vào, rồi giữ phanh ↓.`
+        : `Còn ${m(outside)} thân xe ngoài ô: lùi thêm thật chậm (R, giữ côn ở điểm bắt) cho hết thân xe vào, rồi giữ phanh ↓.`;
     }
   }
-  if (thinking) return 'Giữ phanh ↓ và côn: đang tính đường lùi từ chỗ xe đứng.';
+  if (thinking) {
+    return automatic
+      ? 'Giữ phanh ↓: đang tính đường lùi từ chỗ xe đứng.'
+      : 'Giữ phanh ↓ và côn: đang tính đường lùi từ chỗ xe đứng.';
+  }
   if (!plan || !leg) {
-    return `Chưa tìm được đường từ chỗ này: giữ phanh ↓ và côn, bấm Esc để làm lại. ${name} rộng ${m(bayW)}, sâu ${m(bayD)}.`;
+    return automatic
+      ? `Chưa tìm được đường từ chỗ này: giữ phanh ↓, bấm Esc để làm lại. ${name} rộng ${m(bayW)}, sâu ${m(bayD)}.`
+      : `Chưa tìm được đường từ chỗ này: giữ phanh ↓ và côn, bấm Esc để làm lại. ${name} rộng ${m(bayW)}, sâu ${m(bayD)}.`;
   }
 
   // One sentence per step of the leg, each opening with the key it asks for, so the line and `data-pedal`
@@ -795,22 +808,34 @@ export function adviceGhep(
   const arrow = cue.steer === 'left' ? '←' : cue.steer === 'right' ? '→' : null;
   const lock = arrow ? `giữ ${arrow} (đánh hết lái)` : 'thẳng lái (không bấm ← →)';
   if (cue.pedal === 'clutch') {
-    return `Đạp côn hết cỡ (giữ Space) và giữ phanh ↓, bấm ${gearWord(leg.dir)} để vào số ${way}.`;
+    return automatic
+      ? `Giữ phanh ↓ cho xe đứng yên, bấm ${gearWord(leg.dir)} để đổi chiều ${way}.`
+      : `Đạp côn hết cỡ (giữ Space) và giữ phanh ↓, bấm ${gearWord(leg.dir)} để vào số ${way}.`;
   }
   if (cue.pedal === 'wheel') {
-    return `Xe còn đứng yên: ${lock} cho vô lăng vào đúng góc, giữ côn Space và phanh ↓ đến khi hết lái.`;
+    return automatic
+      ? `Xe còn đứng yên: ${lock} cho vô lăng vào đúng góc, giữ phanh ↓ đến khi hết lái.`
+      : `Xe còn đứng yên: ${lock} cho vô lăng vào đúng góc, giữ côn Space và phanh ↓ đến khi hết lái.`;
   }
   if (cue.pedal === 'brake') {
-    return 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
+    return automatic
+      ? 'Phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.'
+      : 'Đạp côn (Space) và phanh ↓ ngay cho xe dừng hẳn; đợi lời nhắc kế tiếp.';
   }
   if (timedReachM(plan!, leg!) !== null && Math.abs(s.speedMps) >= 0.05) {
-    return 'Đang đi: khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.';
+    return automatic
+      ? 'Đang đi: khi thanh báo «Phanh ↓ ngay» thì phanh ↓ cho xe dừng hẳn.'
+      : 'Đang đi: khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.';
   }
   if (cue.holdMs > 0) {
     const sec = (ms: number) => (ms / 1000).toFixed(1).replace('.', ',');
-    return `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way}; xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả, và khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
+    return automatic
+      ? `Nhả phanh ↓, ${lock}, ${way}; xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả, và khi thanh báo «Phanh ↓ ngay» thì phanh ↓ dừng hẳn.`
+      : `Nhả cả côn và phanh ↓ cùng lúc, ${lock}, ${way}; xe đi ${sec(cue.holdMs)} giây kể từ lúc nhả, và khi thanh báo «Đạp côn + phanh ↓ ngay» thì đạp côn (Space) và phanh ↓ dừng hẳn.`;
   }
-  return `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
+  return automatic
+    ? `Nhả phanh ↓ thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi phanh ↓ dừng hẳn.`
+    : `Nhả phanh ↓ rồi nhả côn thật chậm, ${lock}, ${way} khoảng ${m(leg.len)} rồi đạp côn và phanh ↓ dừng hẳn.`;
 }
 
 

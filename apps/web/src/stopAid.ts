@@ -36,10 +36,18 @@ export interface StopRoad {
   /** Rise over run of the road `toLineM` metres short of the stop line. */
   grade(toLineM: number): number;
   key: StopKey;
+  /**
+   * Automatic only: the ruleset's torque-converter speed (`automatic.converter_rpm`), rpm. It is here
+   * because an automatic's drive is *not* cut when the learner brakes, and that is the one thing the
+   * stop below would otherwise get wrong: with the converter the car keeps pushing (measured 810 N at
+   * the pedal's own stop point, from the ruleset's capacity and stiffness), so the same press lands
+   * ~50 mm later than a clutch-out stop. A road with no converter (every manual page) is unchanged.
+   */
+  converterRpm?: number;
 }
 
 /** A level road: every exercise whose stop line is on the flat uses this. */
-export const flatRoad = (key: StopKey): StopRoad => ({ grade: () => 0, key });
+export const flatRoad = (key: StopKey, converterRpm?: number): StopRoad => ({ grade: () => 0, key, converterRpm });
 
 /** What the page publishes, and what the HUD's bar draws. */
 export interface StopAid {
@@ -156,6 +164,8 @@ export function stopTravel(
   key: StopKey,
   /** The gap to the line where the stop begins, for a road whose grade varies along it. */
   fromGapM = 0,
+  /** Newtons still pushing the car forward while it stops: an automatic's converter, 0 with the clutch out. */
+  driveN = 0,
 ): { travelM: number; timeS: number } {
   /** The grade the car is on after `m` metres of the stop. A road that varies is walked, not assumed. */
   const gradeAt = (m: number) => road.grade(fromGapM - m);
@@ -174,7 +184,8 @@ export function stopTravel(
   timeS += carried;
   for (let i = 0; i < MAX_RUN_S / DT && v > 0; i += 1) {
     if (key === 'brake') brake = Math.min(1, brake + FEEL.brake.rise * DT);
-    const decel = roadDecel(ruleset, gradeAt(travelM), v) + (brakeMaxN * brake) / mass;
+    // The drive still pushes while the brake is coming on: a converter, or nothing with the clutch down.
+    const decel = roadDecel(ruleset, gradeAt(travelM), v) + (brakeMaxN * brake - driveN) / mass;
     // The order the core integrates in: the new speed, then the road covered at it.
     v = Math.max(0, v - decel * DT);
     travelM += v * DT;
@@ -189,11 +200,25 @@ export function stopTravel(
  * because a press early stops the car short of the line and a press late carries it over, so the
  * gap a press must happen at is monotonic in time.
  */
+/**
+ * What the torque converter still pushes with, newtons, from the ruleset's own model (`automatic.rs`):
+ * engagement is the square of the engine speed over `converter_rpm`, the manual car's clutch torque
+ * carries it, and first gear turns it into a force at the contact patch. Zero without a converter.
+ */
+function converterDriveN(ruleset: Ruleset, converterRpm: number | undefined, rpm: number, v: number): number {
+  if (converterRpm === undefined) return 0;
+  const engagement = Math.min(1, (Math.max(0, rpm) / converterRpm) ** 2);
+  // The core hands the manual car `1 - engagement` as its clutch pedal: fully open is no drive at all.
+  return driveForce(ruleset, clutchTorque(ruleset, rpm, Math.abs(v), 1 - engagement));
+}
+
 function pressPoint(
   ruleset: Ruleset,
   now: { v: number; rpm: number; clutch: number; throttle: number },
   road: StopRoad,
   gapM: number,
+  /** Newtons the driveline still pushes with while the key's stop happens (`converterDriveN`); 0 otherwise. */
+  stopDriveN = 0,
 ): { etaS: number; gapM: number } | null {
   // Walk the free run forward — nothing more pressed, feet where they are — to the moment where
   // `gap - what a stop still costs` reaches the mark. That gap is monotonic in time (later means less
@@ -233,11 +258,11 @@ function pressPoint(
     t += DT;
 
     // Where would the car stop if the key landed at this moment?
-    const landsAt = gap - stopTravel(ruleset, v, road, road.key, gap).travelM;
+    const landsAt = gap - stopTravel(ruleset, v, road, road.key, gap, stopDriveN).travelM;
     if (landsAt <= A_MID_M) {
       // Between the previous sample and this one. Interpolate on the landing point, which is smooth.
       const prevLands =
-        prev.gap - stopTravel(ruleset, prev.v, road, road.key, prev.gap).travelM;
+        prev.gap - stopTravel(ruleset, prev.v, road, road.key, prev.gap, stopDriveN).travelM;
       const span = landsAt - prevLands;
       const f = span === 0 ? 1 : Math.min(1, Math.max(0, (A_MID_M - prevLands) / span));
       return { etaS: prev.t + (t - prev.t) * f, gapM: prev.gap + (gap - prev.gap) * f };
@@ -247,7 +272,7 @@ function pressPoint(
     if (gap <= 0) return null;
     // Already past the mark: the key is due now, and stays due until the car has stopped. A learner
     // polling every 16 ms would otherwise be able to step over the one tick where it turns 0.
-    if (gap - stopTravel(ruleset, v, road, road.key, gap).travelM < A_MID_M) {
+    if (gap - stopTravel(ruleset, v, road, road.key, gap, stopDriveN).travelM < A_MID_M) {
       return { etaS: 0, gapM: gap };
     }
   }
@@ -282,7 +307,8 @@ export function stopAid(state: SimState, ruleset: Ruleset, road: StopRoad): Stop
   }
   // On the brake road the page's key is "Côn + phanh": a brake in gear stalls the engine, so the clutch
   // goes down with it, and the stop is timed from that press whether or not the clutch is already down.
-  const point = pressPoint(ruleset, { v, rpm: state.rpm, clutch: state.clutch, throttle: state.throttle }, road, gapM);
+  const driveN = converterDriveN(ruleset, road.converterRpm, state.rpm, v);
+  const point = pressPoint(ruleset, { v, rpm: state.rpm, clutch: state.clutch, throttle: state.throttle }, road, gapM, driveN);
   if (!point) return null;
   const etaMs = Math.max(0, Math.round(point.etaS * 1000));
   if (etaMs - LEAD_MS > MAX_ETA_S * 1000) return null;

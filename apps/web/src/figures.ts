@@ -163,12 +163,26 @@ const BEND_MIN_PER_M = 0.08;
  * comes from `cueFigure`; the speed and the "straighten now" come from the snapshot's own numbers, so
  * a learner reading only this line is told the key, the moment to hold and the moment to let go.
  */
-export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, figure: Figure): string {
+export function adviceFigure(
+  s: SimState,
+  centre: Centreline,
+  ruleset: Ruleset,
+  figure: Figure,
+  automatic = false,
+): string {
   const name = figure === 4 ? 'bài 4' : 'bài 6';
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (s.phase === 'done') return 'Đã qua vạch kết thúc. Bấm Esc để làm lại.';
-  if (s.gear !== 1) return 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
-  if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi cứ để côn tự bắt.';
+  if (automatic ? s.gear <= 0 : s.gear !== 1) {
+    return automatic
+      ? 'Cần số đang ở N. Bấm D để xe đi tới.'
+      : 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
+  }
+  if (s.handbrake) {
+    return automatic
+      ? 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, xe sẽ tự bò.'
+      : 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, rồi cứ để côn tự bắt.';
+  }
 
   const pace = paceFigure(ruleset);
   const kmh = (v: number) => (v * 3.6).toFixed(0);
@@ -183,7 +197,11 @@ export function adviceFigure(s: SimState, centre: Centreline, ruleset: Ruleset, 
   if (s.speedMps > pace + 0.15) {
     return `Quá nhanh cho ${name} (${kmh(s.speedMps)} km/h): nhả ga ↑ ra, đừng ga nữa — cứ để xe tự bò khoảng ${kmh(pace)} km/h là đủ.`;
   }
-  if (s.clockS === 0 && s.progressM < 1) return 'Nhả phanh tay P, vào số 1 rồi cứ để xe tự bò qua vạch, đừng ga.';
+  if (s.clockS === 0 && s.progressM < 1) {
+    return automatic
+      ? 'Để xe tự bò qua vạch vào hình, đừng ga.'
+      : 'Nhả phanh tay P, vào số 1 rồi cứ để xe tự bò qua vạch, đừng ga.';
+  }
 
   const cue = cueFigure(s, centre, ruleset);
   const side = s.lateralM;

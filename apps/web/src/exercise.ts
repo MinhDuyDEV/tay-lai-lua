@@ -144,7 +144,7 @@ const EXERCISES: Record<Lesson, Build> = {
     seed: seedWord(4, 1n, automatic),
     steps: automatic ? FIGURE_STEPS_AUTO : FIGURE_STEPS,
     mark: (done, state) => markFigure(done, state, automatic),
-    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 4),
+    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 4, automatic),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(4),
@@ -159,7 +159,7 @@ const EXERCISES: Record<Lesson, Build> = {
     seed: seedWord(6, 1n, automatic),
     steps: automatic ? FIGURE_STEPS_AUTO : FIGURE_STEPS,
     mark: (done, state) => markFigure(done, state, automatic),
-    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 6),
+    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 6, automatic),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(6),
@@ -190,8 +190,10 @@ function stopBai3(state: SimState, ruleset: Ruleset, automatic = false): StopAid
       const x = hill.stop_line_from_foot_m - toLineM;
       return x > hill.foot_x_m && x < hill.foot_x_m + hill.slope_length_m ? hill.grade : 0;
     },
-    // No clutch to lift on an automatic: the one pedal that decides the stop is the brake.
+    // No clutch to lift on an automatic: the one pedal that decides the stop is the brake, and the
+    // converter keeps pushing while it comes on.
     key: automatic ? 'brake' : 'clutch',
+    converterRpm: automatic ? ruleset.automatic?.converter_rpm : undefined,
   };
   return stopAid(state, ruleset, road);
 }
@@ -213,7 +215,13 @@ function road(lesson: RoadLesson, title: string, description: string, automatic:
     mark: (done, state, ruleset) => markRoad(done, state, ruleset, automatic),
     advice: (state, ruleset) => adviceRoad(state, ruleset, lesson, automatic),
     cue: () => null,
-    stop: lesson === 11 ? () => null : (state, ruleset) => stopAid(state, ruleset, flatRoad('brake')),
+    // An automatic's converter keeps pushing while the brake goes down: the aid is told its speed so the
+    // stop it times lands where it says (see StopRoad.converterRpm).
+    stop:
+      lesson === 11
+        ? () => null
+        : (state, ruleset) =>
+            stopAid(state, ruleset, flatRoad('brake', automatic ? ruleset.automatic?.converter_rpm : undefined)),
     signals: SIGNAL_LESSONS.has(lesson),
     stops: lesson !== 11,
     introKeys: 5,
@@ -236,8 +244,8 @@ function gear(automatic: boolean): Exercise {
     seed: seedWord(10, 1n, automatic),
     steps: automatic ? GEAR_STEPS_AUTO : GEAR_STEPS,
     mark: (done, state, ruleset) => markGear(done, state, ruleset, automatic),
-    advice: (state, ruleset) => adviceGear(state, ruleset),
-    cue: (state, ruleset) => gearCue(state, ruleset),
+    advice: (state, ruleset) => adviceGear(state, ruleset, undefined, automatic),
+    cue: (state, ruleset) => gearCue(state, ruleset, undefined, automatic),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(10),
     stops: false,
@@ -260,9 +268,9 @@ function junction(lesson: 5, seed: bigint, automatic: boolean): Exercise {
     seed,
     steps: automatic ? JUNCTION_STEPS_AUTO : JUNCTION_STEPS,
     mark: (done, state, ruleset) => markJunction(done, state, ruleset, automatic),
-    advice: (state, ruleset, centre) => adviceJunction(state, ruleset, cueJunction(state, centre, ruleset)),
+    advice: (state, ruleset, centre) => adviceJunction(state, ruleset, cueJunction(state, centre, ruleset), automatic),
     cue: (state, _ruleset, centre) => cueJunction(state, centre, _ruleset),
-    stop: stopJunction,
+    stop: (state, ruleset) => stopJunction(state, ruleset, automatic),
     signals: SIGNAL_LESSONS.has(lesson),
     stops: true,
     introKeys: 5,
@@ -293,7 +301,7 @@ function park(lesson: ParkLesson, seed: bigint, automatic: boolean): Exercise {
     mark: (done, state) => markPark(done, state, automatic),
     advice: (state, ruleset, _centre, yard) => {
       if (!yard) return 'Chưa đọc được hình ghép xe từ sim: tải lại trang.';
-      return adviceGhep(state, yard, ruleset, lesson);
+      return adviceGhep(state, yard, ruleset, lesson, undefined, automatic);
     },
     cue: (state, ruleset, _centre, yard) => (yard ? cueGhep(state, yard, ruleset).steer : null),
     cueNow: (state, ruleset, yard) => cueGhep(state, yard, ruleset),
@@ -313,9 +321,9 @@ function park(lesson: ParkLesson, seed: bigint, automatic: boolean): Exercise {
  * the learner just drives through. On red or yellow the countdown is the road lessons' own flat-road
  * brake countdown, because from the bumper to the line the junction's approach is level ground.
  */
-function stopJunction(state: SimState, ruleset: Ruleset): StopAid | null {
+function stopJunction(state: SimState, ruleset: Ruleset, automatic = false): StopAid | null {
   if (state.lightColour !== 1 && state.lightColour !== 2) return null;
-  return stopAid(state, ruleset, flatRoad('brake'));
+  return stopAid(state, ruleset, flatRoad('brake', automatic ? ruleset.automatic?.converter_rpm : undefined));
 }
 
 /**

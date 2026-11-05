@@ -141,7 +141,7 @@ export const FIGURE_STEPS_AUTO: readonly Step[] = [
 ];
 
 export function markFigure(done: Set<StepId>, state: SimState, automatic = false): void {
-  if (automatic ? inDrive(state) && !state.handbrake : state.gear === 1 && state.clutch < 0.1) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch < 0.1) done.add('gear');
   if (state.clockS > 0) done.add('entry');
   if (state.progressM > 0 && state.contact.every((c) => c === 0)) done.add('line');
   if (state.phase === 'done' && !state.disqualified) done.add('finish');
@@ -603,15 +603,28 @@ function paceJunction(s: SimState): string {
  * Bài 5's advice: the order, one sentence at a time, from the state the scorer reads. The light is
  * the core's own field, so the line cannot say "green" on a tick the scorer calls red.
  */
-export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | null): string {
+export function adviceJunction(
+  s: SimState,
+  ruleset: Ruleset,
+  cue: FigureCue | null,
+  automatic = false,
+): string {
   const junction = junctionOf(ruleset);
   const mm = (m: number) => `${Math.round(m * 1000)} mm`;
   const kmh = (v: number) => (v * 3.6).toFixed(1);
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (s.phase === 'done') return 'Hết bài. Bấm Esc để làm lại.';
-  if (!s.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
-  if (s.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  if (!s.engineOn) return automatic ? 'Máy đã tắt. Bấm E để nổ lại.' : 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (automatic ? s.gear <= 0 : s.gear !== 1) {
+    return automatic
+      ? 'Cần số đang ở N. Bấm D để xe đi tới.'
+      : 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  }
   if (s.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, rồi chạy tới vạch dừng.';
+  // The one key of a stop at the line: on an automatic it is the brake alone.
+  const stopKeys = automatic
+    ? 'phanh (↓) khi thanh báo «bấm ngay», rồi giữ phanh cho tới khi xe dừng.'
+    : STOP_KEYS;
 
   // Still short of the line: the light decides whether to stop or to go on. A car held at the line with
   // the green on is not "short of the line" in the way this sentence means — it has stopped and needs to
@@ -623,7 +636,7 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
       // told to gain speed a moment before the light changed keeps holding ↑ otherwise, and reaches
       // the line at 10 km/h — where the aid's 275 ms lead is 25 cm of slack instead of a metre.
       return s.speedMps > 0.6
-        ? `${colour}: nhả ga ↑ ra, rồi ${STOP_KEYS}`
+        ? `${colour}: nhả ga ↑ ra, rồi ${stopKeys}`
         : `${colour}: dừng trong A (không quá ${mm(junction.max_a_m)}), chờ đèn xanh.`;
     }
     // The light is dark for the first ticks of the run (the core starts its cycle on the car's first
@@ -657,7 +670,9 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
   // learner read, the speed warning never showed, and the car went into the lane edge. Speed is the
   // thing that has to be fixed first, and it is checked before anything else that names a key.
   if (s.speedMps > JUNCTION_FAST_MPS) {
-    return `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): đạp côn (Space) rồi phanh ↓ cho xe chậm lại ngay.`;
+    return automatic
+      ? `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): phanh ↓ cho xe chậm lại ngay.`
+      : `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): đạp côn (Space) rồi phanh ↓ cho xe chậm lại ngay.`;
   }
   // The lane edges are what SAI_VACH_KE is charged on, so the warning is the wheels' own contacts
   // (snapshot 27..30), not the car's centre: the outer front corner reaches the edge while the centre

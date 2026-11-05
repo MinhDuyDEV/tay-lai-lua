@@ -78,7 +78,9 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
     const so = transmissionFromUrl();
     if (so !== null) setAutomatic(so);
   }, []);
-  const base = exerciseFor(lesson, automatic);
+  // Memoised: `exerciseFor` builds the page's object, so a fresh one every render would re-boot the run
+  // (and its sim session) on every render.
+  const base = useMemo(() => exerciseFor(lesson, automatic), [lesson, automatic]);
   // The lesson's own numbers, with only the seed taken from the URL when one is given. The exercise id
   // and the transmission bit are the page's, not the seed's: `?seed=` replaces the low bits only, so an
   // automatic page opened with `?seed=7` still runs the automatic (and bài 1's id 0 stays 0).

@@ -16,7 +16,7 @@
 //  * in zone 2 the brake comes *before* the downshift: dropping into first at 30 km/h revs the engine
 //    through the bite to 6457 rpm (SH.X.RPM, measured), and the same zone has to end below 24 anyway.
 
-import { gearSignM, type Gear, type Ruleset } from './ruleset.ts';
+import { assumptionOf, gearSignM, type Gear, type Ruleset } from './ruleset.ts';
 import type { SimState } from './sim/session.ts';
 
 /**
@@ -84,7 +84,7 @@ export function gearTargets(gear: Gear, policy: GearPolicy = GEAR_POLICY): GearT
 }
 
 /** The word the learner acts on now: the same function paints `.advice` and its `data-cue`. */
-export function gearCue(s: SimState, ruleset: Ruleset, policy: GearPolicy = GEAR_POLICY): GearCue {
+export function gearCue(s: SimState, ruleset: Ruleset, policy: GearPolicy = GEAR_POLICY, automatic = false): GearCue {
   const gear = ruleset.gear;
   if (!gear) throw new Error('bài 10 needs the ruleset’s "gear" block');
   if (s.disqualified || s.phase === 'done') return 'done';
@@ -95,6 +95,15 @@ export function gearCue(s: SimState, ruleset: Ruleset, policy: GearPolicy = GEAR
   const sign2 = gearSignM(gear, 1);
 
   if (b >= t.endM) return 'done';
+  // An automatic is judged on speed alone (`assumptions.gear_automatic`): the box shifts itself, so the
+  // cues that name a shift (`shift2`, `shift1`) have no meaning and never come up.
+  if (automatic) {
+    if (!s.engineOn) return 'engine';
+    if (s.gear <= 0 || s.handbrake) return 'ready';
+    if (b < sign1) return kmh < t.runUpKmh ? 'runup' : 'roll';
+    if (b < sign2) return kmh < t.pullKmh ? 'pull' : 'roll';
+    return kmh > t.slowKmh ? 'brake' : 'coast';
+  }
   // The shift 1→2 belongs to the first zone, past sign 1: short of it the line asks for first gear and
   // the run-up only, which is the manoeuvre the exercise actually is. (`assumptions.gear_end_state` is
   // lenient about an early shift; the page is not, and must not teach one.)
@@ -122,12 +131,17 @@ const kmhOf = (v: number) => (v * 3.6).toFixed(0);
  * from the same snapshot the HUD's km/h readout is painted from, so the number in the words and the
  * number on the dial are one number.
  */
-export function adviceGear(s: SimState, ruleset: Ruleset, policy: GearPolicy = GEAR_POLICY): string {
+export function adviceGear(
+  s: SimState,
+  ruleset: Ruleset,
+  policy: GearPolicy = GEAR_POLICY,
+  automatic = false,
+): string {
   const gear = ruleset.gear;
   if (!gear) throw new Error('bài 10 needs the ruleset’s "gear" block');
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   const t = gearTargets(gear, policy);
-  const cue = gearCue(s, ruleset, policy);
+  const cue = gearCue(s, ruleset, policy, automatic);
   if (cue === 'done') return 'Hết bài: đã qua biển thứ ba. Bấm Esc để làm lại.';
   const kmh = s.speedMps * 3.6;
   const b = s.frontBumperM;
@@ -136,6 +150,8 @@ export function adviceGear(s: SimState, ruleset: Ruleset, policy: GearPolicy = G
   const sign1 = gearSignM(gear, 0);
   const sign2 = gearSignM(gear, 1);
   const sign3 = gearSignM(gear, 2);
+
+  if (automatic) return adviceGearAuto(s, gear, t, cue);
 
   switch (cue) {
     case 'engine':
@@ -161,6 +177,49 @@ export function adviceGear(s: SimState, ruleset: Ruleset, policy: GearPolicy = G
     default:
       return `Số 1, đang ${kmhOf(s.speedMps)} km/h: cứ để xe chạy tới biển thứ ba, còn ${to(sign3)}, giữ dưới ${n(t.judgedKmh)} km/h.`;
   }
+}
+
+/**
+ * Bài 10 on an automatic: the same three signs, the same two judged instants, but the only thing the
+ * learner controls is the speed — the box does the shifting, and `assumptions.gear_automatic` says only
+ * SH.SO.SAI_TOC_DO is charged. Every number comes from `gearTargets`/`gearSignM`, so the sentence moves
+ * with the judged speed in the ruleset.
+ */
+function adviceGearAuto(s: SimState, gear: Gear, t: GearTargets, cue: GearCue): string {
+  const now = (s.speedMps * 3.6).toFixed(0);
+  const to = (m: number) => `${Math.max(0, m - s.frontBumperM).toFixed(0)} m`;
+  const n = (v: number) => v.toFixed(0);
+  const sign1 = gearSignM(gear, 0);
+  const sign2 = gearSignM(gear, 1);
+  switch (cue) {
+    case 'engine':
+      return 'Máy đã tắt. Bấm E để nổ lại.';
+    case 'ready':
+      return `Bấm D, rồi bấm P nhả phanh tay. Còn ${to(sign1)} tới biển thứ nhất.`;
+    case 'runup':
+      return `Giữ ga ↑ cho tới ${n(t.runUpKmh)} km/h (đang ${now} km/h) rồi thả ra: xe chạy đà tới biển thứ nhất, còn ${to(sign1)}. Hộp số tự sang số.`;
+    case 'roll':
+      return s.frontBumperM >= sign1
+        ? `Thả ga, hộp số tự sang số. Tới biển thứ hai (còn ${to(sign2)}) phải trên ${n(t.judgedKmh)} km/h, đang ${now} km/h.`
+        : `Thả ga, để xe chạy đà. Qua biển thứ nhất (còn ${to(sign1)}) rồi giữ ga cho đủ nhanh ở biển thứ hai.`;
+    case 'pull':
+      return `Giữ ga ↑ cho tới ${n(t.pullKmh)} km/h (đang ${now} km/h): ở biển thứ hai (còn ${to(sign2)}) phải trên ${n(t.judgedKmh)} km/h.`;
+    case 'brake':
+      return `Qua biển thứ hai rồi: thả ga ↑, phanh ↓ xuống dưới ${n(t.slowKmh)} km/h (đang ${now} km/h).`;
+    default:
+      return `${now} km/h: cứ để xe chạy tới biển thứ ba, còn ${to(t.endM)}, giữ dưới ${n(t.judgedKmh)} km/h — hộp số tự về số.`;
+  }
+}
+
+/**
+ * The note bài 10 shows on an automatic, from the ruleset's `assumptions.gear_automatic`: the two texts
+ * disagree about whether an automatic sits this exercise at all, and the learner is told which one the
+ * page follows. Throws rather than shows a page without it — the note is the law's, not the page's.
+ */
+export function gearAutomaticNote(ruleset: Ruleset): { value: string; why: string } {
+  const a = assumptionOf(ruleset, 'gear_automatic');
+  if (!a) throw new Error('an automatic bài 10 needs assumptions.gear_automatic in the ruleset');
+  return { value: a.value, why: a.why };
 }
 
 /** The gear a cue is asking for, or 0 for a cue that shifts nothing. */
