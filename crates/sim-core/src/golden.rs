@@ -8,6 +8,8 @@
 //! Regenerate with `cargo run -p sim-core --example gen_golden`. The traces are committed, so a
 //! change in the simulation that moves the hash must be a deliberate re-record, not a silent one.
 
+use crate::chain::Chain;
+use crate::rules::Ruleset;
 use crate::{Session, TickInput};
 
 const BELT: u8 = TickInput::FLAG_BELT;
@@ -1228,8 +1230,73 @@ pub(crate) fn to_the_end(g: &Golden) -> Vec<TickInput> {
     panic!("golden {} never reaches the end of its bài", g.name);
 }
 
+/// How a learner deals with the link's hazard, for the goldens and the scenario tests.
+#[derive(Clone, Copy)]
+pub(crate) struct LinkPlan {
+    /// Brake to a stop when the signal sounds.
+    pub brake: bool,
+    /// Press the hazard button once stopped.
+    pub press: bool,
+    /// Let the button up when the signal ends, before going on.
+    pub release: bool,
+    /// Stop for no reason a few metres in.
+    pub stop_early: bool,
+}
+
+pub(crate) const LINK_CLEAN: LinkPlan = LinkPlan { brake: true, press: true, release: true, stop_early: false };
+
+/// Drive the link until the run leaves it, by what the run says (the snapshot), and record the inputs.
+pub(crate) fn drive_link(chain: &mut Chain, inputs: &mut Vec<TickInput>, plan: LinkPlan) {
+    let (mut t, mut held, mut early) = (0u32, 0u32, None::<u32>);
+    let go = |flags: u8| TickInput { gear: 1, clutch: 168, throttle: 80, flags, ..Default::default() };
+    while chain.on_the_link() {
+        assert!(t < 8000, "the link never ends");
+        let s = chain.snapshot();
+        let (bumper, hazard, elapsed_ms) = (s[9], s[58], s[59]);
+        let hold = |flags: u8| TickInput { gear: 1, clutch: 255, brake: 255, flags, ..Default::default() };
+        let input = if t < 20 {
+            road_park()
+        } else if plan.stop_early && bumper > 6.0 && early.is_none_or(|from| t - from < 90) {
+            // Held on the brake for a second and a half, then on with the run.
+            early.get_or_insert(t);
+            hold(0)
+        } else if hazard == 1.0 && plan.brake {
+            hold(if plan.press && elapsed_ms >= 1500.0 { TickInput::FLAG_HAZARD } else { 0 })
+        } else if hazard == 2.0 && plan.brake && held < 30 {
+            held += 1;
+            hold(if plan.release { 0 } else { TickInput::FLAG_HAZARD })
+        } else if hazard == 2.0 && plan.brake && !plan.release {
+            // Going on with the button still down.
+            go(TickInput::FLAG_HAZARD)
+        } else {
+            go(0)
+        };
+        chain.step(input);
+        inputs.push(input);
+        t += 1;
+    }
+}
+
+/// Drive a run: each bài's golden, cut at its end, with the link driven by `plan` where the run
+/// puts it. Returns the run and the inputs it was fed.
+pub(crate) fn play(seed: u64, rules: Ruleset, bai: &[Golden], plan: LinkPlan) -> (Chain, Vec<TickInput>) {
+    let mut chain = Chain::new(seed, rules);
+    let mut inputs = Vec::new();
+    for g in bai {
+        if chain.on_the_link() {
+            drive_link(&mut chain, &mut inputs, plan);
+        }
+        for i in to_the_end(g) {
+            chain.step(i);
+            inputs.push(i);
+        }
+    }
+    (chain, inputs)
+}
+
 fn lien_hoan_from(seed: u64, name: &'static str, bai: Vec<Golden>) -> Golden {
-    Golden { name, seed, inputs: bai.iter().flat_map(to_the_end).collect() }
+    let (_, inputs) = play(seed, Ruleset::load(), &bai, LINK_CLEAN);
+    Golden { name, seed, inputs }
 }
 
 /// The clean run of each bài in order, once on a manual and once on an automatic: the parts of the

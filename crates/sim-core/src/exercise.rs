@@ -54,6 +54,9 @@ pub enum Exercise {
     Rail,
     /// Bài 11 — Kết thúc.
     Finish,
+    /// Liên hoàn's link between two bài: a straight lane driven to its end line. Not a bài of the
+    /// law, so no page has it; the run (`chain.rs`) judges what happens on it.
+    Link,
     /// Bài 10 — Thay đổi số trên đường bằng.
     Gear,
     /// Bài 7 — Ghép xe dọc vào nơi đỗ.
@@ -299,7 +302,7 @@ impl State {
                 course = Some(built);
                 Phase::Launched
             }
-            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish | Exercise::Gear => {                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
+            Exercise::Crosswalk | Exercise::Rail | Exercise::Finish | Exercise::Gear | Exercise::Link => {                // The straight road scene: engine idling, neutral, handbrake on, scored from tick
                 // 1 — the same opening state as bài 3. It has a figure too (the lane, the stop
                 // line, the crosswalk or the rails or the finish line), so the page draws the
                 // same numbers the scoring reads.
@@ -307,6 +310,7 @@ impl State {
                     Exercise::Crosswalk => Figure::Crosswalk,
                     Exercise::Rail => Figure::Rail,
                     Exercise::Gear => Figure::Gear,
+                    Exercise::Link => Figure::Link,
                     _ => Figure::Finish,
                 };
                 let built = Course::new(figure, rs).expect("the ruleset gives a drawable scene");
@@ -443,6 +447,7 @@ impl State {
             Exercise::Junction => self.step_junction(rs, t, controls, signal, fired),
             Exercise::Finish => self.step_finish(rs, t, controls, signal, fired),
             Exercise::Gear => self.step_gear(rs, t, controls, signal, fired),
+            Exercise::Link => self.step_link(rs, t, controls, signal, fired),
         }
     }
 
@@ -1379,6 +1384,28 @@ impl State {
             }
         }
         if self.gear_zones == 2 {
+            self.phase = Phase::Done;
+        }
+    }
+
+    /// The link between two bài: drive to the end line. Stalls and over-revving are charged as
+    /// anywhere; what the learner does about a hazard, and where they stop, is the run's to judge.
+    fn step_link(
+        &mut self,
+        rs: &Ruleset,
+        t: &Thresholds,
+        controls: Controls,
+        signal: Signal,
+        fired: &mut Vec<FiredRule>,
+    ) {
+        self.tick += 1;
+        self.controls = controls;
+        self.signal = signal;
+
+        let outcome = self.drive_car(rs, &controls);
+        self.check_engine(rs, t, outcome, fired);
+        self.note_movement();
+        if self.front_bumper_x(rs) >= rs.lien_hoan.link_length_m {
             self.phase = Phase::Done;
         }
     }

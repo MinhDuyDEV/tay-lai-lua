@@ -39,8 +39,10 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// * 9 — bài 9 (Tạm dừng ở chỗ có đường sắt chạy qua);
 /// * 10 — bài 10 (Thay đổi số trên đường bằng);
 /// * 11 — bài 11 (Kết thúc);
-/// * 12 — sa hình liên hoàn: bài 1 to 11 in one run (`Sim::LienHoan`). The low bits are shared by every
-///   bài of the run, so bài 5 meets the light it would meet on its own page.
+/// * 12 — sa hình liên hoàn: bài 1 to 11 in one run (`Sim::LienHoan`), a straight link between bài 6 and
+///   bài 7. The low bits are shared by every stage of the run, so bài 5 meets the light it would meet on
+///   its own page;
+/// * 13 — that link, a straight lane (it has no page of its own).
 ///
 /// Bit 55 (`AUTOMATIC_BIT`) says the learner drives an automatic: the wire's gear byte is then the selector
 /// (below 0 R, 0 N, above 0 D) and the clutch byte is ignored. `Session::new` is the only reader of that bit.

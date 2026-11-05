@@ -289,6 +289,12 @@ impl Park {
 #[derive(Deserialize, Clone)]
 pub struct LienHoan {
     pub time_limit_s: f64,
+    /// The straight link between two bài (`assumptions.lien_hoan_link`) and the hazard on it
+    /// (`assumptions.lien_hoan_hazard`).
+    pub link_length_m: f64,
+    pub hazard_min_m: f64,
+    pub hazard_max_m: f64,
+    pub hazard_signal_s: f64,
 }
 
 #[derive(Deserialize, Clone)]

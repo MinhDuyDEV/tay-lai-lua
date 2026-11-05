@@ -46,6 +46,8 @@ pub enum Figure {
     Finish,
     /// Bài 10 — a straight lane with the three signs of Hình 17.
     Gear,
+    /// Liên hoàn's link between two bài — a straight lane with the end line.
+    Link,
     /// Bài 5 — the right-turn route through the signalled junction.
     Junction,
     /// Bài 7 — ghép xe dọc vào nơi đỗ (Hình 13).
@@ -267,7 +269,7 @@ impl Course {
         match figure {
             Figure::Vet => vet_figure(rs),
             Figure::Curve => curve_figure(rs),
-            Figure::Crosswalk | Figure::Rail | Figure::Finish | Figure::Gear => road_figure(rs, figure),
+            Figure::Crosswalk | Figure::Rail | Figure::Finish | Figure::Gear | Figure::Link => road_figure(rs, figure),
             Figure::Junction => junction_figure(rs),
             Figure::GhepDoc | Figure::GhepNgang => park_figure(figure, rs),
         }
@@ -1029,7 +1031,8 @@ fn crosswalk(
     out
 }
 
-/// Bài 2, bài 9 and bài 11: one straight lane, the stop line at 0, and one thing past it.
+/// Bài 2, bài 9 and bài 11: one straight lane, the stop line at 0, and one thing past it. (Bài 10 and
+/// liên hoàn's link are the same lane without the stop line.)
 ///
 /// The car starts on the lane's centreline, pointing along it. The second gate of the figure is the
 /// exercise's own end line, so `sim_course` can draw where the run stops.
@@ -1043,6 +1046,7 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
         Figure::Crosswalk => r.crosswalk_m() + r.crosswalk_width_m + r.run_end_past_line_m,
         Figure::Rail => r.rail_m() + r.rail_gauge_m + r.rail_offset_m,
         Figure::Gear => rs.gear.road_length_m,
+        Figure::Link => rs.lien_hoan.link_length_m,
         _ => r.finish_m() + r.run_end_past_line_m,
     };
 
@@ -1059,7 +1063,7 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
     let mut marks = Vec::new();
     let a = (0.0, 0.0);
     let b = (end_m, 0.0);
-    if figure != Figure::Gear {
+    if figure != Figure::Gear && figure != Figure::Link {
         marks.extend(across(a, b, r.stop_line_m(), r.stop_line_width_m, half, 1));
     }
     let mut signal = None;
@@ -1096,6 +1100,9 @@ fn road_figure(rs: &Ruleset, figure: Figure) -> Option<Course> {
     }
     if figure == Figure::Finish {
         marks.extend(across(a, b, r.finish_m(), r.stop_line_width_m, half, 2));
+    }
+    if figure == Figure::Link {
+        marks.extend(across(a, b, rs.lien_hoan.link_length_m, r.stop_line_width_m, half, 2));
     }
 
     let mut built = course_from(

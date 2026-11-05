@@ -1125,9 +1125,104 @@
         "loc": "Phụ lục III, Bài kết thúc (B: bài 11), bảng lỗi; thời gian: Yêu cầu chung (mục 2.2.3)",
         "quote": "đ) Tổng thời gian thực hiện các bài sát hạch quá quy định, cứ 03 giây trừ 01 điểm."
       }
+    },
+    {
+      "id": "SH.CHUNG.NGUY_HIEM.PHANH",
+      "code": 51,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 10
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Yêu cầu chung (mục 2.2.3, tr. 57–58)",
+        "quote": "Kể từ khi có tín hiệu báo tình huống nguy hiểm (tiếng loa báo tín hiệu nguy hiểm và đèn đỏ trên xe bật sáng), nếu không phanh dừng xe trong thời gian 03 giây trừ 10 điểm"
+      }
+    },
+    {
+      "id": "SH.CHUNG.NGUY_HIEM.BAT_TIN_HIEU",
+      "code": 52,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 10
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Yêu cầu chung (mục 2.2.3, tr. 57–58)",
+        "quote": "nếu không ấn nút để bật tín hiệu nguy hiểm trên xe trong thời gian 05 giây trừ 10 điểm"
+      }
+    },
+    {
+      "id": "SH.CHUNG.NGUY_HIEM.TAT_TIN_HIEU",
+      "code": 53,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 10
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Yêu cầu chung (mục 2.2.3, tr. 57–58)",
+        "quote": "khi hết tín hiệu báo tình huống nguy hiểm, nếu không ấn nút tắt tín hiệu nguy hiểm trên xe trước khi đi tiếp trừ 10 điểm"
+      }
+    },
+    {
+      "id": "SH.CHUNG.NGUY_HIEM.KHONG_THUC_HIEN",
+      "code": 54,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 10
+      },
+      "repeat": "ONCE",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Yêu cầu chung (mục 2.2.3, tr. 57–58)",
+        "quote": "nếu không thực hiện được các thao tác trên trừ 10 điểm"
+      }
+    },
+    {
+      "id": "SH.CHUNG.DUNG_SAI_VI_TRI",
+      "code": 55,
+      "exercise": "sa_hinh.lien_hoan",
+      "params": {},
+      "penalty": {
+        "kind": "POINTS",
+        "points": 5
+      },
+      "repeat": "EACH",
+      "source": {
+        "doc": "TT 108/2026/TT-BCA",
+        "loc": "Phụ lục III, Yêu cầu chung (mục 2.2.3, tr. 57–58)",
+        "quote": "nếu dừng xe tại các vị trí không đúng quy định, mỗi lần trừ 05 điểm"
+      }
     }
   ],
   "assumptions": [
+    {
+      "field": "lien_hoan_link",
+      "value": "giữa bài 6 và bài 7 có một đoạn nối thẳng dài 60 m (lien_hoan.link_length_m) trên đó xe đi thật; ngoài đoạn đó các bài được nối bằng cách đặt xe về vạch xuất phát của bài kế tiếp. Đoạn nối là chỗ duy nhất của lượt thi ‘ngoài khu vực các bài sát hạch’, nên là chỗ duy nhất có tình huống nguy hiểm và có lỗi dừng sai vị trí",
+      "why": "Thông tư nói tình huống nguy hiểm xuất hiện ‘ngoài khu vực các bài thi’ và QCVN 15 mục 2.1.15.12 nói sân có 05 hoặc 03 vị trí; bộ luật chưa có bản đồ sân liền, nên một đoạn nối là chỗ ít nhất còn mang được tình huống nguy hiểm. Chiều dài 60 m là giả định."
+    },
+    {
+      "field": "lien_hoan_hazard",
+      "value": "mỗi lượt có đúng một tình huống nguy hiểm, bắt đầu khi đầu xe tới một điểm trên đoạn nối rút ngẫu nhiên từ seed trong [15 m; 35 m]; tín hiệu (loa + đèn đỏ) kéo dài 10 s. PHANH: xe phải dừng trong 3 s kể từ lúc có tín hiệu; BAT_TIN_HIEU: người học phải bật nút trong 5 s; hai việc này được chấm cùng lúc ở giây thứ 5. TAT_TIN_HIEU: chấm ở lúc xe đi tiếp sau khi hết tín hiệu (hoặc ở cuối đoạn nối), lỗi nếu nút còn bật. KHONG_THUC_HIEN thay cho PHANH và BAT_TIN_HIEU khi cả hai đều không làm: −10 một lần, không cộng dồn thành −20",
+      "why": "Bảng lỗi ghi ba lỗi −10 và ‘nếu không thực hiện được các thao tác trên trừ 10 điểm’ nhưng không nói có cộng dồn với ba lỗi trên hay không (diễn giải của Phụ lục). Chọn không cộng dồn để người không làm gì mất 10 điểm, không phải 40. Số lần xuất hiện mỗi lượt, độ dài tín hiệu 10 s và vùng xuất hiện là giả định: văn bản chỉ nói ‘ngẫu nhiên, bất ngờ’."
+    },
+    {
+      "field": "lien_hoan_dung_sai",
+      "value": "trên đoạn nối, mỗi lần xe đang chạy rồi dừng (động cơ vẫn nổ) ngoài thời gian xử lý tình huống nguy hiểm là một lần SH.CHUNG.DUNG_SAI_VI_TRI (−5). Đứng yên từ đầu đoạn nối và chết máy không tính. Trong các bài, dừng đã có lỗi riêng của từng bài",
+      "why": "Thông tư không nói ‘vị trí đúng quy định’ là những đâu. Trên đoạn nối thì chỉ có hai chỗ hợp lý để dừng: lúc xử lý tình huống nguy hiểm và lúc xuất phát."
+    },
     {
       "field": "lien_hoan_time_limit",
       "value": "‘quá quy định’ của SH.KT.TONG_THOI_GIAN là 18 phút (SH.CHUNG.THOI_GIAN, hạng B), tính trên đồng hồ cả lượt: từ bước đầu tiên được tính điểm của bài 1 tới khi hết bài 11; −1 điểm cho mỗi 3 giây đầy đủ quá 18:00",
@@ -1544,7 +1639,11 @@
     }
   ],
   "lien_hoan": {
-    "time_limit_s": 1080.0
+    "time_limit_s": 1080.0,
+    "link_length_m": 60.0,
+    "hazard_min_m": 15.0,
+    "hazard_max_m": 35.0,
+    "hazard_signal_s": 10.0
   },
   "gear": {
     "first_sign_m": 20.0,
