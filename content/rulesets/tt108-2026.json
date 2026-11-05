@@ -323,6 +323,12 @@
       "quote": "Diễn giải: \"tín hiệu báo kết thúc\" là tín hiệu từ cảm biến của sân, phát ra khi xe đã nằm đúng vị trí đỗ. Trong mô phỏng, có thể làm tín hiệu này bằng cách kiểm tra hình bao của xe nằm trọn trong ô đỗ và xe đứng yên."
     }
   },
+  "automatic": {
+    "converter_rpm": 2400.0,
+    "up_mps": [4.5, 8.0, 12.0],
+    "down_mps": [2.5, 5.5, 9.0],
+    "assumption": "Không có trong văn bản. Mọi số trong khối này là GIẢ ĐỊNH CỦA MÔ PHỎNG về một hộp số tự động thông thường (biến mô), không phải số của một xe cụ thể. `converter_rpm`: tốc độ động cơ mà biến mô truyền hết mô-men; dưới đó khả năng truyền tăng theo bình phương tốc độ động cơ (như bơm của biến mô), nên ở cầm chừng (850 vòng/phút) vẫn còn truyền một phần nhỏ, làm xe tự bò khi nhả phanh ở số D hoặc R, còn đạp ga thì xe mạnh dần. `up_mps` và `down_mps`: tốc độ xe (m/s) lên số 2, 3, 4 và về số 1, 2, 3; chênh nhau để không giật số liên tục. Số lùi dùng chung tỉ số của khối `drivetrain`. Phạm vi: mọi bài khi người học chọn số tự động; số sàn không đọc khối này."
+  },
   "rules": [
     {
       "id": "SH.01.DAY_AN_TOAN",
@@ -1487,6 +1493,11 @@
       "field": "gear_no_overspeed",
       "value": "Bài này không có lỗi quá tốc độ; 24 km/h không phải giới hạn tốc độ để trừ điểm ở mọi thời điểm.",
       "why": "Bảng lỗi của bài ghi rõ không có lỗi quá tốc độ. Lỗi chung (chết máy, vòng tua, vỉa hè) vẫn áp dụng như ở các bài khác."
+    },
+    {
+      "field": "gear_automatic",
+      "value": "Xe số tự động ở bài thay đổi số: chỉ chấm tốc độ (SH.SO.SAI_TOC_DO); không chấm SH.SO.SAI_SO và SH.SO.SAI_CA_HAI.",
+      "why": "Hai văn bản mâu thuẫn. TT 108/2026/TT-BCA Phụ lục III cho hạng B ‘chuyển số tự động (bao gồm cả xe ô tô điện)’ thi cùng 11 bài, kể cả bài thay đổi số ‘từ số 1 lên số 2 và trên 24km/h’, không có quy định riêng cho xe số tự động. QCVN 15:2026/BCA mục 2.1.15.11 đặt tên hình là ‘Bài sát hạch thay đổi số trên đường bằng, trừ xe sử dụng loại số tự động’. Chưa có ý kiến của Cục CSGT hoặc trung tâm sát hạch; đây là phương án tạm (docs/architecture.md, câu hỏi mở số 1): vẫn bắt người học đi qua bài và đạt tốc độ, nhưng không có cần số để chấm. Người học phải thấy ghi chú này, trích cả hai văn bản."
     }
   ],
   "gear": {

@@ -83,7 +83,10 @@ interface Exports {
 }
 
 /** What `sim_create` takes: the exercise id in bits 56..63, the seed below it. */
-export const seedWord = (exerciseId: number, seed = 1n): bigint => (BigInt(exerciseId) << 56n) | seed;
+/** Bit 55 of the seed word: the learner drives an automatic (`AUTOMATIC_BIT` in crates/sim-core/src/lib.rs). */
+export const AUTOMATIC_BIT = 1n << 55n;
+export const seedWord = (exerciseId: number, seed = 1n, automatic = false): bigint =>
+  (BigInt(exerciseId) << 56n) | seed | (automatic ? AUTOMATIC_BIT : 0n);
 const EVENTS_PER_DRAIN = 32;
 
 /** Open a session from the shipped `sim.wasm` bytes. Throws if the module is not the core we expect. */

@@ -191,6 +191,9 @@ pub struct Episode {
 
 pub struct State {
     pub exercise: Exercise,
+    /// The automatic gearbox, when the learner chose one. It stands between the keys and the car:
+    /// `step` turns the learner's selector into the gear and clutch the car takes.
+    pub auto: Option<crate::automatic::Driveline>,
     /// Steps since the start order. 0 while the run waits for it — the clocks count from the
     /// order, not from `create`.
     pub tick: u32,
@@ -263,7 +266,7 @@ pub struct State {
 
 impl State {
     /// `seed` is read for bài 5's light phase only; every other exercise ignores it.
-    pub fn new(rs: &Ruleset, exercise: Exercise, seed: u64) -> Self {
+    pub fn new(rs: &Ruleset, exercise: Exercise, seed: u64, automatic: bool) -> Self {
         let c = &rs.course;
         let mut car = Car::new();
         let mut course = None;
@@ -362,6 +365,7 @@ impl State {
 
         Self {
             exercise,
+            auto: automatic.then(crate::automatic::Driveline::new),
             tick: 0,
             phase,
             score: rs.scoring.base,
@@ -424,6 +428,10 @@ impl State {
         if self.phase == Phase::Done {
             return;
         }
+        let controls = match self.auto.as_mut() {
+            Some(driveline) => driveline.translate(&rs.automatic, &self.car, controls),
+            None => controls,
+        };
         match self.exercise {
             Exercise::Start => self.step_start(rs, t, controls, signal, order, fired),
             Exercise::Hill => self.step_hill(rs, t, controls, signal, fired),
@@ -1359,14 +1367,15 @@ impl State {
         let bumper = self.front_bumper_x(rs);
         while self.gear_zones < 2 && bumper >= g.sign_m(usize::from(self.gear_zones) + 1) {
             let (want_gear, fast) = if self.gear_zones == 0 { (2, true) } else { (1, false) };
-            let gear_ok = controls.gear == want_gear;
+            // On an automatic only the speed is judged (`assumptions.gear_automatic`).
+            let gear_ok = self.auto.is_some() || controls.gear == want_gear;
             let speed_ok = if fast { self.car.speed_mps > g.speed_mps() } else { self.car.speed_mps < g.speed_mps() };
             self.judge_gear_zone(rs, gear_ok, speed_ok, fired);
         }
         if self.gear_zones < 2 && self.tick >= g.exam_cap_ticks() {
             // The cap: a zone the car never reached did not get its change.
             while self.gear_zones < 2 {
-                self.judge_gear_zone(rs, false, false, fired);
+                self.judge_gear_zone(rs, self.auto.is_some(), false, fired);
             }
         }
         if self.gear_zones == 2 {

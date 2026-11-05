@@ -383,7 +383,7 @@ docs/
 
 | # | Câu hỏi | Hỏi ai | Phương án tạm |
 |---|---|---|---|
-| 1 | Xe số tự động làm bài "thay đổi số trên đường bằng" thế nào? (TT 108 PL III yêu cầu làm, còn QCVN 15 mục 2.1.15.11 loại xe số tự động ra khỏi hình) | Cục CSGT hoặc trung tâm sát hạch | Chỉ chấm tốc độ, có ghi chú |
+| 1 | Xe số tự động làm bài "thay đổi số trên đường bằng" thế nào? (TT 108 PL III yêu cầu làm, còn QCVN 15 mục 2.1.15.11 loại xe số tự động ra khỏi hình) | Cục CSGT hoặc trung tâm sát hạch | Chỉ chấm tốc độ, có ghi chú. Đã làm theo, ghi ở `assumptions.gear_automatic` |
 | 2 | Dừng ở ngã tư: ≤ 500 mm hay ≤ 1000 mm? | như trên | 500 mm, có ghi chú |
 | 3 | Còn câu điểm liệt không? (TT 108 bỏ, CV 2262 vẫn ghi) | Cục CSGT | Tắt, có cờ để bật lại |
 | 4 | Mốc thời gian đi tới từng bài trong phần mềm chấm | Trung tâm sát hạch | Tự đặt giả định |

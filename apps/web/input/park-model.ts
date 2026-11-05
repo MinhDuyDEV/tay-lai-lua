@@ -48,14 +48,17 @@ export interface Variant {
   calibrate?: boolean;
   /** The bar is fed this lag (s) instead of the one it measures: a broken calibration. */
   forceLagS?: number;
+  /** Drive an automatic: no clutch, the lever is a selector, the creep is the car's own. */
+  automatic?: boolean;
 }
 
 export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS = 120, trackFactor = 1, variant: Variant = {}): Outcome {
   const jitterMs = variant.jitterMs ?? 40;
   const ex = exerciseFor(lesson);
-  const session = openSession(bytes(), seedWord(lesson));
+  const automatic = variant.automatic === true;
+  const session = openSession(bytes(), seedWord(lesson, 1n, automatic));
   const yard = yardOf(parkRects(session.course)!);
-  const driver = createDriver();
+  const driver = createDriver({ automatic });
   const ids = new Map<number, string>(data.rules.map((r: { code: number; id: string }) => [r.code, r.id]));
   const pents: string[] = [];
   let s: SimState = session.state;
@@ -76,7 +79,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
   let lastWant = '';
   let lastAt = 0;
   let jitterTicks = 0;
-  let heldNow = new Set<string>(['Space']);
+  let heldNow = new Set<string>(automatic ? [] : ['Space']);
   let want = new Set<string>();
   let owed: string[] = [];
   let tick = 0;
@@ -122,7 +125,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
         countedAt = tick;
         countTicks = Math.round((c.holdMs / 1000) * 60);
       } else if (c.pedal !== 'creep' || braking) {
-        next.add('Space');
+        if (!automatic) next.add('Space');
         next.add('ArrowDown');
       }
       // `P` is a toggle: a person presses it once when the line says so, and again only if it is still
@@ -136,7 +139,7 @@ export function drivePark(lesson: Lesson, reactMs: number, phaseMs: number, maxS
       lastPedal = c.pedal;
       if (c.pedal === 'enter') owed.push('Enter');
       // The lever goes in with the pedal at the floor as the sentence says; the press repeats until it takes.
-      if (c.gear !== 0 && s.gear !== c.gear && s.clutch >= 0.97) owed.push(c.gear === 1 ? 'Digit1' : 'KeyR');
+      if (c.gear !== 0 && s.gear !== c.gear && (automatic || s.clutch >= 0.97)) owed.push(c.gear === 1 ? (automatic ? 'KeyD' : 'Digit1') : 'KeyR');
       want = next;
       if (process.env.PT && tick % 30 === 0) console.log((tick / 60).toFixed(1), c.pedal, c.steer, c.gear, s.speedMps.toFixed(2), s.carX.toFixed(2), s.carY.toFixed(2), ((s.heading * 180) / Math.PI).toFixed(0), c.plan ? c.plan.legs.map((g) => (g.dir > 0 ? 'F' : 'R') + (g.steerRad > 0 ? '+' : g.steerRad < 0 ? '-' : '0') + g.len.toFixed(1)).join(' ') : '-');
     }

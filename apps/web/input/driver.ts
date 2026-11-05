@@ -27,6 +27,8 @@ export const FLAG = {
 export const FEEL = {
   throttle: { riseBase: 0.6, riseGain: 1.0, fall: 4 },
   brake: { rise: 3, fall: 5 },
+  /** Automatic only: there is no clutch to feather, so the throttle itself is slow and linear. */
+  autoThrottle: { rise: 0.45, fall: 3 },
   steer: { rate: 2, centre: 3, speedScaleMps: 12, minLock: 0.2 },
   clutch: {
     press: 6,
@@ -58,6 +60,8 @@ export const KEY = {
   order: 'Enter',
   neutral: ['KeyN', 'Digit0', 'Numpad0'],
   reverse: ['KeyR'],
+  /** Automatic only: the selector's D. */
+  drive: ['KeyD'],
 } as const;
 const GEAR_CODES: ReadonlyArray<readonly [string, number]> = [1, 2, 3, 4, 5].flatMap((g) => [
   [`Digit${g}`, g] as const,
@@ -173,7 +177,8 @@ const approach = (p: number, target: number, rate: number) =>
 
 const anyHeld = (held: ReadonlySet<string>, codes: readonly string[]) => codes.some((c) => held.has(c));
 
-export function createDriver(): Driver {
+export function createDriver(options: { automatic?: boolean } = {}): Driver {
+  const automatic = options.automatic === true;
   // The learner sits with every pedal at rest (clutch up = 0) and the lever in neutral.
   const pedals = { throttle: 0, brake: 0, clutch: 0, steer: 0 };
   let gear = 0;
@@ -205,22 +210,24 @@ export function createDriver(): Driver {
         else if (code === KEY.order) ordered = true;
         else if (code === KEY.engine) {
           if (view.engineOn) say('Máy đã nổ rồi.');
-          else if (gear !== 0 && pedals.clutch < FEEL.clutch.gearTravel) {
+          else if (!automatic && gear !== 0 && pedals.clutch < FEEL.clutch.gearTravel) {
             say('Về số 0 hoặc đạp côn (Space) rồi mới nổ máy.');
           } else crankLeft = FEEL.crankTicks;
         } else {
-          const wanted = gearFor(code);
+          // The selector: N, R or D, one tap, no clutch. The core reads the byte as below 0 R, 0 N, above 0 D.
+          const wanted = automatic ? selectorFor(code) : gearFor(code);
           if (wanted === null) continue;
-          if (pedals.clutch < FEEL.clutch.gearTravel) say('Đạp côn hết cỡ (giữ Space) rồi mới vào số.');
+          if (!automatic && pedals.clutch < FEEL.clutch.gearTravel) say('Đạp côn hết cỡ (giữ Space) rồi mới vào số.');
           else gear = wanted;
         }
       }
 
       const f = FEEL;
       // Throttle: eases in, so a short hold is a light touch; falls quickly.
+      const upRate = automatic ? f.autoThrottle.rise : f.throttle.riseBase + f.throttle.riseGain * pedals.throttle;
       pedals.throttle = held.has(KEY.throttle)
-        ? Math.min(1, pedals.throttle + (f.throttle.riseBase + f.throttle.riseGain * pedals.throttle) * DT)
-        : Math.max(0, pedals.throttle - f.throttle.fall * DT);
+        ? Math.min(1, pedals.throttle + upRate * DT)
+        : Math.max(0, pedals.throttle - (automatic ? f.autoThrottle.fall : f.throttle.fall) * DT);
       pedals.brake = approach(pedals.brake, held.has(KEY.brake) ? 1 : 0, held.has(KEY.brake) ? f.brake.rise : f.brake.fall);
 
       // Clutch: down fast, up fast outside the bite zone and slowly inside it.
@@ -258,7 +265,7 @@ export function createDriver(): Driver {
       dv.setInt16(0, Math.round(pedals.steer * 32767), true);
       out[2] = Math.round(pedals.throttle * 255);
       out[3] = Math.round(pedals.brake * 255);
-      out[4] = Math.round(pedals.clutch * 255);
+      out[4] = automatic ? 0 : Math.round(pedals.clutch * 255);
       dv.setInt8(5, gear);
       out[6] = flags;
       return out;
@@ -270,5 +277,12 @@ function gearFor(code: string): number | null {
   if ((KEY.neutral as readonly string[]).includes(code)) return 0;
   if ((KEY.reverse as readonly string[]).includes(code)) return -1;
   for (const [c, g] of GEAR_CODES) if (c === code) return g;
+  return null;
+}
+
+function selectorFor(code: string): number | null {
+  if ((KEY.neutral as readonly string[]).includes(code)) return 0;
+  if ((KEY.reverse as readonly string[]).includes(code)) return -1;
+  if ((KEY.drive as readonly string[]).includes(code)) return 1;
   return null;
 }

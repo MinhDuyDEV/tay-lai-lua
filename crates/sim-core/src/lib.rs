@@ -10,6 +10,7 @@
 //! * every random draw comes from the seeded PRNG in this file.
 
 mod abi;
+mod automatic;
 mod course;
 mod exercise;
 pub mod golden;
@@ -32,6 +33,8 @@ mod scenarios_junction;
 mod scenarios_ghep;
 #[cfg(test)]
 mod scenarios_gear;
+#[cfg(test)]
+mod scenarios_automatic;
 
 use exercise::{DT, Exercise, Signal, State};
 use hash::Hash;
@@ -138,6 +141,12 @@ impl Prng {
 /// The exercise id is the top byte of the seed; the layout is documented at `sim_create`.
 const EXERCISE_SHIFT: u32 = 56;
 
+/// Bit 55, the top bit of the seed proper: the learner drives an automatic. It is the only bit that
+/// says so, so the exercise byte (`trace[7]`) and every reader that looks at that byte are untouched.
+/// `Session::new` is the one place that splits it off; the rest of the core sees the seed without it,
+/// so an automatic attempt meets the same light and the same everything else as its manual twin.
+pub const AUTOMATIC_BIT: u64 = 1 << 55;
+
 /// Length of the `state` snapshot, mirrored by the TS side. `sim_state` refuses to write more.
 pub const SNAPSHOT_LEN: usize = 54;
 
@@ -243,7 +252,9 @@ impl Session {
     }
 
     pub fn with_ruleset(seed: u64, rules: Ruleset) -> Option<Self> {
-        let exercise = match seed >> EXERCISE_SHIFT {
+        let automatic = seed & AUTOMATIC_BIT != 0;
+        let plain = seed & !AUTOMATIC_BIT;
+        let exercise = match plain >> EXERCISE_SHIFT {
             0 | 1 => Exercise::Start,
             2 => Exercise::Crosswalk,
             3 => Exercise::Hill,
@@ -258,7 +269,7 @@ impl Session {
             _ => return None,
         };
         let thresholds = rules.thresholds();
-        let state = State::new(&rules, exercise, seed);
+        let state = State::new(&rules, exercise, plain, automatic);
         // A zero seed would freeze xorshift; start from a non-zero constant like the skeleton did.
         let prng = Prng(seed ^ 0x9e37_79b9_7f4a_7c15);
         Some(Self { rules, thresholds, state, seed, prng, events: Vec::new(), pending: Vec::new() })
@@ -522,6 +533,11 @@ impl Session {
         h.bool(c.handbrake);
         h.bool(c.has_belt);
         h.bool(c.ignition);
+
+        // The automatic's gear is state the next tick's shift reads. A manual run writes nothing.
+        if let Some(d) = &s.auto {
+            h.u8(d.gear() as u8);
+        }
 
         // Course progress.
         h.opt_f64(s.crossed_at.map(f64::from));

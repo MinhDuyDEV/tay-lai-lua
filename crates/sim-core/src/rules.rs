@@ -26,7 +26,22 @@ pub struct Ruleset {
     pub park: Park,
     /// Bài 10: the signs and the speed the two 25 m zones are judged at.
     pub gear: Gear,
+    /// The automatic gearbox, read only when the seed asks for it (`AUTOMATIC_BIT`).
+    pub automatic: Automatic,
     pub rules: Vec<Rule>,
+}
+
+/// The automatic gearbox as the simulator models it. Every number is the simulator's own
+/// assumption (`automatic.assumption` in the ruleset), not a figure from the law.
+#[derive(Deserialize)]
+pub struct Automatic {
+    /// Engine speed at which the torque converter carries all the torque. Below it the share carried
+    /// grows with the square of the engine speed, so it is small at idle (the creep) and closes as the
+    /// learner opens the throttle.
+    pub converter_rpm: f64,
+    /// Speed (m/s) up into gear 2, 3, 4, and back down into gear 1, 2, 3.
+    pub up_mps: [f64; 3],
+    pub down_mps: [f64; 3],
 }
 
 /// Bài 10 — thay đổi số trên đường bằng (Hình 17). Positions are metres from the start line, the

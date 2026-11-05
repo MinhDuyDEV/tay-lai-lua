@@ -40,7 +40,9 @@ pub unsafe extern "C" fn sim_free(ptr: *mut u8, len: usize) {
 /// * 10 — bài 10 (Thay đổi số trên đường bằng);
 /// * 11 — bài 11 (Kết thúc).
 ///
-/// Bits 0..55 are the seed proper. For bài 5 they also pick the light's phase: the offset into the
+/// Bit 55 (`AUTOMATIC_BIT`) says the learner drives an automatic: the wire's gear byte is then the selector
+/// (below 0 R, 0 N, above 0 D) and the clutch byte is ignored. `Session::new` is the only reader of that bit.
+/// Bits 0..54 are the seed proper. For bài 5 they also pick the light's phase: the offset into the
 /// cycle is that number reduced modulo the cycle length, so the same trace always meets the same
 /// light and a different attempt meets red, green or yellow. Any other exercise id is refused: this
 /// returns a null handle, and the caller must not use it, rather than quietly running bài 1.
