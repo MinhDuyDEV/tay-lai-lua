@@ -56,19 +56,22 @@ export interface RunOptions {
   target: Window;
   /** The codes this page captures; the restart codes are added here. */
   handledCodes: ReadonlySet<string>;
+  /** True when the page drives an automatic: the driver then has a selector and no third pedal. */
+  automatic?: boolean;
   onPenalty(penalty: Penalty): void;
   onRestart?(): void;
 }
 
 export function createRun(options: RunOptions): Run {
   const { exercise, ruleset, target, onPenalty } = options;
+  const automatic = options.automatic === true;
   const keyboard = attachKeyboard(target, new Set([...options.handledCodes, ...RESTART_CODES]));
   const penalties: Penalty[] = [];
 
   const stepsDone = new Set<StepId>();
   const mark = () => exercise.mark(stepsDone, state, ruleset);
 
-  let driver = createDriver();
+  let driver = createDriver({ automatic });
   let session = options.openSession();
   let state = session.state;
   let course = session.course;
@@ -84,7 +87,7 @@ export function createRun(options: RunOptions): Run {
 
   const reset = () => {
     session.dispose();
-    driver = createDriver();
+    driver = createDriver({ automatic });
     session = options.openSession();
     state = session.state;
     course = session.course;

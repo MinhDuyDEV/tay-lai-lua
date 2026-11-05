@@ -13,7 +13,7 @@ import { exerciseFor, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
 import { gearOf, gearSignM, type Penalty, type Ruleset } from './ruleset.ts';
 import { createRun, type Run } from './run.ts';
-import { lightName, openSession, zoneName, type Session, type SimState } from './sim/session.ts';
+import { AUTOMATIC_BIT, lightName, openSession, zoneName, type Session, type SimState } from './sim/session.ts';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -39,10 +39,25 @@ declare global {
 const NO_PENALTIES: readonly Penalty[] = [];
 
 /**
+ * The transmission the learner picked: `?so=tu-dong` in the address, or the switch on the page. Read
+ * on the client, because the page is prerendered where there is no URL; a bad value is an error rather
+ * than a silent fall back to the manual car, so a shared link that says something else says it out loud.
+ */
+function transmissionFromUrl(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  const so = new URLSearchParams(window.location.search).get('so');
+  if (so === null) return null;
+  if (so === 'tu-dong') return true;
+  if (so === 'san') return false;
+  throw new Error(`?so=${so} is not "tu-dong" or "san"`);
+}
+
+/**
  * The seed the page runs this time, or null for the lesson's own. A page's seed is the exercise's
  * default (`exercise.ts`); `?seed=` overrides it so a reviewer or the end-to-end test can drive the
  * same page to a different light or figure. The recorded trace carries the seed in its first 8 bytes,
- * so a run started this way still replays to the same hash.
+ * so a run started this way still replays to the same hash. It replaces the low bits only: the exercise
+ * id and the transmission come from the exercise (see the `useMemo` in `Stage`).
  */
 function seedOverride(): bigint | null {
   // No window during the static export: the page is prerendered on the server, where there is no URL
@@ -57,12 +72,24 @@ function seedOverride(): bigint | null {
 }
 
 export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
-  const base = exerciseFor(lesson);
-  // The lesson's own numbers, with only the seed taken from the URL when one is given.
+  // The manual car until the URL or the switch says otherwise: the server render has no URL.
+  const [automatic, setAutomatic] = useState(false);
+  useEffect(() => {
+    const so = transmissionFromUrl();
+    if (so !== null) setAutomatic(so);
+  }, []);
+  // Memoised: `exerciseFor` builds the page's object, so a fresh one every render would re-boot the run
+  // (and its sim session) on every render.
+  const base = useMemo(() => exerciseFor(lesson, automatic), [lesson, automatic]);
+  // The lesson's own numbers, with only the seed taken from the URL when one is given. The exercise id
+  // and the transmission bit are the page's, not the seed's: `?seed=` replaces the low bits only, so an
+  // automatic page opened with `?seed=7` still runs the automatic (and bài 1's id 0 stays 0).
   const exercise = useMemo(() => {
     const low = seedOverride();
-    return low === null ? base : { ...base, seed: (BigInt(lesson) << 56n) | low };
-  }, [base, lesson]);
+    if (low === null) return base;
+    const id = base.seed >> 56n;
+    return { ...base, seed: (id << 56n) | (base.automatic ? AUTOMATIC_BIT : 0n) | low };
+  }, [base]);
   const root = useRef<HTMLDivElement>(null);
   const runRef = useRef<Run | null>(null);
   const [run, setRun] = useState<Run | null>(null);
@@ -95,6 +122,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
         openSession: open,
         target: window,
         handledCodes: HANDLED_CODES,
+        automatic,
         onPenalty: (penalty) => setPenalties((prev) => [...prev, penalty]),
         onRestart: () => setPenalties(NO_PENALTIES),
       });
@@ -108,7 +136,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       created?.dispose();
       runRef.current = null;
     };
-  }, [exercise, ruleset, wasmUrl]);
+  }, [exercise, ruleset, wasmUrl, automatic]);
 
   // Publish the numbers the test polls, every frame, on the one root element.
   useEffect(() => {
@@ -207,7 +235,29 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
       data-hull-inside="no"
       data-finish-signal="no"
       data-hold-ticks="0"
+      data-so="san"
     >
+      <div className="choice" role="group" aria-label="Chọn loại hộp số">
+        {([
+          ['san', 'Số sàn', false],
+          ['tu-dong', 'Số tự động', true],
+        ] as const).map(([value, label, auto]) => (
+          <button
+            key={value}
+            type="button"
+            data-choice={value}
+            aria-pressed={automatic === auto}
+            onClick={(event) => {
+              // The switch is not the car: a focused button would eat Enter (the start order) and Space.
+              event.currentTarget.blur();
+              setAutomatic(auto);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="viewport">
         <Canvas
           camera={{ position: [-14, 5, 0], fov: 55, near: 0.1, far: 200 }}
@@ -241,7 +291,7 @@ export default function Stage({ lesson, ruleset, wasmUrl }: StageProps) {
           <h1>{exercise.title}</h1>
           <p>Bấm phím bất kỳ để vào xe. Bàn phím là đủ.</p>
           <ul>
-            {legendFor(lesson).slice(0, exercise.introKeys).map((entry) => (
+            {legendFor(lesson, lesson === 1, automatic).slice(0, exercise.introKeys).map((entry) => (
               <li key={entry.keys}>
                 <span className="key">{entry.keys}</span>
                 {entry.does}
@@ -298,6 +348,7 @@ function paint(el: HTMLElement, run: Run, exercise: Exercise, ruleset: Ruleset, 
   d.audio = audio;
   d.audioLevel = level.toFixed(4);
   d.hash = run.hash() ?? '';
+  d.so = exercise.automatic ? 'tu-dong' : 'san';
   paintAid(d, exercise.stop(s, ruleset));
   paintScene(d, s, run);
   d.entered = entered ? 'yes' : 'no';

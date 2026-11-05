@@ -3,7 +3,7 @@
 // loop take one of these instead of carrying bài 1 constants.
 
 import { flatRoad, stopAid, type StopAid, type StopRoad } from './stopAid.ts';
-import { seedWord } from './sim/session.ts';
+import { AUTOMATIC_BIT, seedWord } from './sim/session.ts';
 import { adviceFigure, cueFigure, wantSteer, type Centreline } from './figures.ts';
 import { adviceGhep, cueGhep, yardOf, type GhepCueNow, type Yard } from './ghep.ts';
 import { parkRects, type ParkRects } from './sim/session.ts';
@@ -13,7 +13,13 @@ import {
   adviceRoad,
   cueBai3,
   GEAR_STEPS,
+  GEAR_STEPS_AUTO,
+  FIGURE_STEPS_AUTO,
+  PARK_STEPS_AUTO,
   JUNCTION_STEPS,
+  JUNCTION_STEPS_AUTO,
+  BAI1_STEPS_AUTO,
+  BAI3_STEPS_AUTO,
   markGear,
   markJunction,
   markRoad,
@@ -54,6 +60,8 @@ const SIGNAL_LESSONS: ReadonlySet<Lesson> = new Set([1, 5, 11]);
 
 export interface Exercise {
   lesson: Lesson;
+  /** True when this page drives an automatic: the selector's seed bit, the words and the keys. */
+  automatic: boolean;
   title: string;
   /** The page's meta description: one line, for a search result or a link preview. */
   description: string;
@@ -89,87 +97,103 @@ export interface Exercise {
   introKeys: number;
 }
 
-const EXERCISES: Record<Lesson, Exercise> = {
-  1: {
+/**
+ * One builder per lesson, taking the transmission the learner chose. The choice changes three things
+ * and nothing else: the seed's `AUTOMATIC_BIT`, the checklist's words and keys, and the advice/cue
+ * functions, which get the flag so every sentence about a pedal is the sentence for the car in front
+ * of the learner. Splitting it here rather than in the page keeps one definition per lesson.
+ */
+type Build = (automatic: boolean) => Exercise;
+
+const EXERCISES: Record<Lesson, Build> = {
+  1: (automatic) => ({
     lesson: 1,
     title: 'Bài 1 — Xuất phát',
     description: 'Bài 1 xuất phát: nổ máy, thắt dây, xi nhan trái, vào số 1 và qua vạch xuất phát, bằng bàn phím.',
-    seed: seedWord(0),
-    steps: BAI1_STEPS,
-    mark: markBai1,
+    automatic,
+    seed: seedWord(0, 1n, automatic),
+    steps: automatic ? BAI1_STEPS_AUTO : BAI1_STEPS,
+    mark: (done, state, ruleset) => markBai1(done, state, ruleset, automatic),
     advice: () => null,
     cue: () => null,
     stop: () => null,
     signals: SIGNAL_LESSONS.has(1),
     stops: false,
     introKeys: 5,
-  },
-  3: {
+  }),
+  3: (automatic) => ({
     lesson: 3,
     title: 'Bài 3 — Dừng và khởi hành xe trên dốc',
     description: 'Tập bài dừng và khởi hành xe trên dốc, sa hình hạng B, bằng bàn phím.',
-    seed: seedWord(3),
-    steps: BAI3_STEPS,
-    mark: markBai3,
-    advice: adviceBai3,
-    cue: cueBai3,
-    stop: stopBai3,
+    automatic,
+    seed: seedWord(3, 1n, automatic),
+    steps: automatic ? BAI3_STEPS_AUTO : BAI3_STEPS,
+    mark: (done, state, ruleset) => markBai3(done, state, ruleset, automatic),
+    advice: (state, ruleset) => adviceBai3(state, ruleset, automatic, stopBai3(state, ruleset, automatic)),
+    cue: (state, ruleset) => cueBai3(state, ruleset, automatic, stopBai3(state, ruleset, automatic)),
+    stop: (state, ruleset) => stopBai3(state, ruleset, automatic),
     signals: SIGNAL_LESSONS.has(3),
     stops: true,
     introKeys: 6,
-  },
-  4: {
+  }),
+  4: (automatic) => ({
     lesson: 4,
     title: 'Bài 4 — Qua vệt bánh xe và đường vòng vuông góc',
     description: 'Tập bài qua vệt bánh xe và đường vòng vuông góc, sa hình hạng B, bằng bàn phím.',
-    seed: seedWord(4),
-    steps: FIGURE_STEPS,
-    mark: markFigure,
-    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 4),
+    automatic,
+    seed: seedWord(4, 1n, automatic),
+    steps: automatic ? FIGURE_STEPS_AUTO : FIGURE_STEPS,
+    mark: (done, state) => markFigure(done, state, automatic),
+    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 4, automatic),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(4),
     stops: false,
     introKeys: 5,
-  },
-  6: {
+  }),
+  6: (automatic) => ({
     lesson: 6,
     title: 'Bài 6 — Qua đường vòng quanh co',
     description: 'Tập bài qua đường vòng quanh co, sa hình hạng B, bằng bàn phím.',
-    seed: seedWord(6),
-    steps: FIGURE_STEPS,
-    mark: markFigure,
-    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 6),
+    automatic,
+    seed: seedWord(6, 1n, automatic),
+    steps: automatic ? FIGURE_STEPS_AUTO : FIGURE_STEPS,
+    mark: (done, state) => markFigure(done, state, automatic),
+    advice: (state, ruleset, centre) => adviceFigure(state, centre, ruleset, 6, automatic),
     cue: (state, ruleset, centre) => cueFigure(state, centre, ruleset),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(6),
     stops: false,
     introKeys: 5,
-  },
-  2: road(2, 'Bài 2 — Dừng xe nhường đường cho người đi bộ', 'Dừng đúng vạch cho người đi bộ qua, rồi đi tiếp, bằng bàn phím.'),
-  9: road(9, 'Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua', 'Tạm dừng đúng vạch trước đường sắt, quan sát rồi đi tiếp, bằng bàn phím.'),
-  11: road(11, 'Bài 11 — Kết thúc', 'Qua vạch kết thúc với xi nhan phải rồi dừng, bằng bàn phím.'),
-  5: junction(5, seedWord(5, 1n)),
-  7: park(7, seedWord(7)),
-  8: park(8, seedWord(8)),
-  10: gear(),
+  }),
+  2: (automatic) => road(2, 'Bài 2 — Dừng xe nhường đường cho người đi bộ', 'Dừng đúng vạch cho người đi bộ qua, rồi đi tiếp, bằng bàn phím.', automatic),
+  9: (automatic) => road(9, 'Bài 9 — Tạm dừng ở chỗ có đường sắt chạy qua', 'Tạm dừng đúng vạch trước đường sắt, quan sát rồi đi tiếp, bằng bàn phím.', automatic),
+  11: (automatic) => road(11, 'Bài 11 — Kết thúc', 'Qua vạch kết thúc với xi nhan phải rồi dừng, bằng bàn phím.', automatic),
+  5: (automatic) => junction(5, seedWord(5, 1n, automatic), automatic),
+  7: (automatic) => park(7, seedWord(7, 1n, automatic), automatic),
+  8: (automatic) => park(8, seedWord(8, 1n, automatic), automatic),
+  10: (automatic) => gear(automatic),
 };
 
-export const exerciseFor = (lesson: Lesson): Exercise => EXERCISES[lesson];
+/** The exercise a page runs: the lesson's own, in the transmission the learner chose. */
+export const exerciseFor = (lesson: Lesson, automatic = false): Exercise => EXERCISES[lesson](automatic);
 
 /**
  * Bài 3's stop line is on its slope: the grade under the car is the slope's from the foot on and level
  * before it. That is the road `stopAid` walks along, read from the ruleset's own `hill` block rather
  * than assumed, so a different slope or stop line moves the countdown with it.
  */
-function stopBai3(state: SimState, ruleset: Ruleset): StopAid | null {
+function stopBai3(state: SimState, ruleset: Ruleset, automatic = false): StopAid | null {
   const hill = hillOf(ruleset);
   const road: StopRoad = {
     grade: (toLineM) => {
       const x = hill.stop_line_from_foot_m - toLineM;
       return x > hill.foot_x_m && x < hill.foot_x_m + hill.slope_length_m ? hill.grade : 0;
     },
-    key: 'clutch',
+    // No clutch to lift on an automatic: the one pedal that decides the stop is the brake, and the
+    // converter keeps pushing while it comes on.
+    key: automatic ? 'brake' : 'clutch',
+    converterRpm: automatic ? ruleset.automatic?.converter_rpm : undefined,
   };
   return stopAid(state, ruleset, road);
 }
@@ -180,17 +204,24 @@ function stopBai3(state: SimState, ruleset: Ruleset): StopAid | null {
  * the only key that decides whether A lands inside 500 mm. Bài 11's stop is at the finish line, which
  * charges no distance A, so it gets no countdown: what it times is the right signal, not the gap.
  */
-function road(lesson: RoadLesson, title: string, description: string): Exercise {
+function road(lesson: RoadLesson, title: string, description: string, automatic: boolean): Exercise {
   return {
     lesson,
     title,
     description,
-    seed: seedWord(lesson),
-    steps: roadSteps(lesson),
-    mark: markRoad,
-    advice: (state, ruleset) => adviceRoad(state, ruleset, lesson),
+    automatic,
+    seed: seedWord(lesson, 1n, automatic),
+    steps: roadSteps(lesson, automatic),
+    mark: (done, state, ruleset) => markRoad(done, state, ruleset, automatic),
+    advice: (state, ruleset) => adviceRoad(state, ruleset, lesson, automatic),
     cue: () => null,
-    stop: lesson === 11 ? () => null : (state, ruleset) => stopAid(state, ruleset, flatRoad('brake')),
+    // An automatic's converter keeps pushing while the brake goes down: the aid is told its speed so the
+    // stop it times lands where it says (see StopRoad.converterRpm).
+    stop:
+      lesson === 11
+        ? () => null
+        : (state, ruleset) =>
+            stopAid(state, ruleset, flatRoad('brake', automatic ? ruleset.automatic?.converter_rpm : undefined)),
     signals: SIGNAL_LESSONS.has(lesson),
     stops: lesson !== 11,
     introKeys: 5,
@@ -203,17 +234,18 @@ function road(lesson: RoadLesson, title: string, description: string): Exercise 
  * and the learner is 150–400 ms behind everything they read. Its seed is the exercise's own (`seedWord`
  * puts the exercise id in the top byte), so a recorded trace replays to the same run.
  */
-function gear(): Exercise {
+function gear(automatic: boolean): Exercise {
   return {
     lesson: 10,
+    automatic,
     title: 'Bài 10 — Thay đổi số trên đường bằng',
     description:
       'Thay đổi số trên đường bằng (Hình 17): qua biển thứ nhất thì lên số 2 và trên 24 km/h ở biển thứ hai, rồi giảm tốc, về số 1 và dưới 24 km/h ở biển thứ ba, bằng bàn phím.',
-    seed: seedWord(10),
-    steps: GEAR_STEPS,
-    mark: markGear,
-    advice: (state, ruleset) => adviceGear(state, ruleset),
-    cue: (state, ruleset) => gearCue(state, ruleset),
+    seed: seedWord(10, 1n, automatic),
+    steps: automatic ? GEAR_STEPS_AUTO : GEAR_STEPS,
+    mark: (done, state, ruleset) => markGear(done, state, ruleset, automatic),
+    advice: (state, ruleset) => adviceGear(state, ruleset, undefined, automatic),
+    cue: (state, ruleset) => gearCue(state, ruleset, undefined, automatic),
     stop: () => null,
     signals: SIGNAL_LESSONS.has(10),
     stops: false,
@@ -227,17 +259,18 @@ function gear(): Exercise {
  * offset is the seed's low bits, so a recorded trace replays to the same light; measured, seed 1 is
  * red at the line and seed 900 is green, which is the pair the e2e drives.
  */
-function junction(lesson: 5, seed: bigint): Exercise {
+function junction(lesson: 5, seed: bigint, automatic: boolean): Exercise {
   return {
     lesson,
+    automatic,
     title: 'Bài 5 — Qua ngã tư có tín hiệu điều khiển giao thông',
     description: 'Qua ngã tư có đèn: dừng đúng vạch khi đèn đỏ, chờ đèn xanh, xi nhan phải rồi rẽ, bằng bàn phím.',
     seed,
-    steps: JUNCTION_STEPS,
-    mark: markJunction,
-    advice: (state, ruleset, centre) => adviceJunction(state, ruleset, cueJunction(state, centre, ruleset)),
+    steps: automatic ? JUNCTION_STEPS_AUTO : JUNCTION_STEPS,
+    mark: (done, state, ruleset) => markJunction(done, state, ruleset, automatic),
+    advice: (state, ruleset, centre) => adviceJunction(state, ruleset, cueJunction(state, centre, ruleset), automatic),
     cue: (state, _ruleset, centre) => cueJunction(state, centre, _ruleset),
-    stop: stopJunction,
+    stop: (state, ruleset) => stopJunction(state, ruleset, automatic),
     signals: SIGNAL_LESSONS.has(lesson),
     stops: true,
     introKeys: 5,
@@ -254,20 +287,21 @@ function junction(lesson: 5, seed: bigint): Exercise {
  * by a person's 300 ms is half a metre of travel. That is why the cue has a `clutch` word (the car has
  * to be still and the pedal down before the gear goes in) beside the steer and pedal words.
  */
-function park(lesson: ParkLesson, seed: bigint): Exercise {
+function park(lesson: ParkLesson, seed: bigint, automatic: boolean): Exercise {
   return {
     lesson,
+    automatic,
     title: lesson === 7 ? 'Bài 7 — Ghép xe dọc vào nơi đỗ' : 'Bài 8 — Ghép xe ngang vào nơi đỗ',
     description:
       lesson === 7
         ? 'Ghép xe dọc vào nơi đỗ (Hình 13): tiến vào khoảng khống chế, lùi chuẩn vào ô, đứng phanh đến khi có tín hiệu, bằng bàn phím.'
         : 'Ghép xe ngang vào nơi đỗ (Hình 14): lùi chuẩn vào ô hẹp bên phải, đứng phanh đến khi có tín hiệu, bằng bàn phím.',
     seed,
-    steps: PARK_STEPS,
-    mark: markPark,
+    steps: automatic ? PARK_STEPS_AUTO : PARK_STEPS,
+    mark: (done, state) => markPark(done, state, automatic),
     advice: (state, ruleset, _centre, yard) => {
       if (!yard) return 'Chưa đọc được hình ghép xe từ sim: tải lại trang.';
-      return adviceGhep(state, yard, ruleset, lesson);
+      return adviceGhep(state, yard, ruleset, lesson, undefined, automatic);
     },
     cue: (state, ruleset, _centre, yard) => (yard ? cueGhep(state, yard, ruleset).steer : null),
     cueNow: (state, ruleset, yard) => cueGhep(state, yard, ruleset),
@@ -287,9 +321,9 @@ function park(lesson: ParkLesson, seed: bigint): Exercise {
  * the learner just drives through. On red or yellow the countdown is the road lessons' own flat-road
  * brake countdown, because from the bumper to the line the junction's approach is level ground.
  */
-function stopJunction(state: SimState, ruleset: Ruleset): StopAid | null {
+function stopJunction(state: SimState, ruleset: Ruleset, automatic = false): StopAid | null {
   if (state.lightColour !== 1 && state.lightColour !== 2) return null;
-  return stopAid(state, ruleset, flatRoad('brake'));
+  return stopAid(state, ruleset, flatRoad('brake', automatic ? ruleset.automatic?.converter_rpm : undefined));
 }
 
 /**

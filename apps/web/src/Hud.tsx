@@ -12,6 +12,7 @@ import type { Penalty } from './ruleset.ts';
 import type { Run } from './run.ts';
 import Inset from './Inset.tsx';
 import { cueGhep, holdAid, hullOutside, newHoldTimer, yardOf, type HoldTimer } from './ghep.ts';
+import { gearAutomaticNote } from './gear.ts';
 import { lightName, zoneName, type LightName, type SimState, type ZoneName } from './sim/session.ts';
 import { secondsLeft, type StepId } from './steps.ts';
 
@@ -87,6 +88,8 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
   const gearLesson = exercise.lesson === 10;
   const figureEl = useRef<HTMLElement>(null);
   const gearEl = useRef<HTMLElement>(null);
+  /** Bài 10 on an automatic: the note the ruleset carries, or a page that says why it has none. */
+  const gearNote = gearLesson && exercise.automatic ? gearAutomaticNote(ruleset) : null;
 
   useEffect(() => {
     const hill = hillEl.current ? hillParts(hillEl.current) : null;
@@ -109,7 +112,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       if (aidParts) {
         const aid = exercise.stop(s, ruleset);
         if (aid) spanRef.current = Math.max(spanRef.current, aid.gapM);
-        paintAid(aidParts, aid, spanRef.current);
+        paintAid(aidParts, aid, spanRef.current, exercise.automatic);
       }
       if (fig) paintFigure(fig, s, yard, ruleset, park);
       if (gearParts) paintGearCard(gearParts, s, ruleset);
@@ -145,7 +148,17 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             holdFill.current.style.width = h.ms > 0 ? `${Math.round((1 - h.leftMs / h.ms) * 100)}%` : '0%';
             const sec = (h.leftMs / 1000).toFixed(1).replace('.', ',');
             holdText.current.textContent =
-              h.state === 'idle' ? '' : h.state === 'ready' ? `Nhả côn + phanh ↓ rồi đếm ${(h.ms / 1000).toFixed(1).replace('.', ',')} giây` : h.state === 'now' ? 'Đạp côn + phanh ↓ ngay' : `Còn ${sec} giây`;
+              h.state === 'idle'
+                ? ''
+                : h.state === 'ready'
+                  ? exercise.automatic
+                    ? `Nhả phanh ↓ rồi đếm ${(h.ms / 1000).toFixed(1).replace('.', ',')} giây`
+                    : `Nhả côn + phanh ↓ rồi đếm ${(h.ms / 1000).toFixed(1).replace('.', ',')} giây`
+                  : h.state === 'now'
+                    ? exercise.automatic
+                      ? 'Phanh ↓ ngay'
+                      : 'Đạp côn + phanh ↓ ngay'
+                    : `Còn ${sec} giây`;
           }
         }
       }
@@ -333,20 +346,29 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
             <strong>
               <span data-part="value">N</span>
             </strong>
-            <small>số 1, rồi số 2, rồi số 1</small>
+            <small>{exercise.automatic ? 'hộp số tự động' : 'số 1, rồi số 2, rồi số 1'}</small>
           </div>
           <p className="advice" ref={advice} />
+          {gearNote ? (
+            <p className="aid-note" data-note="gear-automatic">
+              {gearNote.value} {gearNote.why}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
       <section className="hud-drive" aria-label="Xe">
         <div className="pedals">
-          <div className="pedal">
-            <div className="track">
-              <div className="fill" ref={clutch} data-pedal="clutch" />
+          {/* An automatic has two pedals: the snapshot's clutch is the converter's slip, not something
+              the learner can press, so it is not drawn as one. */}
+          {exercise.automatic ? null : (
+            <div className="pedal">
+              <div className="track">
+                <div className="fill" ref={clutch} data-pedal="clutch" />
+              </div>
+              <span>Côn</span>
             </div>
-            <span>Côn</span>
-          </div>
+          )}
           <div className="pedal">
             <div className="track">
               <div className="fill" ref={throttle} data-pedal="throttle" />
@@ -439,7 +461,7 @@ export default function Hud({ run, exercise, ruleset, penalties, rpmLimit, audio
       <section className="hud-keys" aria-label="Phím">
         <h2>Phím</h2>
         <ul>
-          {legendFor(exercise.lesson, exercise.signals).map((entry) => (
+          {legendFor(exercise.lesson, exercise.signals, exercise.automatic).map((entry) => (
             <li key={entry.keys}>
               <span className="key">{entry.keys}</span>
               {entry.does}
@@ -712,7 +734,7 @@ interface AidParts {
  *
  * It is deliberately the same simple HUD vocabulary as the rest: a track, a fill and a mark, no art.
  */
-function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: number) {
+function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: number, automatic: boolean) {
   if (!aid) {
     parts.el.dataset.state = 'idle';
     parts.fill.style.width = '0%';
@@ -730,7 +752,7 @@ function paintAid(parts: AidParts, aid: ReturnType<Exercise['stop']>, widest: nu
   parts.el.dataset.key = aid.key;
   parts.fill.style.width = `${fillPct}%`;
   parts.mark.style.left = `${markPct}%`;
-  parts.key.textContent = aid.key === 'clutch' ? 'Côn' : 'Côn + phanh';
+  parts.key.textContent = automatic ? 'Phanh ↓' : aid.key === 'clutch' ? 'Côn' : 'Côn + phanh';
   parts.inn.textContent = aid.now ? '— bấm ngay' : `— còn ${(aid.etaMs / 1000).toFixed(1)} s`;
 }
 

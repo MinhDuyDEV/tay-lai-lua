@@ -6,6 +6,7 @@
 import { DT } from '../input/driver.ts';
 import { coastDecel, gearSignM, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
 import type { FigureCue } from './figures.ts';
+import type { StopAid } from './stopAid.ts';
 import type { SimState } from './sim/session.ts';
 
 export type StepId =
@@ -55,6 +56,23 @@ export const BAI1_STEPS: readonly Step[] = [
   { id: 'off', label: 'Tắt xi nhan ở 05 m sau vạch', key: 'Q' },
 ];
 
+/**
+ * Bài 1's checklist for an automatic: the same seven steps, but the gear is the selector's D and the
+ * car goes on its own once the handbrake is released, so the learner never presses the throttle here.
+ */
+export const BAI1_STEPS_AUTO: readonly Step[] = [
+  { id: 'engine', label: 'Máy nổ', key: 'E' },
+  { id: 'belt', label: 'Thắt dây an toàn', key: 'B' },
+  { id: 'order', label: 'Nhận lệnh xuất phát', key: 'Enter' },
+  { id: 'signal', label: 'Xi nhan trái', key: 'Q' },
+  { id: 'gear', label: 'Cần số D', key: 'D' },
+  { id: 'away', label: 'Nhả phanh tay, xe tự bò qua vạch', key: 'P' },
+  { id: 'off', label: 'Tắt xi nhan ở 05 m sau vạch', key: 'Q' },
+];
+
+/** A drive range is selected: D on the wire is any forward gear, R is -1, N is 0. */
+const inDrive = (s: SimState): boolean => s.gear > 0;
+
 // The engine is already running in bài 3, so there is no step for it.
 export const BAI3_STEPS: readonly Step[] = [
   { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
@@ -65,15 +83,29 @@ export const BAI3_STEPS: readonly Step[] = [
 ];
 
 /**
+ * Bài 3 on an automatic. There is no clutch to hold at the bite and no handbrake dance: the car rolls
+ * off the flat on its own, a short throttle pulse gets it up the 10 % grade, the brake makes the stop,
+ * and the same brake hands over to the throttle for the start (the converter holds it, so it does not
+ * roll back).
+ */
+export const BAI3_STEPS_AUTO: readonly Step[] = [
+  { id: 'gear', label: 'Cần số D', key: 'D' },
+  { id: 'free', label: 'Nhả phanh tay, xe tự bò tới chân dốc', key: 'P' },
+  { id: 'stop', label: 'Dừng, A không quá 500 mm', key: '↓' },
+  { id: 'start', label: 'Khởi hành: nhả phanh, giữ ga lên dốc', key: '↑' },
+  { id: 'line', label: 'Qua vạch dừng', key: '↑' },
+];
+
+/**
  * Add every step this tick's state satisfies. A step stays done for the rest of the run, because
  * the learner has done it even when the signal or the gear changes again afterwards.
  */
-export function markBai1(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+export function markBai1(done: Set<StepId>, state: SimState, ruleset: Ruleset, automatic = false): void {
   if (state.engineOn) done.add('engine');
   if (state.belt) done.add('belt');
   if (state.phase !== 'waiting') done.add('order');
   if (state.signal === 'left') done.add('signal');
-  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (state.frontBumperM >= 0) done.add('away');
   if (done.has('signal') && state.signal === 'off' && state.frontBumperM >= ruleset.course.signal_off_early_m) done.add('off');
 }
@@ -83,9 +115,9 @@ const AWAY_M = 0.1;
 
 const stopped = (s: SimState) => s.sinceStopTicks >= 0;
 
-export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+export function markBai3(done: Set<StepId>, state: SimState, ruleset: Ruleset, automatic = false): void {
   const hill = hillOf(ruleset);
-  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (done.has('gear') && !state.handbrake) done.add('free');
   if (stopped(state) && state.stopGapAM >= 0 && state.stopGapAM <= hill.max_a_m) done.add('stop');
   // A stop closer to the line than AWAY_M has less road than that to pull away on: the line ends the run.
@@ -101,8 +133,15 @@ export const FIGURE_STEPS: readonly Step[] = [
   { id: 'finish', label: 'Qua vạch kết thúc', key: '← →' },
 ];
 
-export function markFigure(done: Set<StepId>, state: SimState): void {
-  if (state.gear === 1 && state.clutch < 0.1) done.add('gear');
+export const FIGURE_STEPS_AUTO: readonly Step[] = [
+  { id: 'gear', label: 'Cần số D, nhả phanh tay', key: 'D, P' },
+  { id: 'entry', label: 'Để xe tự bò qua vạch vào hình', key: 'P' },
+  { id: 'line', label: 'Giữ bánh xe trong làn, không đè vạch', key: '← →' },
+  { id: 'finish', label: 'Qua vạch kết thúc', key: '← →' },
+];
+
+export function markFigure(done: Set<StepId>, state: SimState, automatic = false): void {
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch < 0.1) done.add('gear');
   if (state.clockS > 0) done.add('entry');
   if (state.progressM > 0 && state.contact.every((c) => c === 0)) done.add('line');
   if (state.phase === 'done' && !state.disqualified) done.add('finish');
@@ -122,8 +161,16 @@ export const PARK_STEPS: readonly Step[] = [
   { id: 'signal', label: 'Đứng phanh đến khi có tín hiệu, rồi Enter', key: '↓, Enter' },
 ];
 
-export function markPark(done: Set<StepId>, state: SimState): void {
-  if (state.gear !== 0 && state.clutch > 0.9) done.add('gear');
+export const PARK_STEPS_AUTO: readonly Step[] = [
+  { id: 'gear', label: 'Cần số D, nhả phanh tay', key: 'D, P' },
+  { id: 'into', label: 'Tiến vào khoảng khống chế, qua cửa ô', key: '↓, ← →' },
+  { id: 'back', label: 'Lùi vào ô (R), đánh lái theo lời nhắc', key: 'R, ← →' },
+  { id: 'inside', label: 'Thân xe nằm trọn trong ô', key: '← →' },
+  { id: 'signal', label: 'Đứng phanh đến khi có tín hiệu, rồi Enter', key: '↓, Enter' },
+];
+
+export function markPark(done: Set<StepId>, state: SimState, automatic = false): void {
+  if (automatic ? state.gear !== 0 : state.gear !== 0 && state.clutch > 0.9) done.add('gear');
   // The car has entered the control distance once the core's clock is running.
   if (state.clockMs > 0) done.add('into');
   if (state.gear === -1) done.add('back');
@@ -145,9 +192,17 @@ export const GEAR_STEPS: readonly Step[] = [
   { id: 'end', label: 'Qua biển thứ ba là hết bài', key: '—' },
 ];
 
-export function markGear(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+export const GEAR_STEPS_AUTO: readonly Step[] = [
+  { id: 'gear', label: 'Cần số D, nhả phanh tay', key: 'D, P' },
+  { id: 'away', label: 'Chạy đà tới biển thứ nhất', key: '↑' },
+  { id: 'shift2', label: 'Qua biển 1: đủ nhanh ở biển 2', key: '↑' },
+  { id: 'shift1', label: 'Qua biển 2: giảm tốc, đủ chậm ở biển 3', key: '↓' },
+  { id: 'end', label: 'Qua biển thứ ba là hết bài', key: '—' },
+];
+
+export function markGear(done: Set<StepId>, state: SimState, ruleset: Ruleset, automatic = false): void {
   if (!ruleset.gear) return;
-  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (state.frontBumperM >= gearSignM(ruleset.gear, 0)) done.add('away');
   if (state.frontBumperM >= gearSignM(ruleset.gear, 1)) done.add('shift2');
   if (state.frontBumperM >= gearSignM(ruleset.gear, 2)) done.add('shift1');
@@ -176,7 +231,18 @@ export function secondsLeft(state: SimState, ruleset: Ruleset): number | null {
  * resistance, `coastDecel`), read from the ruleset, so a different grade or car moves the cue with
  * it instead of leaving behind a constant that only fits one slope.
  */
-export type Bai3Cue = 'slow' | 'clutch' | 'brake';
+export type Bai3Cue = 'slow' | 'clutch' | 'brake' | 'throttle';
+
+/**
+ * Automatic only: how far from the line the throttle pulse on the way up the slope ends, metres.
+ *
+ * Measured on the core: from the foot of the 10 % grade in D the converter's creep alone loses speed,
+ * and one short pulse of ↑ gets the car over the rest of the climb. With the pulse ending anywhere
+ * from 1.7 m to 2.2 m short of the line, a learner 100 to 400 ms late stops inside A on every run;
+ * ending it at 1.5 m leaves a 350–400 ms learner no road to get the brake down before the line. The
+ * number is measured, not derived from the ruleset, and a core that changes the converter moves it.
+ */
+const AUTO_PULSE_END_GAP_M = 1.9;
 
 /**
  * Fastest approach speed the stop cue can hold inside A across a 100–400 ms reaction. The car's own
@@ -221,8 +287,15 @@ function slowGap(v: number, coast: number): number {
  * The HUD publishes it on the advice line (`data-cue`), so the page and the tests that drive it act
  * on the same thing.
  */
-export function cueBai3(s: SimState, ruleset: Ruleset): Bai3Cue | null {
+export function cueBai3(s: SimState, ruleset: Ruleset, automatic = false, aid: StopAid | null = null): Bai3Cue | null {
   if (s.disqualified || s.phase === 'done' || !s.engineOn || stopped(s)) return null;
+  if (automatic) {
+    // The stop aid times the brake itself, so it is the one thing that says "now" — the same countdown
+    // the bar draws. The pulse is the only other key this slope asks for.
+    if (!inDrive(s) || s.handbrake || s.lineGapM < 0) return null;
+    if (aid?.now) return 'brake';
+    return s.grade > 0 && s.lineGapM > AUTO_PULSE_END_GAP_M ? 'throttle' : null;
+  }
   if (s.gear !== 1 || s.handbrake || s.lineGapM < 0) return null;
   // The stop line is on the slope, so the road the car will slow on is the slope's grade — not the
   // grade under the car now, which is 0 on the flat and would make the cue absurdly early.
@@ -240,11 +313,12 @@ const kmh = (mps: number) => (mps * 3.6).toFixed(1);
  * nothing (a throttle with the clutch down, a gear that is not 1) because a learner looks here
  * first when the car does not move.
  */
-export function adviceBai3(s: SimState, ruleset: Ruleset): string {
+export function adviceBai3(s: SimState, ruleset: Ruleset, automatic = false, aid: StopAid | null = null): string {
   const hill = hillOf(ruleset);
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (s.phase === 'done') return 'Đã qua vạch dừng. Bấm Esc để làm lại.';
-  if (!s.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (!s.engineOn) return automatic ? 'Máy đã tắt. Bấm E để nổ lại.' : 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (automatic) return adviceBai3Auto(s, ruleset, hill, aid);
 
   if (!stopped(s)) {
     if (s.gear !== 1) return 'Chưa vào số 1 nên ga không kéo xe. Đạp côn hết cỡ (giữ Space), bấm 1.';
@@ -278,6 +352,37 @@ export function adviceBai3(s: SimState, ruleset: Ruleset): string {
   return `Đang khởi hành. Giữ ga ↑ nhẹ, nhả côn dần.${clock}`;
 }
 
+/**
+ * Bài 3 on an automatic, one sentence at a time: D, handbrake, the pulse at the foot of the slope, the
+ * brake the aid times, then the start handed from the brake to the throttle. Every number it quotes
+ * comes from the state or the ruleset; the one measured constant is where the pulse ends.
+ */
+function adviceBai3Auto(s: SimState, ruleset: Ruleset, hill: ReturnType<typeof hillOf>, aid: StopAid | null): string {
+  const left = secondsLeft(s, ruleset);
+  const clock = left === null ? '' : ` Còn ${Math.ceil(left)} giây để qua vạch.`;
+  if (!stopped(s)) {
+    if (!inDrive(s)) return 'Cần số đang ở N. Bấm D để xe đi tới.';
+    if (s.handbrake) return 'Phanh tay đang kéo nên xe đứng yên. Bấm P để nhả, xe sẽ tự bò tới chân dốc.';
+    if (aid?.now) return 'Phanh ↓ ngay, giữ cho tới khi xe dừng hẳn.';
+    if (s.grade > 0 && s.lineGapM > AUTO_PULSE_END_GAP_M) {
+      return 'Chân dốc: giữ ga ↑ cho tới khi dòng này đổi — xe cần một nhịp ga mới lên hết dốc — rồi thả ra.';
+    }
+    if (s.lineGapM < 0) return 'Đã quá vạch mà chưa dừng.';
+    return `Thả ga, để xe lăn tới vạch: còn ${mm(s.lineGapM)}. Khi thanh báo «bấm ngay» thì phanh ↓.`;
+  }
+
+  if (s.rollbackM > hill.max_rollback_m * 0.6) {
+    return `Xe đang tụt dốc (${mm(s.rollbackM)}/${mm(hill.max_rollback_m)}). Giữ phanh ↓ ngay.`;
+  }
+  const a = s.stopGapAM;
+  const where =
+    a >= 0 && a <= hill.max_a_m
+      ? `Đã dừng trong A (${mm(a)}).`
+      : `Đã dừng lệch vạch (A ${mm(a)}). Bấm Esc để làm lại nếu muốn điểm tuyệt đối.`;
+  if (s.speedMps > 0.2) return `${where} Đang lên dốc: giữ ga ↑.${clock}`;
+  return `${where} Khởi hành: nhả phanh ↓ và giữ ga ↑ — xe không tụt dốc.${clock}`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Bài 2 (dừng xe nhường đường cho người đi bộ), bài 9 (tạm dừng ở chỗ có đường sắt) and bài 11
 // (kết thúc): one straight road, a stop line, and one thing past it.
@@ -288,17 +393,24 @@ export function adviceBai3(s: SimState, ruleset: Ruleset): string {
 // to look at even when the keys are the same.
 
 /** A road exercise's three or four steps. `yieldLabel` is what is past the line, in the learner's words. */
-export function roadSteps(lesson: 2 | 9 | 11): readonly Step[] {
+export function roadSteps(lesson: 2 | 9 | 11, automatic = false): readonly Step[] {
   const steps: Step[] = [
-    { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
+    automatic
+      ? { id: 'gear', label: 'Cần số D', key: 'D' }
+      : { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
     { id: 'free', label: 'Nhả phanh tay, để xe tự bò', key: 'P' },
-    { id: 'approach', label: 'Tới vạch dừng, giữ tốc độ chậm', key: '↑' },
+    // On an automatic the creep is the whole approach: the car holds its own slow pace to the line.
+    { id: 'approach', label: 'Tới vạch dừng, giữ tốc độ chậm', key: automatic ? '—' : '↑' },
     { id: 'stop', label: 'Dừng, A không quá 500 mm', key: '↓' },
   ];
   if (lesson === 2) steps.push({ id: 'yield', label: 'Nhường đường cho người đi bộ qua vạch', key: '—' });
   if (lesson === 9) steps.push({ id: 'yield', label: 'Tạm dừng, quan sát đường sắt rồi mới qua', key: '—' });
   if (lesson === 11) steps.push({ id: 'signal', label: 'Bật xi nhan phải trước vạch kết thúc', key: 'W' });
-  steps.push({ id: 'line', label: lesson === 11 ? 'Qua vạch kết thúc rồi dừng' : 'Qua vạch, chạy tiếp', key: '↑' });
+  steps.push({
+    id: 'line',
+    label: lesson === 11 ? 'Qua vạch kết thúc rồi dừng' : 'Qua vạch, chạy tiếp',
+    key: lesson === 11 ? '↓' : automatic ? '—' : '↑',
+  });
   return steps;
 }
 
@@ -307,9 +419,9 @@ export function roadSteps(lesson: 2 | 9 | 11): readonly Step[] {
  * recorded on the stop tick, `sinceStopTicks` from there), so the checklist and the scorer cannot
  * disagree about whether the car stopped inside A.
  */
-export function markRoad(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+export function markRoad(done: Set<StepId>, state: SimState, ruleset: Ruleset, automatic = false): void {
   const road = roadOf(ruleset);
-  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (done.has('gear') && !state.handbrake) done.add('free');
   if (state.sinceStopTicks < 0 && state.lineGapM < 2) done.add('approach');
   if (state.sinceStopTicks >= 0 && state.stopGapAM >= 0 && state.stopGapAM <= road.max_a_m) done.add('stop');
@@ -322,25 +434,30 @@ export function markRoad(done: Set<StepId>, state: SimState, ruleset: Ruleset): 
  * The road exercises' advice: a short sentence for the next thing, read from the same state the
  * scorer reads. `what` names the thing past the line so the words fit the lesson.
  */
-export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11): string {
+export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11, automatic = false): string {
   const road = roadOf(ruleset);
   const mm = (m: number) => `${Math.round(m * 1000)} mm`;
   if (state.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (state.phase === 'done') return 'Hết bài. Bấm Esc để làm lại.';
-  if (!state.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
-  if (state.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  if (!state.engineOn) return automatic ? 'Máy đã tắt. Bấm E để nổ lại.' : 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (automatic ? !inDrive(state) : state.gear !== 1) {
+    return automatic ? 'Cần số đang ở N. Bấm D để xe đi tới.' : 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  }
   if (state.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, xe sẽ tự bò tới vạch.';
+  const stopKeys = automatic
+    ? 'phanh (↓) khi thanh báo «bấm ngay», rồi giữ phanh cho tới khi xe dừng.'
+    : STOP_KEYS;
 
   // Bài 11 is the finish, not a stop short of a line: SH.KT.KHONG_QUA_VACH disqualifies a car that
   // *stops* before the finish line, and SH.KT.KHONG_XI_NHAN_PHAI charges one that crosses without the
   // right signal. So it must not be told to brake for the line or to read a countdown — it has none —
   // and the signal has to be asked for before the crossing, not after a stop that would end the run.
-  if (lesson === 11) return adviceFinish(state, road);
+  if (lesson === 11) return adviceFinish(state, road, automatic);
   if (state.sinceStopTicks < 0) {
     if (state.speedMps > 2.6) return 'Chậm lại: nhả ga, để xe tự bò tới vạch dừng.';
     if (state.lineGapM < 0) return 'Đã qua vạch mà chưa dừng.';
     const aid = state.lineGapM > 0 && state.lineGapM < 2 ? ' Bám thanh đếm ngược cạnh số A.' : '';
-    return `Còn ${mm(state.lineGapM)} tới vạch dừng; ${STOP_KEYS}${aid}`;
+    return `Còn ${mm(state.lineGapM)} tới vạch dừng; ${stopKeys}${aid}`;
   }
 
   // Stopped at the line.
@@ -361,7 +478,7 @@ export function adviceRoad(state: SimState, ruleset: Ruleset, lesson: 2 | 9 | 11
  * the line. Its own rule is what the words come from: KHONG_QUA_VACH disqualifies a car that does not
  * cross, KHONG_XI_NHAN_PHAI charges one that crosses unsignalled.
  */
-function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>): string {
+function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>, automatic = false): string {
   if (state.signal !== 'right') {
     return state.lineGapM > 0
       ? `Bật xi nhan phải (W) trước khi qua vạch kết thúc, rồi chạy qua vạch. Còn ${Math.round(state.lineGapM * 1000)} mm.`
@@ -370,7 +487,11 @@ function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>): string 
   if (state.frontBumperM < road.finish_offset_m + road.start_front_bumper_m) {
     return 'Đã có xi nhan phải. Cứ chạy qua vạch kết thúc, đừng dừng lại trước vạch.';
   }
-  if (state.speedMps > 0.05) return `Đã qua vạch kết thúc: ${STOP_KEYS}`;
+  if (state.speedMps > 0.05) {
+    return automatic
+      ? 'Đã qua vạch kết thúc: phanh ↓ cho xe dừng hẳn.'
+      : `Đã qua vạch kết thúc: ${STOP_KEYS}`;
+  }
   return 'Đã qua vạch và dừng. Hết bài.';
 }
 
@@ -386,6 +507,14 @@ function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>): string 
 /** Bài 5's checklist: the order above, one step per thing the learner does. */
 export const JUNCTION_STEPS: readonly Step[] = [
   { id: 'gear', label: 'Côn + số 1', key: 'Space, 1' },
+  { id: 'free', label: 'Nhả phanh tay, chạy tới vạch', key: 'P' },
+  { id: 'stop', label: 'Đèn đỏ/vàng: dừng trong A trước vạch', key: '↓' },
+  { id: 'signal', label: 'Đèn xanh, bật xi nhan phải trước khi rẽ', key: 'W' },
+  { id: 'through', label: 'Rẽ phải trong làn, qua vạch kết thúc ngã tư', key: '→' },
+];
+
+export const JUNCTION_STEPS_AUTO: readonly Step[] = [
+  { id: 'gear', label: 'Cần số D', key: 'D' },
   { id: 'free', label: 'Nhả phanh tay, chạy tới vạch', key: 'P' },
   { id: 'stop', label: 'Đèn đỏ/vàng: dừng trong A trước vạch', key: '↓' },
   { id: 'signal', label: 'Đèn xanh, bật xi nhan phải trước khi rẽ', key: 'W' },
@@ -437,9 +566,9 @@ const RED = 1;
  * for, so the step is marked by carrying on through the line instead — the exercise is the junction,
  * not a stop at it.
  */
-export function markJunction(done: Set<StepId>, state: SimState, ruleset: Ruleset): void {
+export function markJunction(done: Set<StepId>, state: SimState, ruleset: Ruleset, automatic = false): void {
   const junction = junctionOf(ruleset);
-  if (state.gear === 1 && state.clutch > 0.9) done.add('gear');
+  if (automatic ? inDrive(state) : state.gear === 1 && state.clutch > 0.9) done.add('gear');
   if (done.has('gear') && !state.handbrake) done.add('free');
   const askedToStop = state.lightColour === RED || state.lightColour === YELLOW;
   if (askedToStop && state.sinceStopTicks >= 0 && state.stopGapAM >= 0 && state.stopGapAM <= junction.max_a_m) {
@@ -474,15 +603,28 @@ function paceJunction(s: SimState): string {
  * Bài 5's advice: the order, one sentence at a time, from the state the scorer reads. The light is
  * the core's own field, so the line cannot say "green" on a tick the scorer calls red.
  */
-export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | null): string {
+export function adviceJunction(
+  s: SimState,
+  ruleset: Ruleset,
+  cue: FigureCue | null,
+  automatic = false,
+): string {
   const junction = junctionOf(ruleset);
   const mm = (m: number) => `${Math.round(m * 1000)} mm`;
   const kmh = (v: number) => (v * 3.6).toFixed(1);
   if (s.disqualified) return 'Đã bị đình chỉ. Bấm Esc để làm lại.';
   if (s.phase === 'done') return 'Hết bài. Bấm Esc để làm lại.';
-  if (!s.engineOn) return 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
-  if (s.gear !== 1) return 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  if (!s.engineOn) return automatic ? 'Máy đã tắt. Bấm E để nổ lại.' : 'Máy đã tắt. Đạp côn (giữ Space) rồi bấm E để nổ lại.';
+  if (automatic ? s.gear <= 0 : s.gear !== 1) {
+    return automatic
+      ? 'Cần số đang ở N. Bấm D để xe đi tới.'
+      : 'Đạp côn hết cỡ (giữ Space), bấm 1 để vào số.';
+  }
   if (s.handbrake) return 'Phanh tay đang kéo. Bấm P để nhả, rồi chạy tới vạch dừng.';
+  // The one key of a stop at the line: on an automatic it is the brake alone.
+  const stopKeys = automatic
+    ? 'phanh (↓) khi thanh báo «bấm ngay», rồi giữ phanh cho tới khi xe dừng.'
+    : STOP_KEYS;
 
   // Still short of the line: the light decides whether to stop or to go on. A car held at the line with
   // the green on is not "short of the line" in the way this sentence means — it has stopped and needs to
@@ -494,7 +636,7 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
       // told to gain speed a moment before the light changed keeps holding ↑ otherwise, and reaches
       // the line at 10 km/h — where the aid's 275 ms lead is 25 cm of slack instead of a metre.
       return s.speedMps > 0.6
-        ? `${colour}: nhả ga ↑ ra, rồi ${STOP_KEYS}`
+        ? `${colour}: nhả ga ↑ ra, rồi ${stopKeys}`
         : `${colour}: dừng trong A (không quá ${mm(junction.max_a_m)}), chờ đèn xanh.`;
     }
     // The light is dark for the first ticks of the run (the core starts its cycle on the car's first
@@ -528,7 +670,9 @@ export function adviceJunction(s: SimState, ruleset: Ruleset, cue: FigureCue | n
   // learner read, the speed warning never showed, and the car went into the lane edge. Speed is the
   // thing that has to be fixed first, and it is checked before anything else that names a key.
   if (s.speedMps > JUNCTION_FAST_MPS) {
-    return `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): đạp côn (Space) rồi phanh ↓ cho xe chậm lại ngay.`;
+    return automatic
+      ? `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): phanh ↓ cho xe chậm lại ngay.`
+      : `Quá nhanh trong ngã tư (${kmh(s.speedMps)} km/h): đạp côn (Space) rồi phanh ↓ cho xe chậm lại ngay.`;
   }
   // The lane edges are what SAI_VACH_KE is charged on, so the warning is the wheels' own contacts
   // (snapshot 27..30), not the car's centre: the outer front corner reaches the edge while the centre

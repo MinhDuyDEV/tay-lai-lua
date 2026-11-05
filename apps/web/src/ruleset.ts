@@ -226,6 +226,26 @@ export interface SteerFeel {
   centre: number;
 }
 
+/**
+ * The automatic gearbox's numbers (`crates/sim-core/src/automatic.rs`), mirrored the same way the
+ * drivetrain is: the page's stop aid needs `converter_rpm` to know what the drive is still pushing
+ * while the learner brakes, so an automatic's stop lands where the model says it will.
+ */
+export interface Automatic {
+  converter_rpm: number;
+  /** Speed (m/s) at which the box up-shifts to 2, 3, 4. */
+  up_mps: number[];
+  /** Speed (m/s) below which it down-shifts from 2, 3, 4. */
+  down_mps: number[];
+}
+
+/** One row of the ruleset's `assumptions`: what the law does not say, what the simulation chose, and why. */
+export interface Assumption {
+  field: string;
+  value: string;
+  why: string;
+}
+
 export interface Ruleset {
   id: string;
   title: string;
@@ -243,8 +263,20 @@ export interface Ruleset {
   junction?: Junction;
   /** Bài 10's three signs and two zones. */
   gear?: Gear;
+  /** Present when the ruleset carries the automatic gearbox; every automatic page reads it. */
+  automatic?: Automatic;
   steer: SteerFeel;
   rules: Rule[];
+  /** The simulation's own assumptions, by `field`. Some of them are the words a page has to show. */
+  assumptions?: Assumption[];
+}
+
+/**
+ * One assumption of the ruleset, or null: the page shows `value` and `why` rather than repeating them,
+ * so the note on screen and the ruleset cannot drift apart.
+ */
+export function assumptionOf(ruleset: Ruleset, field: string): Assumption | null {
+  return ruleset.assumptions?.find((a) => a.field === field) ?? null;
 }
 
 /** Standard gravity, m/s². A physical constant, not a ruleset choice. */
