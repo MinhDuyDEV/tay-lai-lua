@@ -117,6 +117,8 @@ function drive(lesson: number, reactMs: number): Outcome {
         const pace = /tới (\d+) km\/h/.exec(advice);
         if (pace && s.speedMps * 3.6 < Number(pace[1])) want.add('ArrowUp');
         if (cue === 'runup' || cue === 'pull') want.add('ArrowUp');
+        // Bài 11's finish sentence: "Đã qua vạch kết thúc: phanh ↓ cho xe dừng hẳn".
+        if (advice.includes('phanh ↓ cho xe dừng hẳn')) want.add('ArrowDown');
         if (cue === 'coast' || cue === 'roll') want.delete('ArrowUp');
       }
       // After a stop: hold the brake for a moment, then the next thing the page says.

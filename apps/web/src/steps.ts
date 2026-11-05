@@ -4,7 +4,7 @@
 // One list per exercise; `exercise.ts` picks which one a page uses.
 
 import { DT } from '../input/driver.ts';
-import { coastDecel, gearSignM, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
+import { coastDecel, finishM, gearSignM, hillOf, junctionOf, roadOf, type Ruleset } from './ruleset.ts';
 import type { FigureCue } from './figures.ts';
 import type { StopAid } from './stopAid.ts';
 import type { SimState } from './sim/session.ts';
@@ -484,7 +484,12 @@ function adviceFinish(state: SimState, road: ReturnType<typeof roadOf>, automati
       ? `Bật xi nhan phải (W) trước khi qua vạch kết thúc, rồi chạy qua vạch. Còn ${Math.round(state.lineGapM * 1000)} mm.`
       : 'Bật xi nhan phải (W) ngay — vạch kết thúc đã qua và chưa có xi nhan.';
   }
-  if (state.frontBumperM < road.finish_offset_m + road.start_front_bumper_m) {
+  // Where the finish line actually is. The manual sentence below compares against
+  // `finish_offset_m + start_front_bumper_m` (19,0 m here) and so asks for the stop two metres early;
+  // that is left alone because the manual page must not change — the automatic compares against
+  // `finish_m` (stop line + offset = 21,0 m), which is the line the core charges KHONG_QUA_VACH on.
+  const crossedM = automatic ? finishM(road) : road.finish_offset_m + road.start_front_bumper_m;
+  if (state.frontBumperM < crossedM) {
     return 'Đã có xi nhan phải. Cứ chạy qua vạch kết thúc, đừng dừng lại trước vạch.';
   }
   if (state.speedMps > 0.05) {
@@ -549,6 +554,19 @@ const STOP_KEYS =
  */
 const JUNCTION_READ_KMH = 10;
 /**
+ * The automatic's read, km/h. Same reasoning, different car: its throttle is a slow linear ramp
+ * (`FEEL.autoThrottle`, 0.45 of travel per second against the manual's ~0.6 + gain), so a learner who
+ * reads the same 10 km/h spends the junction's 20 s clock on the approach and finishes at 20.4–21.2 s
+ * (measured, seed 900). Measured on the same sweep as the manual's, over the 150–400 ms band:
+ *   12 km/h — green seed 16.9–18.4 s, no lane contact; the 150 ms cell is over 18 s.
+ *   13 km/h — green seed 16.1–16.5 s, red seed 12.6–12.9 s, no lane contact, every cell 100.
+ *   14 km/h — green seed 15.3–15.7 s, but the red seed's 300 and 350 ms cells put a wheel on the lane
+ *             paint (SAI_VACH_KE), which is the arc's own ceiling and not this number's to spend.
+ * 13 is the one below. It stays an integer so the sentence holds a number a reader (or a script) can
+ * take as it stands, and it is well under the 24 km/h the exercise names.
+ */
+const JUNCTION_AUTO_READ_KMH = 13;
+/**
  * Above this the line stops asking about pace and tells the learner to brake, before anything else
  * that names a key. It is a runaway guard, not the band's ceiling: the band's ceiling is the lane edge
  * the read speed keeps the car under (~16 km/h), and a warning set there would fire on the overshoot
@@ -592,11 +610,12 @@ export function markJunction(done: Set<StepId>, state: SimState, ruleset: Rulese
  * 23 km/h car has 5 m of lateral drift in it. The lower bound is the clock: 20 s from the green to the
  * end line, with the creep alone (6.4 km/h) taking ~31 s for this route.
  */
-function paceJunction(s: SimState): string {
+function paceJunction(s: SimState, automatic = false): string {
   const n = (v: number) => (v * 3.6).toFixed(0);
-  return s.speedMps * 3.6 >= JUNCTION_READ_KMH
+  const read = automatic ? JUNCTION_AUTO_READ_KMH : JUNCTION_READ_KMH;
+  return s.speedMps * 3.6 >= read
     ? `Đủ đà rồi (${n(s.speedMps)} km/h): nhả ga ↑ ra, cứ để xe chạy đà.`
-    : `Giữ ga ↑ cho tới ${JUNCTION_READ_KMH} km/h (đang ${n(s.speedMps)} km/h) rồi thả ra, xe còn lên thêm chút nữa.`;
+    : `Giữ ga ↑ cho tới ${read} km/h (đang ${n(s.speedMps)} km/h) rồi thả ra, xe còn lên thêm chút nữa.`;
 }
 
 /**
@@ -647,7 +666,7 @@ export function adviceJunction(
     // words after the line — spends most of the clock at the creep and cannot finish. The signal joins
     // the same sentence, because KHONG_XI_NHAN is read at the arc's start.
     const signal = s.signal === 'right' ? '' : 'Bật xi nhan phải (W). ';
-    return `${signal}${paceJunction(s)}`;
+    return `${signal}${paceJunction(s, automatic)}`;
   }
 
   // At a stop inside A: the order says wait for green, then signal, then turn.
@@ -660,7 +679,7 @@ export function adviceJunction(
     }
     if (s.lightColour !== GREEN) return `Dừng đúng vạch (A ${mm(a)}). Chờ đèn xanh rồi mới đi.`;
     if (s.signal !== 'right') return 'Đèn xanh rồi: bật xi nhan phải (W) trước khi vào cua.';
-    return `Đã dừng, đèn xanh, xi nhan phải: nhả phanh cho xe đi. ${paceJunction(s)}`;
+    return `Đã dừng, đèn xanh, xi nhan phải: nhả phanh cho xe đi. ${paceJunction(s, automatic)}`;
   }
 
   // Past the line: the turn. The cue is the same one the figures use.
@@ -683,7 +702,7 @@ export function adviceJunction(
     return `Bánh ${wheel} chạm vạch làn: trả lái ngay (thả phím ← →) cho xe về giữa làn.`;
   }
 
-  const pace = paceJunction(s);
+  const pace = paceJunction(s, automatic);
   if (cue === 'right') return `${pace} Đánh lái → sang phải và giữ, rẽ phải trong làn.`;
   if (cue === 'left') return `${pace} Trả lái ← lại cho thẳng sau khi qua cua.`;
   return `${pace} Giữ lái cho thẳng, đi hết làn ra khỏi ngã tư.`;
