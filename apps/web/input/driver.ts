@@ -188,10 +188,11 @@ export interface Driver {
   /** The 8 TickInput bytes for the next tick. */
   step(held: ReadonlySet<string>, pressed: readonly string[], view: DriveView): Uint8Array;
   /**
-   * Put the lever, the handbrake and the stalk back as a parked car has them at the start of a bài:
-   * neutral, handbrake on, signal off. A liên hoàn run calls this when it swaps to the next bài, so a
-   * gear left in at the end of one bài cannot stall the car at the start of the next. Belt and engine
-   * are not toggles this touches: the law asks for them once, not at every bài.
+   * Put the lever, the handbrake, the stalk and the order/finish latch back as a parked car has them
+   * at the start of a bài: neutral, handbrake on, signal off, no order latched. A liên hoàn run calls
+   * this when it swaps to the next bài, so a gear left in at the end of one bài cannot stall the car
+   * at the start of the next, and bài 1's start order does not also count as bài 7/8's finish signal.
+   * Belt and engine are not toggles this touches: the law asks for them once, not at every bài.
    */
   resetToggles(): void;
   /** Pedal positions 0..1 as last sent, for tests and for the HUD before the first state arrives. */
@@ -231,6 +232,7 @@ export function createDriver(options: { automatic?: boolean } = {}): Driver {
       handbrake = true;
       signal = 0;
       crankLeft = 0;
+      ordered = false;
     },
     get hint() {
       return hint;

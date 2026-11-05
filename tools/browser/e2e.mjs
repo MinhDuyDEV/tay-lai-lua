@@ -215,7 +215,7 @@ async function driveHill(page, { finish, allowed, throttle = false, automatic = 
     await page.waitForTimeout(AUTO_REACTION_MS);
     await key.up('ArrowDown');
     await key.down('ArrowUp');
-    await until(page, 'over the stop line', `d.phase === 'done'`, allowed);
+    await until(page, 'over the stop line', end, allowed);
     await key.up('ArrowUp');
     return;
   }
@@ -279,7 +279,7 @@ async function driveHill(page, { finish, allowed, throttle = false, automatic = 
  * than being papered over. `throttle` is the learner who keeps the throttle down: the line must tell
  * them so in words.
  */
-async function driveFigure(page, { allowed, throttle = false, automatic = false }) {
+async function driveFigure(page, { allowed, throttle = false, automatic = false, end = `d.phase === 'done' || d.disqualified === 'yes'` }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -319,7 +319,7 @@ async function driveFigure(page, { allowed, throttle = false, automatic = false 
     const d = await readStage(page);
     const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
     if (bad.length) throw new Error(`unexpected penalty ${bad} at progress ${d.progress} m (contact ${d.contact})\nstate: ${JSON.stringify(d)}`);
-    if (d.phase === 'done' || d.disqualified === 'yes') break;
+    if (await page.evaluate((c) => new Function('d', `return (${c});`)(document.querySelector('#stage').dataset), end)) break;
 
     const name = await page.$eval('.advice', (el) => el.dataset.cue ?? '');
     if (name !== seen) {
@@ -338,7 +338,7 @@ async function driveFigure(page, { allowed, throttle = false, automatic = false 
   }
   if (heldDir) await key.up(heldDir);
   if (throttle) await key.up('ArrowUp');
-  await until(page, 'end of the figure', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
+  await until(page, 'end of the figure', end, allowed);
 }
 
 
@@ -472,8 +472,8 @@ try {
 /** Everything a page said about itself, kept for `pageReady` to print when the page never boots. */
 const pageLog = new WeakMap();
 
-async function fresh(path = '/thi') {
-  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+async function fresh(path = '/thi', viewport = { width: 960, height: 600 }) {
+  const page = await browser.newPage({ viewport });
   const problems = [];
   const log = [];
   pageLog.set(page, log);
@@ -676,7 +676,7 @@ async function roadStop(page, { allowed, pressAt = null, automatic = false }) {
  * by the handbrake: handbrake off and let the pedal up) and from the start of bài 11, which has no
  * stop before its finish line.
  */
-async function roadGo(page, { allowed, cond, signal = false, automatic = false }) {
+async function roadGo(page, { allowed, cond, signal = false, automatic = false, stop = true, end = `d.phase === 'done' || d.disqualified === 'yes'` }) {
   const key = page.keyboard;
   const now = await readStage(page);
   if (now.handbrake === 'yes') {
@@ -707,6 +707,14 @@ async function roadGo(page, { allowed, cond, signal = false, automatic = false }
   }
   await until(page, 'rolling', `Number(d.speed) > 0.4`, allowed);
   await until(page, `driven on to ${cond}`, cond, allowed);
+  if (!stop) {
+    // A liên hoàn run swaps bài on its own: drive on to the transition and let go, so no brake
+    // pressed after the end of one bài is read by the next.
+    await key.up('ArrowDown');
+    await key.up('Space');
+    await until(page, 'the next bài', end, allowed);
+    return readStage(page);
+  }
   // Stop past the line: clutch and brake. A run the exercise has already ended (bài 11 ends on the
   // tick the car stops past the finish line) needs nothing more, and a handbrake press after that
   // would never be seen by the core.
@@ -846,7 +854,7 @@ const JUNCTION_AID_REACT_MS = 250;
  * `steerOut` is the one exception, and it is not a driver: it holds a wrong wheel on purpose, so the
  * lane-edge failure can be provoked.
  */
-async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false, automatic = false }) {
+async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut = false, automatic = false, end = `d.phase === 'done' || d.disqualified === 'yes'` }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -899,7 +907,7 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
     const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
     if (bad.length) throw new Error(`unexpected penalty ${bad} at zone ${d.zone}\nstate: ${JSON.stringify(d)}`);
     if (met === null && Number(d.lineGap) < 0.8) met = d.light;
-    if (d.phase === 'done' || d.disqualified === 'yes') break;
+    if (await page.evaluate((c) => new Function('d', `return (${c});`)(document.querySelector('#stage').dataset), end)) break;
 
     // The aid is the one thing that is not a sentence: the bar's own countdown, which the line tells
     // the learner to follow ("phanh khi thanh đếm ngược báo").
@@ -947,9 +955,9 @@ async function driveJunction(page, { allowed, arrive, pressAid = true, steerOut 
   if (!steerOut && met !== arrive) {
     throw new Error(`this seed met ${met} at the line, the run is a ${arrive} arrival\nstate: ${JSON.stringify(await readStage(page))}`);
   }
-  await until(page, 'end of the junction', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
-  const end = await readStage(page);
-  return { ...end, met };
+  await until(page, 'end of the junction', end, allowed);
+  const endState = await readStage(page);
+  return { ...endState, met };
 }
 
 let junctionRed = null;
@@ -1023,7 +1031,7 @@ let junctionRed = null;
 // 30 km/h" but misses its "bấm 2", so the car runs the first zone in first gear at a speed the sentence
 // named — wrong gear, right speed, which is SH.SO.SAI_SO and not SAI_CA_HAI. 'none' follows the words.
 const GEAR_REACTION_MS = 300;
-async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, automatic = false }) {
+async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, automatic = false, end = `d.phase === 'done' || d.disqualified === 'yes'` }) {
   const key = page.keyboard;
   await pageReady(page);
   await key.press('KeyX');
@@ -1049,12 +1057,12 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, au
   const texts = [];
   let seen = '';
   let lastTap = new Map();
-  const end = Date.now() + maxMs;
-  while (Date.now() < end) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
     const d = await readStage(page);
     const bad = d.penalties.split(' ').filter((id) => id && !allowed.includes(id));
     if (bad.length) throw new Error(`unexpected penalty ${bad} at bumper ${d.bumper}\nstate: ${JSON.stringify(d)}`);
-    if (d.phase === 'done' || d.disqualified === 'yes') break;
+    if (await page.evaluate((c) => new Function('d', `return (${c});`)(document.querySelector('#stage').dataset), end)) break;
     const r = await read();
     const wantGear = r.cue === 'ready' || r.cue === 'shift1' ? 1 : r.cue === 'shift2' ? 2 : 0;
     const tap = automatic ? (wantGear === 1 ? 'KeyD' : null) : wantGear === 1 ? 'Digit1' : wantGear === 2 ? 'Digit2' : null;
@@ -1095,7 +1103,7 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, au
     await page.waitForTimeout(50);
   }
   await hold(new Set());
-  await until(page, 'the run to end', `d.phase === 'done' || d.disqualified === 'yes'`, allowed);
+  await until(page, 'the run to end', end, allowed);
   return { ...(await readStage(page)), texts };
 }
 
@@ -1422,6 +1430,168 @@ async function driveGearPage(page, { allowed, skip = 'none', maxMs = 180_000, au
         if (d.zone !== 'past-finish') throw new Error(`zone is "${d.zone}" past the finish line`);
       }));
   }
+
+
+// ---- sa hình liên hoàn: the 11 bài in one run, the result screen, the replay -------------------
+//
+// The same screen-only learner as the per-bài sections, bài after bài: each helper ends on the
+// lesson the core swapped to instead of on `phase === 'done'`, so it never presses a key into the
+// next bài. Two clean runs (số sàn and số tự động) and one fault run go in parallel pages, because
+// a whole run is ~165 s of play; the homepage's chip is not what is under test.
+
+/** What the result screen says, read from its data attributes and text. */
+async function readLienHoanResult(page) {
+  return page.evaluate(() => {
+    const el = document.querySelector('[data-run-result]');
+    if (!el) return null;
+    return {
+      score: el.dataset.score,
+      verdict: el.dataset.verdict,
+      disqualified: el.dataset.disqualified,
+      courseTick: el.dataset.courseTick,
+      passLine: document.querySelector('[data-pass-line]')?.textContent ?? '',
+      quote: document.querySelector('[data-scoring-quote]')?.textContent ?? '',
+      faults: [...document.querySelectorAll('[data-fault]')].map((f) => ({
+        id: f.dataset.fault,
+        lesson: f.dataset.faultLesson,
+        tick: f.dataset.faultTick,
+        where: f.querySelector('[data-fault-where]')?.textContent ?? '',
+        points: f.querySelector('.points')?.textContent ?? '',
+        quote: f.querySelector('blockquote')?.textContent ?? '',
+      })),
+    };
+  });
+}
+
+/** The whole run, bài 1 to bài 11, driven only through the page. */
+async function driveWholeRun(page, { automatic = false, allowed = [], belt = true } = {}) {
+  await drive(page, { belt, allowed, automatic, end: `d.lesson === '2'` });
+  // Bài 2: the crosswalk road. The run starts it on the step after bài 1, so the road pair is its
+  // own set-off, stop and go, exactly as the per-bài section drives them.
+  await roadSetOff(page, allowed, automatic);
+  await roadStop(page, { allowed, automatic });
+  await roadGo(page, { allowed, cond: `Number(d.bumper) > 1.2`, automatic, stop: false, end: `d.lesson === '3'` });
+  await driveHill(page, { finish: 'pull-away', allowed, automatic, end: `d.lesson === '4'` });
+  await driveFigure(page, { allowed, automatic, end: `d.lesson === '5'` });
+  await driveJunction(page, { allowed, arrive: 'red', automatic, end: `d.lesson === '6'` });
+  await driveFigure(page, { allowed, automatic, end: `d.lesson === '7'` });
+  await driveParkPage(page, { allowed, automatic, stopWhen: `d.lesson === '8'` });
+  await driveParkPage(page, { allowed, automatic, stopWhen: `d.lesson === '9'` });
+  await roadSetOff(page, allowed, automatic);
+  await roadStop(page, { allowed, automatic });
+  await roadGo(page, { allowed, cond: `Number(d.bumper) > 1.2`, automatic, stop: false, end: `d.lesson === '10'` });
+  await driveGearPage(page, { allowed, automatic, end: `d.lesson === '11'` });
+  await roadSetOff(page, allowed, automatic);
+  await roadGo(page, { allowed, cond: `Number(d.bumper) > 21.3`, signal: true, automatic });
+  await until(page, 'the result screen', `d.phase === 'done'`);
+  await page.waitForSelector('[data-run-result]', { timeout: WAIT_MS });
+  const final = await readStage(page);
+  const result = await readLienHoanResult(page);
+  const hash = await page.evaluate(() => window.__thi.hash());
+  return { final, result, hash };
+}
+
+/** Replay the run from its own result screen and check it lands on the same hash. */
+async function replayLienHoan(page, run) {
+  await page.click('[data-replay-button]');
+  await until(page, 'the replay to start', `d.replay === 'running'`);
+  await page.waitForSelector('[data-replay-result][data-replay-match]', { timeout: WAIT_MS });
+  const replay = await page.$eval('[data-replay-result]', (el) => ({
+    match: el.dataset.replayMatch,
+    hash: el.querySelector('code')?.textContent ?? '',
+    text: el.textContent ?? '',
+  }));
+  if (replay.match !== 'yes') throw new Error(`the replay did not match: ${replay.text}`);
+  if (replay.hash !== run.hash) throw new Error(`the replay ended on ${replay.hash}, the run on ${run.hash}`);
+  const after = await readLienHoanResult(page);
+  if (!after || after.score !== run.result.score || after.verdict !== run.result.verdict) {
+    throw new Error(`the replayed result screen says ${JSON.stringify(after)}, the run said ${JSON.stringify(run.result)}`);
+  }
+  return replay;
+}
+
+/** A clean run of all 11 bài: 100, passed, no fault, and the replay's hash is the same. */
+async function cleanLienHoan(label, path, automatic) {
+  // A smaller viewport is still the scene, and it leaves the machine room for the parallel page:
+  // a whole run is real-time, and a late cue is a learner's key landing late, not a page fault.
+  const { page, problems } = await fresh(path, { width: 640, height: 400 });
+  try {
+    if (automatic) await until(page, 'the automatic page', `d.so === 'tu-dong'`);
+    const run = await driveWholeRun(page, { automatic, allowed: [] });
+    if (run.final.score !== '100' || run.final.verdict !== 'passed' || run.final.disqualified !== 'no') {
+      throw new Error(`${label}: not a clean pass: ${JSON.stringify(run.final)}`);
+    }
+    if (run.final.lesson !== '11') throw new Error(`${label}: the run ended on bài ${run.final.lesson}`);
+    if (run.final.run !== 'yes') throw new Error(`${label}: #stage does not say it is a liên hoàn run`);
+    if (run.final.so !== (automatic ? 'tu-dong' : 'san')) throw new Error(`${label}: the page says so=${run.final.so}`);
+    const trace = await page.evaluate(() => window.__thi.trace());
+    const exerciseId = Buffer.from(trace, 'base64')[7];
+    if (exerciseId !== 12) throw new Error(`${label}: the trace header carries exercise id ${exerciseId}, not 12`);
+    if (run.result.faults.length !== 0) throw new Error(`${label}: the result screen lists faults: ${JSON.stringify(run.result.faults)}`);
+    if (run.result.quote !== ruleset.scoring.source.quote) {
+      throw new Error(`${label}: the pass quote is not the ruleset's own: ${run.result.quote}`);
+    }
+    if (!run.result.passLine.includes(String(ruleset.scoring.pass))) {
+      throw new Error(`${label}: the pass line does not carry the ruleset's pass mark: ${run.result.passLine}`);
+    }
+    if (run.result.courseTick !== run.final.courseTick) {
+      throw new Error(`${label}: the result clock ${run.result.courseTick} is not the run clock ${run.final.courseTick}`);
+    }
+    console.log(`     ${label}: 11 bài, ${(Number(run.final.courseTick) / 60).toFixed(1)} s of run, score ${run.final.score}, hash ${run.hash}`);
+    await replayLienHoan(page, run);
+    console.log(`     ${label}: the replay ended on the same hash ${run.hash}`);
+    if (problems.length) throw new Error(`${label}: ${problems.join('\n')}`);
+    return run;
+  } finally {
+    await page.close();
+  }
+}
+
+/** The belt mistake, then the rest of the run: the result screen must show that one fault, with
+ * its code, its points, its ruleset quote, and the bài and run time it happened at. */
+async function faultLienHoan() {
+  const id = 'SH.01.DAY_AN_TOAN';
+  const { page, problems } = await fresh('/lien-hoan', { width: 640, height: 400 });
+  try {
+    const run = await driveWholeRun(page, { automatic: false, allowed: [id], belt: false });
+    if (run.final.score !== '95' || run.final.verdict !== 'passed' || run.final.disqualified !== 'no') {
+      throw new Error(`the fault run is not a pass at 95: ${JSON.stringify(run.final)}`);
+    }
+    if (run.result.faults.length !== 1 || run.result.faults[0].id !== id) {
+      throw new Error(`the result screen lists ${JSON.stringify(run.result.faults)}, not just ${id}`);
+    }
+    const fault = run.result.faults[0];
+    const rule = ruleset.rules.find((r) => r.id === id);
+    if (fault.lesson !== '1') throw new Error(`the fault is marked on bài ${fault.lesson}, not bài 1`);
+    if (!/^\d\d:\d\d$/.test(fault.where.replace(/^Bài \d+ · /, ''))) {
+      throw new Error(`the fault has no run time: ${fault.where}`);
+    }
+    if (fault.points !== '−5 điểm') throw new Error(`the fault shows "${fault.points}", not "−5 điểm"`);
+    if (fault.quote !== rule.source.quote) throw new Error(`the fault quote is not the ruleset's own: ${fault.quote}`);
+    if (run.result.quote !== ruleset.scoring.source.quote) throw new Error('the pass quote is not the ruleset\u2019s own');
+    console.log(`     liên hoàn fault: ${fault.id} ${fault.points} — ${fault.where}; score ${run.final.score}, hash ${run.hash}`);
+    await replayLienHoan(page, run);
+    if (problems.length) throw new Error(problems.join('\n'));
+  } finally {
+    await page.close();
+  }
+}
+
+{
+  // The two variants in parallel pages: a whole run is real-time, and the outcome needs both. The
+  // fault run is a third real-time sitting, so it runs on its own after these two to keep the
+  // screen-only learner's 250–300 ms reactions inside the band the page's cues were built for.
+  await check('liên hoàn: the whole run on số sàn and số tự động, 11 bài, 100, each replayed to the same hash', async () => {
+    const results = await Promise.allSettled([
+      cleanLienHoan('số sàn', '/lien-hoan', false),
+      cleanLienHoan('số tự động', '/lien-hoan?so=tu-dong', true),
+    ]);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) throw new Error(failed.map((r) => String(r.reason?.message ?? r.reason)).join('\n'));
+  });
+
+  await check('liên hoàn fault: bài 1 without the belt → result screen names SH.01.DAY_AN_TOAN −5, its quote, bài 1 and the run clock', () => faultLienHoan());
+}
 
 } finally {
   await browser.close();
