@@ -85,7 +85,7 @@ tasks:
 
   web:e2e:
     desc: the end-to-end test against a real static export
-    deps: [web:build, build]
+    deps: [web:build]
     cmds:
       - cd tools/browser && npm ci --no-audit --no-fund
       - cd tools/browser && node e2e.mjs --site {{.WEB}}/out --wasm {{.WASM}}
