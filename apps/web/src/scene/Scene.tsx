@@ -738,10 +738,18 @@ export default function Scene({ run, ruleset, exercise }: { run: Run; ruleset: R
   const toWorld = useMemo(() => roadToWorldFor(exercise, ruleset), [exercise, ruleset]);
   return (
     <>
-      <color attach="background" args={['#9ec4d8']} />
-      <fog attach="fog" args={['#9ec4d8', 30, 70]} />
-      <ambientLight intensity={0.85} />
-      <directionalLight position={[8, 14, 6]} intensity={1.6} />
+      <color attach="background" args={['#a9d0e6']} />
+      <fog attach="fog" args={['#a9d0e6', 34, 80]} />
+      {/* Sky light from above and the grass's own green from below, so the car's sides are not flat grey. */}
+      <hemisphereLight args={['#eaf6ff', '#5d7a4c', 1.1]} />
+      <ambientLight intensity={0.35} />
+      <directionalLight position={[8, 14, 6]} intensity={1.5} />
+      {/* The yard's surroundings: grass under every course, well below the asphalt so the two never
+          fight for the same depth. Without it the road floats in the sky colour. */}
+      <mesh position={[0, -0.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[800, 800]} />
+        <meshStandardMaterial color="#6f9460" roughness={1} />
+      </mesh>
       <ChaseCamera run={run} toWorld={toWorld} />
       {exercise.link ? (
         <RoadCourse run={run} />

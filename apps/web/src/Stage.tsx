@@ -11,10 +11,12 @@ import { HANDLED_CODES, legendFor } from '../input/driver.ts';
 import { useEngineAudio, type AudioState } from './audio.ts';
 import { exerciseFor, linkExercise, type Exercise, type Lesson } from './exercise.ts';
 import Hud from './Hud.tsx';
+import { HOME_HREF, LESSON_COUNT, lessonHref, lienHoanHref } from './links.ts';
 import LienHoanResult, { type ReplayResult } from './lien-hoan/Result.tsx';
 import { gearOf, gearSignM, type Penalty, type Ruleset } from './ruleset.ts';
 import { createRun, RESTART_CODES, type Run } from './run.ts';
 import { AUTOMATIC_BIT, lightName, openSession, seedWord, zoneName, type Session, type SimState } from './sim/session.ts';
+import TopBar from './TopBar.tsx';
 
 // three and R3F are the heavy part of the route; keep them out of the first chunk.
 const Scene = dynamic(() => import('./scene/Scene.tsx'), { ssr: false, loading: () => null });
@@ -96,6 +98,29 @@ function seedOverride(): bigint | null {
   return low;
 }
 
+/** Where the page remembers the learner's two choices between visits. */
+const SO_KEY = 'tll.so';
+const KEYS_KEY = 'tll.keys';
+/** The width from which the key legend has a column of its own; the same number as in `globals.css`. */
+const WIDE_QUERY = '(min-width: 1200px)';
+
+/** localStorage, or nothing: a private window or a blocked store must not stop the page. */
+function recall(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function remember(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Nothing to do: the choice still holds for this visit.
+  }
+}
+
 export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: StageProps) {
   // The manual car until the URL or the switch says otherwise: the server render has no URL.
   const [automatic, setAutomatic] = useState(false);
@@ -103,6 +128,40 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     const so = transmissionFromUrl();
     if (so !== null) setAutomatic(so);
   }, []);
+  /**
+   * The switch on the page: the new transmission, and the address says so too, so a reload, a shared
+   * link and the links to the next bài all keep the car the learner picked.
+   */
+  const chooseAutomatic = useCallback((auto: boolean) => {
+    setAutomatic(auto);
+    const url = new URL(window.location.href);
+    if (auto) url.searchParams.set('so', 'tu-dong');
+    else url.searchParams.delete('so');
+    window.history.replaceState(window.history.state, '', url);
+    remember(SO_KEY, auto ? 'tu-dong' : 'san');
+  }, []);
+  /**
+   * The key legend: on a wide window it is open until the learner closes it, on a narrow one it is
+   * closed until they open it, and the last explicit choice is remembered. `auto` is the answer before
+   * the page has looked at the window (the static export has none), so the CSS decides by width.
+   */
+  const [keys, setKeys] = useState<'auto' | 'open' | 'closed'>('auto');
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const stored = recall(KEYS_KEY);
+    if (stored === 'open' || stored === 'closed') setKeys(stored);
+    const query = window.matchMedia(WIDE_QUERY);
+    const sync = () => setWide(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+  const keysShown = keys === 'open' || (keys === 'auto' && wide);
+  const toggleKeys = useCallback(() => {
+    const next = keysShown ? 'closed' : 'open';
+    setKeys(next);
+    remember(KEYS_KEY, next);
+  }, [keysShown]);
   /**
    * The stage the page is showing: the prop on a per-bài page, the core's lesson in a run. The run's
    * link between bài 6 and bài 7 is lesson 0.
@@ -157,6 +216,7 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
   const [epoch, setEpoch] = useState(0);
   const replayReported = useRef(false);
+  const startOverRef = useRef<() => void>(() => {});
   const core = useRef<Promise<(seed: bigint) => Session> | null>(null);
   const audio = useEngineAudio();
 
@@ -242,11 +302,16 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
   const enter = useCallback(() => {
     audio.start();
     setEntered(true);
-
   }, [audio]);
 
   // The run owns restart (Esc/Backspace and this button alike); `onRestart` clears the feed.
   const restart = useCallback(() => runRef.current?.restart(), []);
+
+  /** The top bar's restart: the run's own in a drive, a fresh run when a replay is on screen. */
+  const restartFromBar = useCallback(() => {
+    if (mode === 'replay') startOverRef.current();
+    else runRef.current?.restart();
+  }, [mode]);
 
   /** The result screen's replay: feed the recorded trace to a fresh session, same seed, same hash. */
   const startReplay = useCallback(() => {
@@ -276,6 +341,7 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     setMode('drive');
     setEpoch((n) => n + 1);
   }, [lesson]);
+  startOverRef.current = startOver;
 
   // A replay has no keyboard run behind it; Esc and Backspace still restart the whole run, as on
   // every other page. In drive mode the run itself handles them.
@@ -298,6 +364,10 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
     if (entered) return;
     const onFirstKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Tab moves the focus, and a key pressed on a focused link or button is that control's own: the
+      // top bar stays usable from the keyboard before the car is entered.
+      if (event.code === 'Tab') return;
+      if (event.target instanceof Element && event.target.closest('a, button')) return;
       event.preventDefault();
       event.stopPropagation();
       enter();
@@ -364,27 +434,21 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
       data-hazard="0"
       data-hazard-elapsed-ms="0"
       data-hazard-button="no"
+      data-intro={entered ? 'no' : 'yes'}
+      data-keys={keys}
+      data-ended={done && entered ? 'yes' : 'no'}
     >
-      <div className="choice" role="group" aria-label="Chọn loại hộp số">
-        {([
-          ['san', 'Số sàn', false],
-          ['tu-dong', 'Số tự động', true],
-        ] as const).map(([value, label, auto]) => (
-          <button
-            key={value}
-            type="button"
-            data-choice={value}
-            aria-pressed={automatic === auto}
-            onClick={(event) => {
-              // The switch is not the car: a focused button would eat Enter (the start order) and Space.
-              event.currentTarget.blur();
-              setAutomatic(auto);
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <TopBar
+        lesson={lesson}
+        lessonNow={lessonNow}
+        lienHoan={lienHoan}
+        title={exerciseByLesson.get(lesson)!.title}
+        automatic={automatic}
+        onAutomatic={chooseAutomatic}
+        keysShown={keysShown}
+        onKeys={toggleKeys}
+        onRestart={restartFromBar}
+      />
 
       <div className="viewport">
         <Canvas
@@ -411,28 +475,47 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
           rpmLimit={rpmLine}
           audio={audio.state}
           glOk={glOk}
+          lienHoan={lienHoan}
         />
       ) : null}
 
       {!entered ? (
-        <div className="overlay" role="dialog" aria-label="Vào xe">
-          <h1>{lienHoan ? 'Sa hình liên hoàn — 11 bài' : exercise.title}</h1>
-          <p>Bấm phím bất kỳ để vào xe. Bàn phím là đủ.</p>
-          {lienHoan ? (
-            <p className="chain-note" data-note="lien-hoan-chain">
-              11 bài nối tiếp nhau, không phải một sân thật: giữa bài 6 và bài 7 xe chạy một đoạn nối 60 m có
-              tình huống nguy hiểm; các chỗ còn lại, xong mỗi bài xe được đặt ở vị trí xuất phát của bài kế tiếp —
-              không có đoạn lái nào khác.
+        <div className="overlay intro" role="dialog" aria-label="Vào xe">
+          <div className="card">
+            <p className="eyebrow">
+              {lienHoan ? `Thi thử · ${LESSON_COUNT} bài liên tiếp` : `Sa hình hạng B · bài ${lesson}/${LESSON_COUNT}`}
+              <span className="chip">{automatic ? 'Số tự động' : 'Số sàn'}</span>
             </p>
-          ) : null}
-          <ul>
-            {legendFor(exercise.lesson, exercise.lesson === 1, automatic, exercise.link === true).slice(0, exercise.introKeys).map((entry) => (
-              <li key={entry.keys}>
-                <span className="key">{entry.keys}</span>
-                {entry.does}
-              </li>
-            ))}
-          </ul>
+            <h1>{lienHoan ? 'Sa hình liên hoàn' : exercise.title.replace(/^Bài \d+ — /, '')}</h1>
+            <p className="lead">
+              {lienHoan
+                ? `Chạy cả ${LESSON_COUNT} bài trong một lượt. Đạt từ ${ruleset.scoring.pass}/${ruleset.scoring.base} điểm; cuối lượt có bảng lỗi và chạy lại đúng lượt đó.`
+                : exercise.description.replace(/, bằng bàn phím\.$/, '.')}
+            </p>
+            {lienHoan ? (
+              <p className="chain-note" data-note="lien-hoan-chain">
+                11 bài nối tiếp nhau, không phải một sân thật: giữa bài 6 và bài 7 xe chạy một đoạn nối 60 m có
+                tình huống nguy hiểm; các chỗ còn lại, xong mỗi bài xe được đặt ở vị trí xuất phát của bài kế tiếp —
+                không có đoạn lái nào khác.
+              </p>
+            ) : null}
+            <h2>Phím dùng trong bài</h2>
+            <ul className="keylist">
+              {legendFor(exercise.lesson, exercise.lesson === 1, automatic, exercise.link === true).slice(0, exercise.introKeys).map((entry) => (
+                <li key={entry.keys}>
+                  <span className="key">{entry.keys}</span>
+                  {entry.does}
+                </li>
+              ))}
+            </ul>
+            <p className="note">Trong lúc lái, màn hình luôn chỉ bước tiếp theo và phím cần bấm.</p>
+            <div className="actions">
+              <button type="button" className="primary" data-enter-button onClick={enter} disabled={!run}>
+                {run ? 'Vào xe' : 'Đang nạp…'}
+              </button>
+              <span className="or">hoặc bấm phím bất kỳ</span>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -449,14 +532,38 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
           />
         ) : (
           <div className="overlay result" role="dialog" aria-label="Kết quả" data-bad={run.state.disqualified ? 'yes' : 'no'}>
-            <h1>{run.state.disqualified ? 'Đình chỉ' : `Kết quả: ${run.state.score} điểm`}</h1>
-            <p>{penalties.length === 0 ? 'Không có lỗi.' : `${penalties.length} lỗi.`}</p>
-            <p>
-              Bấm <span className="key">Esc</span> hoặc nút bên dưới để làm lại.
-            </p>
-            <button type="button" onClick={restart}>
-              Làm lại
-            </button>
+            <div className="card">
+              <p className="eyebrow">{exercise.title}</p>
+              <h1>{run.state.disqualified ? 'Đình chỉ' : `Kết quả: ${run.state.score} điểm`}</h1>
+              <p className="lead">
+                {run.state.disqualified
+                  ? 'Bài thi dừng ở lỗi bị đình chỉ dưới đây.'
+                  : penalties.length === 0
+                    ? 'Không có lỗi. Làm lại vài lần cho quen tay rồi sang bài kế tiếp.'
+                    : `${penalties.length} lỗi, bị trừ ${ruleset.scoring.base - run.state.score} điểm.`}
+              </p>
+              {penalties.length > 0 ? (
+                <ul className="faults">
+                  {penalties.map((p, i) => (
+                    <li key={`${p.tick}-${p.id}-${i}`}>
+                      <span className="minus">{p.disqualify ? 'Đình chỉ' : `−${p.points}`}</span>
+                      <span className="why">{p.source.quote}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="actions">
+                <button type="button" className="primary" onClick={restart}>
+                  Làm lại <span className="key">Esc</span>
+                </button>
+                <a className="button" href={lesson < LESSON_COUNT ? lessonHref(lesson + 1, automatic) : lienHoanHref(automatic)}>
+                  {lesson < LESSON_COUNT ? `Bài ${lesson + 1}` : 'Thi thử liên hoàn'} <span aria-hidden="true">›</span>
+                </a>
+                <a className="button quiet" href={HOME_HREF}>
+                  Các bài
+                </a>
+              </div>
+            </div>
           </div>
         )
       ) : null}
@@ -468,7 +575,6 @@ export default function Stage({ lesson, ruleset, wasmUrl, lienHoan = false }: St
       ) : null}
 
       {bootProblem ? <p className="notice boot">{bootProblem}</p> : null}
-      
     </div>
   );
 }

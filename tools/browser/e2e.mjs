@@ -1563,7 +1563,11 @@ async function driveWholeRun(page, { automatic = false, allowed = [], belt = tru
 /** Replay the run from its own result screen and check it lands on the same hash. */
 async function replayLienHoan(page, run) {
   await page.click('[data-replay-button]');
-  await until(page, 'the replay to start', `d.replay === 'running'`);
+  // A replay charges the recorded run's own faults again, and at 24 ticks a frame an early one (the
+  // belt, judged at the order) is back within a frame or two of the replay starting. Those are the
+  // run's, not a surprise: only a fault the recorded run did not have fails the wait.
+  const recorded = run.result.faults.map((fault) => fault.id);
+  await until(page, 'the replay to start', `d.replay === 'running'`, recorded);
   await page.waitForSelector('[data-replay-result][data-replay-match]', { timeout: WAIT_MS });
   const replay = await page.$eval('[data-replay-result]', (el) => ({
     match: el.dataset.replayMatch,

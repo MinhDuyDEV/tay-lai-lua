@@ -6,6 +6,7 @@
 
 import type { Penalty, Ruleset } from '../ruleset.ts';
 import { sourceLabel } from '../ruleset.ts';
+import { HOME_HREF } from '../links.ts';
 import type { Run } from '../run.ts';
 
 export interface ReplayResult {
@@ -63,56 +64,59 @@ export default function LienHoanResult({
       data-disqualified={suspended ? 'yes' : 'no'}
       data-course-tick={s.courseTick}
     >
-      <h1>{title}</h1>
-      <p className="result-line" data-pass-line>
-        Điểm đạt: từ <strong>{ruleset.scoring.pass}</strong> điểm trở lên.
-      </p>
-      <blockquote className="result-quote" data-scoring-quote>
-        {ruleset.scoring.source.quote}
-      </blockquote>
-      <p className="result-clock" data-run-clock>
-        Tổng thời gian: <strong>{clockText(s.courseTick)}</strong> (bài {s.lesson}/11)
-      </p>
-
-      <section className="result-faults" aria-label="Lỗi">
-        <h2>{penalties.length === 0 ? 'Không có lỗi' : `${penalties.length} lỗi`}</h2>
-        <ul>
-          {penalties.map((p, i) => (
-            <li key={`${p.tick}-${p.id}-${i}`} data-fault={p.id} data-fault-lesson={p.lesson} data-fault-tick={p.tick}>
-              <p className="rule">
-                <code>{p.id}</code>
-                <span className="points">{p.disqualify ? 'Đình chỉ' : `−${p.points} điểm`}</span>
-              </p>
-              <p className="where" data-fault-where>
-                {placeText(p.lesson)} · {clockText(p.tick)}
-              </p>
-              <blockquote>{p.source.quote}</blockquote>
-              <cite>{sourceLabel(p.source)}</cite>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {replayResult ? (
-        <p className="replay-result" data-replay-result data-replay-match={replayResult.match ? 'yes' : 'no'}>
-          Chạy lại: hash <code>{replayResult.actual}</code>{' '}
-          {replayResult.match
-            ? '— khớp với lượt vừa chạy.'
-            : `— KHÔNG khớp với lượt vừa chạy${replayExpected ? ` (${replayExpected})` : ''}.`}
+      <div className="card">
+        <p className="eyebrow">Sa hình liên hoàn · {s.lesson}/11 bài</p>
+        <h1>{title}</h1>
+        <p className="result-line" data-pass-line>
+          Điểm đạt: từ <strong>{ruleset.scoring.pass}</strong> điểm trở lên.
         </p>
-      ) : null}
+        <blockquote className="result-quote" data-scoring-quote>
+          {ruleset.scoring.source.quote}
+        </blockquote>
+        <p className="result-clock" data-run-clock>
+          Tổng thời gian: <strong>{clockText(s.courseTick)}</strong> (bài {s.lesson}/11)
+        </p>
 
-      <div className="result-actions">
-        <button type="button" data-replay-button onClick={onReplay}>
-          Chạy lại lượt này
-        </button>
-        <button type="button" data-restart-button onClick={onRestart}>
-          Làm lại từ bài 1
-        </button>
+        <section className="result-faults" aria-label="Lỗi">
+          <h2>{penalties.length === 0 ? 'Không có lỗi' : `${penalties.length} lỗi`}</h2>
+          <ul>
+            {penalties.map((p, i) => (
+              <li key={`${p.tick}-${p.id}-${i}`} data-fault={p.id} data-fault-lesson={p.lesson} data-fault-tick={p.tick}>
+                <p className="rule">
+                  <span className="points">{p.disqualify ? 'Đình chỉ' : `−${p.points} điểm`}</span>
+                  <span className="where" data-fault-where>
+                    {placeText(p.lesson)} · {clockText(p.tick)}
+                  </span>
+                  <code>{p.id}</code>
+                </p>
+                <blockquote>{p.source.quote}</blockquote>
+                <cite>{sourceLabel(p.source)}</cite>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {replayResult ? (
+          <p className="replay-result" data-replay-result data-replay-match={replayResult.match ? 'yes' : 'no'}>
+            Chạy lại: hash <code>{replayResult.actual}</code>{' '}
+            {replayResult.match
+              ? '— khớp với lượt vừa chạy.'
+              : `— KHÔNG khớp với lượt vừa chạy${replayExpected ? ` (${replayExpected})` : ''}.`}
+          </p>
+        ) : null}
+
+        <div className="actions">
+          <button type="button" className="primary" data-restart-button onClick={onRestart}>
+            Làm lại từ bài 1 <span className="key">Esc</span>
+          </button>
+          <button type="button" data-replay-button onClick={onReplay}>
+            Xem lại lượt này
+          </button>
+          <a className="button quiet" href={HOME_HREF}>
+            Các bài
+          </a>
+        </div>
       </div>
-      <p className="result-hint">
-        Bấm <span className="key">Esc</span> hoặc <span className="key">Backspace</span> để làm lại.
-      </p>
     </div>
   );
 }
