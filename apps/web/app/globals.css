@@ -1,12 +1,31 @@
+/* One stylesheet for the whole site: the tokens, the shared pieces (key caps, buttons, the
+   transmission switch), the exercise page (top bar, HUD, overlays) and the home page.
+
+   The HUD sits on top of a WebGL canvas that repaints every frame, so nothing here uses
+   backdrop-filter: a blurred panel is re-blurred on every one of those frames. Panels are nearly
+   opaque instead. */
+
 :root {
-  --bg: #10161c;
-  --panel: rgba(16, 22, 28, 0.82);
-  --line: rgba(255, 255, 255, 0.14);
-  --text: #e8eaed;
-  --muted: #9aa5b1;
-  --accent: #f0c419;
-  --good: #5fd18a;
+  --bg: #0b1016;
+  --panel: rgba(12, 17, 24, 0.9);
+  --panel-solid: #121a23;
+  --raise: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.2);
+  --text: #eef2f6;
+  --muted: #a3b2c1;
+  --dim: #6f8091;
+  --accent: #ffc53d;
+  --accent-ink: #1b1503;
+  --good: #4ade80;
   --bad: #ff6b6b;
+  --radius: 14px;
+  --bar-h: 52px;
+  --gap: 12px;
+  --col-left: 288px;
+  --col-right: 320px;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: dark;
 }
 
@@ -17,16 +36,173 @@
 html,
 body {
   margin: 0;
-  height: 100%;
+  min-height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+
+h1,
+h2,
+p,
+ul,
+ol,
+dl,
+dd,
+blockquote {
+  margin: 0;
+  padding: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Shared pieces --------------------------------------------------------- */
+
+/* A key cap: the one way a key is ever shown, on every screen. */
+.key {
+  display: inline-block;
+  min-width: 24px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font: 600 11px/1.7 var(--mono);
+  text-align: center;
+  white-space: nowrap;
+}
+
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--raise);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+button:hover,
+.button:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary,
+.button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+button.primary:hover,
+.button.primary:hover {
+  background: #ffd466;
+}
+
+button.primary .key,
+.button.primary .key {
+  border-color: rgba(27, 21, 3, 0.35);
+  background: rgba(27, 21, 3, 0.12);
+  color: var(--accent-ink);
+}
+
+.button.quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.button.quiet:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+
+/* The transmission switch: two buttons, one of them pressed. */
+.choice {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.choice button {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 13px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.choice button:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+
+.choice button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chip {
+  padding: 1px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* The exercise page ------------------------------------------------------ */
 
 #stage {
   position: relative;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -41,320 +217,395 @@ body {
   height: 100%;
 }
 
-/* HUD ------------------------------------------------------------------ */
+/* Top bar */
 
-.hud {
+.topbar {
   position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 260px 1fr 320px;
-  grid-template-rows: auto 1fr auto;
-  gap: 12px;
-  padding: 12px;
-  pointer-events: none;
-}
-
-.hud > section {
-  pointer-events: auto;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  backdrop-filter: blur(6px);
-}
-
-.hud h2 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.hud-steps {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  align-self: start;
-}
-
-.hud-steps ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.hud-steps li {
+  inset: 0 0 auto 0;
+  z-index: 30;
+  height: var(--bar-h);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(9, 13, 18, 0.94);
+}
+
+.topbar a {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 8px;
   color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-.hud-steps li[data-done='yes'] {
-  color: var(--good);
+.topbar a:hover {
+  color: var(--text);
+  background: var(--raise);
 }
 
-.hud-steps li[data-done='yes']::after {
-  content: '✓';
+.topbar-home {
+  border: 1px solid var(--line);
+}
+
+.topbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.topbar-number {
+  flex: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar-title strong {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-steps {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.topbar-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
 }
 
-.hud-steps .key {
-  white-space: nowrap;
-  flex: none;
+.topbar .tool {
+  padding: 6px 12px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
 }
 
-.hint {
-  min-height: 1.45em;
-  margin: 8px 0 0;
-  color: var(--accent);
-  font-size: 12px;
-}
-
-.key {
-  display: inline-block;
-  min-width: 20px;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.06);
+.topbar .tool:hover {
   color: var(--text);
-  font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-align: center;
+  background: var(--raise);
 }
 
-.hud-drive {
-  grid-column: 2;
-  grid-row: 3;
-  align-self: end;
-  display: flex;
-  gap: 20px;
-  align-items: flex-end;
+.topbar .tool[aria-pressed='true'] {
+  border-color: var(--line-strong);
+  background: var(--raise);
+  color: var(--text);
 }
 
-.pedals {
+/* A run's eleven bài: behind the car, under it, ahead of it. */
+.run-progress {
   display: flex;
-  gap: 10px;
-}
-
-.pedal {
-  display: flex;
-  flex-direction: column;
+  flex: none;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.track {
-  position: relative;
-  width: 22px;
-  height: 78px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.05);
-  overflow: hidden;
-}
-
-.track .fill {
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 0;
-  background: linear-gradient(to top, #4f9cf9, #9ad0ff);
-}
-
-.gauges {
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 6px 20px;
-  margin: 0;
-}
-
-.gauges div {
-  display: flex;
-  flex-direction: column;
-}
-
-.gauges dt {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.gauges dd {
-  margin: 0;
-  font: 600 16px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-.rpm-track {
-  height: 4px;
-  margin-top: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-}
-
-.rpm-fill {
-  height: 100%;
-  width: 0;
-  background: var(--good);
-}
-
-.rpm-fill[data-over='yes'] {
-  background: var(--bad);
-}
-
-.steer-track {
-  position: relative;
-  width: 64px;
-  height: 4px;
-  margin: 7px 0 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.steer-mark {
-  position: absolute;
-  top: -2px;
-  left: 50%;
-  width: 3px;
-  height: 8px;
-  border-radius: 1px;
-  background: var(--accent);
-  transform: translateX(-50%);
-}
-
-.hud-penalties {
-  grid-column: 3;
-  grid-row: 1 / span 3;
-  overflow: auto;
-  align-self: start;
-  max-height: calc(100vh - 24px);
-}
-
-.hud-penalties .none {
-  color: var(--muted);
-  margin: 0;
-}
-
-.hud-penalties ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
   gap: 10px;
 }
 
-.hud-penalties li {
-  border-left: 3px solid var(--bad);
-  padding-left: 8px;
-}
-
-.hud-penalties .rule {
+.run-progress ol {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 4px;
+  gap: 3px;
 }
 
-.hud-penalties code {
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--accent);
+.run-progress li {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 700;
 }
 
-.hud-penalties .points {
-  color: var(--bad);
+.run-progress li[data-state='done'] {
+  border-color: transparent;
+  background: rgba(74, 222, 128, 0.2);
+  color: var(--good);
+}
+
+.run-progress li[data-state='now'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.run-where {
+  color: var(--muted);
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.hud-penalties blockquote {
-  margin: 0;
-  color: var(--text);
-  font-size: 12px;
+/* HUD -------------------------------------------------------------------- */
+
+.hud {
+  position: absolute;
+  inset: var(--bar-h) 0 0 0;
+  display: grid;
+  grid-template-columns: var(--col-left) minmax(0, 1fr) var(--col-right);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'left card right'
+    'left free right'
+    'left dash right';
+  gap: var(--gap);
+  padding: var(--gap);
+  pointer-events: none;
+  transition: opacity 0.25s ease;
 }
 
-.hud-penalties cite {
-  display: block;
-  margin-top: 4px;
+/* Before the car is entered the page is the intro card and the scene, nothing else. */
+#stage[data-intro='yes'] .hud {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.hud section {
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.hud h2 {
   color: var(--muted);
   font-size: 11px;
-  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-.hud-penalties .audio {
-  margin: 12px 0 0;
-  color: var(--muted);
-  font-size: 11px;
+/* Left column: the checklist, and the key legend under it. */
+
+.hud-left {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
 }
 
-.hud-keys {
-  grid-column: 1;
-  grid-row: 3;
-  align-self: end;
-  max-height: 40vh;
+.hud-steps {
+  flex: none;
+  max-height: 100%;
+  padding: 12px;
   overflow: auto;
 }
 
-.hud-keys ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.hud-steps header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.hud-steps .count {
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.hud-steps ol {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  counter-reset: step;
+}
+
+.hud-steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  counter-increment: step;
+}
+
+.hud-steps li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hud-steps li .key {
+  justify-self: end;
+  opacity: 0.75;
+}
+
+.hud-steps li[data-done='yes'] {
+  color: var(--dim);
+}
+
+.hud-steps li[data-done='yes']::before {
+  content: '✓';
+  border-color: transparent;
+  background: rgba(74, 222, 128, 0.18);
+  color: var(--good);
+}
+
+.hud-steps li[data-done='yes'] .key {
+  opacity: 0.35;
+}
+
+/* A step the car has driven past without doing. */
+.hud-steps li[data-missed='yes'] {
+  color: var(--accent);
+}
+
+.hud-steps li[data-missed='yes']::before {
+  content: '!';
+  border-color: rgba(255, 197, 61, 0.6);
+  color: var(--accent);
+}
+
+/* The step to do now: the one row a glance has to find. */
+.hud-steps li[data-current='yes'] {
+  border-color: rgba(255, 197, 61, 0.45);
+  background: rgba(255, 197, 61, 0.1);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hud-steps li[data-current='yes']::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.hud-steps li[data-current='yes'] .key {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
+.hud-keys {
+  flex: 0 1 auto;
+  min-height: 72px;
+  margin-top: auto;
+  padding: 12px;
+  overflow: auto;
+}
+
+.hud-keys h2 {
+  margin-bottom: 8px;
+}
+
+.hud-keys ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .hud-keys li {
   display: flex;
-  gap: 8px;
   align-items: baseline;
+  gap: 8px;
   color: var(--muted);
 }
 
-.gl-warning {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  padding: 16px 20px;
-  border: 1px solid var(--bad);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
+.hud-keys li .key {
+  flex: none;
 }
 
-/* Bài 3: A, rollback, the 30 s clock and the next thing to do, centred at the top. */
+#stage[data-keys='closed'] .hud-keys {
+  display: none;
+}
+
+/* Top centre: what to do now, and the numbers the bài is scored on. */
 
 .hud-hill {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
+  grid-area: card;
   justify-self: center;
+  align-self: start;
+  width: min(100%, 620px);
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, auto));
-  gap: 6px 22px;
-  max-width: 560px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 18px;
+  padding: 12px 16px;
+}
+
+/* The advice line is the page talking to the learner: the largest words on the screen. */
+.hud-hill .advice {
+  grid-column: 1 / -1;
+  padding: 0 0 10px 14px;
+  border-bottom: 1px solid var(--line);
+  border-left: 0;
+  position: relative;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.hud-hill .advice::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 13px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.hud-hill .advice:empty {
+  display: none;
 }
 
 .hud-hill .cell {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 1px;
 }
 
 .hud-hill .name,
 .hud-hill small {
-  font-size: 11px;
   color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.hud-hill small {
+  color: var(--dim);
 }
 
 .hud-hill strong {
-  font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
   font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .hud-hill .cell[data-state='ok'] strong {
@@ -369,37 +620,94 @@ body {
   color: var(--bad);
 }
 
-.hud-hill .advice {
+/* Small print under the numbers: a reading of the rule, not a second instruction. */
+.hud-hill .aid-note {
   grid-column: 1 / -1;
-  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.hud-hill details.aid-note summary {
+  width: max-content;
+  cursor: pointer;
+}
+
+.hud-hill details.aid-note summary:hover {
+  color: var(--muted);
+}
+
+.hud-hill details.aid-note p {
+  margin-top: 4px;
+}
+
+/* Bài 1: the checklist's next step, said large. */
+.hud-next {
+  grid-template-columns: 1fr;
+  width: auto;
+  max-width: min(100%, 620px);
+}
+
+.hud-next .next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.hud-next .next-name {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-next .next-label {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.hud-next .key {
+  padding: 2px 10px;
+  border-color: var(--accent);
   color: var(--accent);
   font-size: 13px;
 }
 
-/* Bài 5's note on the two readings of A: small print under the advice, not a second instruction. */
-.hud-hill .aid-note {
-  grid-column: 1 / -1;
-  margin: 2px 0 0;
-  color: var(--muted, #9aa0a6);
-  font-size: 11px;
-  line-height: 1.35;
+.hud-next .key:empty {
+  display: none;
+}
+
+.hud-next .next[data-state='clear'] .next-name {
+  display: none;
+}
+
+.hud-next .next[data-state='clear'] .next-label {
+  color: var(--good);
 }
 
 /* The link between bài 6 and bài 7: a hazard lamp across the card and the advice line. */
 .hud-link {
   grid-template-columns: 1fr;
-  max-width: 560px;
 }
 
 .hud-link .hazard-lamp {
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 6px 10px;
+  padding: 7px 12px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 9px;
   color: var(--muted);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.hud-link .advice {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.hud-link .advice::before {
+  bottom: 3px;
 }
 
 .hud-link .hazard-lamp[data-state='on'] {
@@ -411,13 +719,13 @@ body {
 
 .hud-link .hazard-lamp[data-state='ended'] {
   border-color: var(--accent);
-  background: rgba(240, 196, 25, 0.16);
+  background: rgba(255, 197, 61, 0.16);
   color: var(--text);
 }
 
 .hud-link .hazard-lamp[data-state='over'] {
   border-color: var(--good);
-  background: rgba(95, 209, 138, 0.14);
+  background: rgba(74, 222, 128, 0.14);
   color: var(--text);
 }
 
@@ -427,274 +735,116 @@ body {
   }
 }
 
-/* The transmission switch: above the overlay, because it is chosen before the car is entered. */
+/* The stop aid: a bar that shrinks toward the mark where the critical key should land. A track, a
+   fill and a mark, because it is something to time against, not a chart. The fill's edge reaches
+   the mark exactly as the countdown reaches zero. */
 
-.choice {
-  position: absolute;
-  left: 50%;
-  top: 12px;
-  transform: translateX(-50%);
-  z-index: 20;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
-  backdrop-filter: blur(6px);
-}
-
-.choice button {
-  border: 0;
-  border-radius: 999px;
-  padding: 5px 14px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.choice button[aria-pressed='true'] {
-  background: var(--accent);
-  color: #14181d;
-}
-
-/* Overlays ------------------------------------------------------------- */
-
-.overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  background: rgba(8, 12, 16, 0.72);
-  text-align: center;
-  padding: 24px;
-}
-
-.overlay h1 {
-  margin: 0;
-  font-size: 26px;
-}
-
-.overlay p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.overlay ul {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.overlay li {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-}
-
-.overlay button {
-  margin-top: 12px;
-  padding: 8px 18px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #1c2630;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.overlay.result {
-  inset: auto;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  max-width: 340px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-}
-
-.overlay.result h1 {
-  color: var(--good);
-}
-
-.overlay.result[data-bad='yes'] h1 {
-  color: var(--bad);
-}
-
-/* The liên hoàn result: every fault with its quote needs more room than the per-bài card. */
-.overlay.result.lien-hoan {
-  max-width: min(680px, 92vw);
-  max-height: 88vh;
-  overflow-y: auto;
-  text-align: left;
-}
-
-.overlay.result.lien-hoan h1 {
-  text-align: center;
-}
-
-.overlay.result.lien-hoan .result-line,
-.overlay.result.lien-hoan .result-clock,
-.overlay.result.lien-hoan .result-hint {
-  text-align: center;
-  width: 100%;
-}
-
-.overlay.result.lien-hoan .result-quote {
-  margin: 0;
-  padding: 6px 10px;
-  border-left: 2px solid var(--accent);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.overlay.result.lien-hoan .result-faults {
-  width: 100%;
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
-}
-
-.overlay.result.lien-hoan .result-faults h2 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-
-.overlay.result.lien-hoan .result-faults ul {
-  max-height: 34vh;
-  overflow-y: auto;
-  margin: 0;
-  padding: 0;
-}
-
-.overlay.result.lien-hoan .result-faults li {
-  display: block;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.overlay.result.lien-hoan .result-faults .rule {
-  color: var(--text);
-}
-
-.overlay.result.lien-hoan .result-faults .points {
-  margin-left: 8px;
-  color: var(--bad);
-  font-weight: 600;
-}
-
-.overlay.result.lien-hoan .result-faults blockquote {
-  margin: 4px 0;
-  padding-left: 8px;
-  border-left: 2px solid var(--line);
-  font-size: 12px;
-}
-
-.overlay.result.lien-hoan .result-faults cite {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.overlay.result.lien-hoan .result-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  width: 100%;
-}
-
-.overlay.result.lien-hoan .replay-result {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: rgba(95, 209, 138, 0.12);
-  color: var(--text);
-}
-
-.overlay.result.lien-hoan .replay-result[data-replay-match='no'] {
-  background: rgba(255, 107, 107, 0.14);
-}
-
-.notice {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(240, 196, 25, 0.16);
-  border: 1px solid var(--accent);
-  color: var(--text);
-  font-size: 12px;
-  max-width: 60ch;
-}
-
-@media (max-width: 1100px) {
-  .hud {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr auto;
-  }
-  .hud-steps,
-  .hud-hill,
-  .hud-drive,
-  .hud-penalties,
-  .hud-keys {
-    grid-column: 1;
-    grid-row: auto;
-    max-height: 30vh;
-  }
-}
-
-/* Bài 4 / bài 6: the top-down inset. It is a grid cell of its own: the free middle row (the 3D view),
-   right-aligned and top-aligned so the car, which the camera keeps low in the middle, stays clear. The advice line is row 1,
-   the pedal bars row 3, the checklist and key legend column 1, the penalty panel column 3, so no other
-   panel can share its cell at any window size. */
-
-.hud-inset {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  align-self: start;
-  width: min(190px, 28vh);
+.hud-hill .aid {
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.aid-track {
+  position: relative;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.aid-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: linear-gradient(to right, rgba(74, 222, 128, 0.35), var(--good));
+}
+
+.aid-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--accent);
+  transform: translateX(-1px);
+}
+
+.aid[data-state='now'] .aid-fill {
+  background: linear-gradient(to right, rgba(255, 197, 61, 0.45), var(--accent));
+}
+
+.aid[data-state='now'] .aid-mark {
+  background: var(--text);
+}
+
+.aid[data-state='idle'] {
+  opacity: 0.35;
+}
+
+.aid-now {
+  display: flex;
+  gap: 8px;
+  min-height: 1.5em;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.aid-key {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.aid[data-state='now'] .aid-now {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.aid[data-state='now'] .aid-key {
+  color: var(--accent);
+}
+
+/* The free middle: the top-down inset on the right, the newest fault at the top, and the reason a
+   key did nothing just above the pedals. They share one grid cell and keep to their own corners. */
+
+.hud-inset {
+  grid-area: free;
+  justify-self: end;
+  align-self: start;
+  width: min(232px, 32vh);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-height: 0;
+  padding: 10px;
 }
 
 .hud-inset canvas {
+  display: block;
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #2b2f35;
-  display: block;
 }
 
 .hud-inset .legend {
-  white-space: nowrap;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 3px;
-  margin: 0;
-  font-size: 10px;
+  gap: 2px 4px;
   color: var(--muted);
+  font-size: 10px;
 }
 
 .hud-inset .legend span {
+  display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  display: inline-block;
   margin-left: 4px;
+  border-radius: 50%;
 }
 
 .hud-inset .legend span[data-wheel='clear'] {
@@ -709,82 +859,1190 @@ body {
   background: #ff5d5d;
 }
 
-@media (max-width: 1100px) {
-  .hud-inset {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: stretch;
-    width: auto;
+.hud-inset .legend span[data-wheel='bay'] {
+  border-radius: 2px;
+  background: #5fd18a;
+}
+
+.fault-toast {
+  grid-area: free;
+  justify-self: center;
+  align-self: start;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: min(100%, 520px);
+  padding: 9px 14px;
+  border: 1px solid var(--bad);
+  border-radius: 12px;
+  background: rgba(86, 20, 24, 0.95);
+  box-shadow: var(--shadow);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+  animation: fault-toast 5s ease forwards;
+}
+
+.fault-toast strong {
+  flex: none;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+@keyframes fault-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
   }
-  .hud-inset canvas {
-    max-height: 22vh;
+  6%,
+  82% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
   }
 }
 
-/* The stop aid: a bar that shrinks toward the mark where the critical key should land. Same
-   vocabulary as the gauges — a track, a fill and a mark — because it is something to time against,
-   not a chart. The fill's edge reaches the mark exactly as the countdown reaches zero. */
+.hint {
+  grid-area: free;
+  justify-self: center;
+  align-self: end;
+  max-width: 100%;
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: rgba(52, 40, 6, 0.95);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
 
-.hud-hill .aid {
-  grid-column: 1 / -1;
+.hint[data-on='no'] {
+  visibility: hidden;
+}
+
+/* Bottom centre: the dashboard. */
+
+.hud-drive {
+  grid-area: dash;
+  justify-self: center;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-top: 4px;
+  gap: 10px;
+  max-width: 100%;
+  padding: 10px 16px 12px;
 }
 
-.aid-track {
-  position: relative;
-  height: 10px;
+.lamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lamp {
+  padding: 2px 10px;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 999px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.lamp[data-on='yes'] {
+  border-color: rgba(74, 222, 128, 0.5);
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--good);
+}
+
+/* A handbrake that is on is a warning lamp, as on a real dashboard. */
+.lamp[data-lamp='handbrake'][data-on='yes'],
+.lamp[data-lamp='hazard'][data-on='yes'] {
+  border-color: rgba(255, 107, 107, 0.6);
+  background: rgba(255, 107, 107, 0.18);
+  color: var(--bad);
+}
+
+.lamp[data-lamp='left'][data-on='yes'],
+.lamp[data-lamp='right'][data-on='yes'],
+.lamp[data-lamp='hazard'][data-on='yes'] {
+  animation: lamp-blink 0.8s steps(2, start) infinite;
+}
+
+@keyframes lamp-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.dash {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+}
+
+.pedals {
+  display: flex;
+  gap: 10px;
+}
+
+.pedal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.track {
+  position: relative;
+  width: 26px;
+  height: 64px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
   background: rgba(255, 255, 255, 0.05);
   overflow: hidden;
 }
 
-.aid-fill {
+.track .fill {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 0;
-  background: linear-gradient(to right, rgba(95, 209, 138, 0.35), var(--good));
+  inset: auto 0 0 0;
+  height: 0;
+  background: linear-gradient(to top, #4f9cf9, #9ad0ff);
 }
 
-.aid-mark {
-  position: absolute;
-  top: -2px;
-  left: 0;
-  width: 2px;
-  height: 14px;
-  border-radius: 1px;
-  background: var(--accent);
-  transform: translateX(-1px);
+.track .fill[data-pedal='brake'] {
+  background: linear-gradient(to top, #e5484d, #ff9aa0);
 }
 
-.aid[data-state='now'] .aid-fill {
-  background: linear-gradient(to right, rgba(240, 196, 25, 0.45), var(--accent));
+.track .fill[data-pedal='throttle'] {
+  background: linear-gradient(to top, #30a46c, #8be3b3);
 }
 
-.aid[data-state='now'] .aid-mark {
-  background: var(--text);
-}
-
-.aid[data-state='idle'] {
-  opacity: 0.35;
-}
-
-.aid-now {
+.dial {
   display: flex;
-  gap: 8px;
-  margin: 0;
-  font-size: 11px;
-  color: var(--muted);
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 64px;
 }
 
-.aid-key {
-  color: var(--text);
+.dial strong {
+  font-size: 34px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dial small {
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 600;
 }
 
-.aid[data-state='now'] .aid-in {
+.dial[data-dial='gear'] {
+  min-width: 0;
+}
+
+.dial[data-dial='gear'] strong {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 26px;
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px 20px;
+}
+
+.gauges > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 84px;
+}
+
+.gauges dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.gauges dd {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.rpm-track {
+  height: 4px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.rpm-fill {
+  width: 0;
+  height: 100%;
+  background: var(--good);
+}
+
+.rpm-fill[data-over='yes'] {
+  background: var(--bad);
+}
+
+.steer-track {
+  position: relative;
+  height: 4px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.steer-track::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 1px;
+  height: 8px;
+  background: var(--line-strong);
+}
+
+.steer-mark {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 4px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateX(-50%);
+}
+
+/* Right column: the score, then every fault with its rule. */
+
+.hud-penalties {
+  grid-area: right;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.scorebox {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.scorebox .score {
+  color: var(--good);
+  font-size: 40px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.scorebox .score[data-state='cut'] {
   color: var(--accent);
+}
+
+.scorebox .score[data-state='out'] {
+  color: var(--bad);
+  font-size: 26px;
+}
+
+.scorebox .score[data-state='out'] + .score-of {
+  display: none;
+}
+
+.scorebox .score-of,
+.scorebox .run-clock {
+  display: flex;
+  flex-direction: column;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.scorebox small {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.scorebox .run-clock {
+  margin-left: auto;
+  align-items: flex-end;
+  color: var(--text);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.hud-penalties h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-penalties h2 .count {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #2a0709;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.hud-penalties .none {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.hud-penalties ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hud-penalties li {
+  padding: 8px 10px;
+  border-left: 3px solid var(--bad);
+  border-radius: 4px 9px 9px 4px;
+  background: rgba(255, 107, 107, 0.08);
+  animation: fault-in 0.5s ease;
+}
+
+@keyframes fault-in {
+  from {
+    background: rgba(255, 107, 107, 0.4);
+  }
+}
+
+.hud-penalties .rule {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.hud-penalties .points {
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.hud-penalties code {
+  overflow: hidden;
+  color: var(--dim);
+  font: 10px/1.5 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-penalties blockquote {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hud-penalties cite {
+  display: block;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.hud-penalties .audio {
+  margin-top: auto;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.gl-warning {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 16px 20px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: var(--panel-solid);
+  color: var(--text);
+}
+
+/* Overlays: the way in and the result ------------------------------------ */
+
+.overlay {
+  position: absolute;
+  inset: var(--bar-h) 0 0 0;
+  z-index: 20;
+  /* Flex with an auto margin on the card, not centring: a card taller than the window then scrolls
+     from its top instead of being cut off above it. */
+  display: flex;
+  padding: 20px;
+  overflow: auto;
+  background: rgba(6, 9, 13, 0.6);
+}
+
+.overlay .card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: auto;
+  width: min(560px, 100%);
+  padding: 24px 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--panel-solid);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.overlay h1 {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.overlay h2 {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overlay .lead {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.overlay .note,
+.overlay .chain-note {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.overlay .chain-note {
+  padding: 8px 12px;
+  border-left: 3px solid var(--line-strong);
+  border-radius: 0 8px 8px 0;
+  background: var(--raise);
+  color: var(--muted);
+}
+
+.overlay .keylist {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.overlay .keylist li {
+  display: contents;
+}
+
+.overlay .keylist .key {
+  justify-self: start;
+}
+
+.overlay .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.overlay .actions .primary {
+  padding: 11px 22px;
+  font-size: 15px;
+}
+
+.overlay .actions .or {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+/* The result of one bài. */
+
+.overlay.result h1 {
+  color: var(--good);
+  font-size: 30px;
+}
+
+.overlay.result[data-bad='yes'] h1,
+.overlay.result.lien-hoan:not([data-verdict='passed']) h1 {
+  color: var(--bad);
+}
+
+.overlay.result .eyebrow {
+  color: var(--muted);
+}
+
+.overlay .faults {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.overlay .faults li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-left: 3px solid var(--bad);
+  border-radius: 4px 9px 9px 4px;
+  background: rgba(255, 107, 107, 0.08);
+  font-size: 12px;
+}
+
+.overlay .faults .minus {
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* The liên hoàn result: every fault with its quote needs more room than the per-bài card. */
+
+.overlay.result.lien-hoan .card {
+  width: min(680px, 100%);
+}
+
+.lien-hoan .result-line,
+.lien-hoan .result-clock {
+  color: var(--muted);
+}
+
+.lien-hoan .result-line strong,
+.lien-hoan .result-clock strong {
+  color: var(--text);
+}
+
+.lien-hoan .result-quote {
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lien-hoan .result-faults {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.lien-hoan .result-faults h2 {
+  margin: 0 0 8px;
+}
+
+.lien-hoan .result-faults ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.lien-hoan .result-faults li {
+  padding: 8px 10px;
+  border-left: 3px solid var(--bad);
+  border-radius: 4px 9px 9px 4px;
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.lien-hoan .result-faults .rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+
+.lien-hoan .result-faults .points {
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.lien-hoan .result-faults .where {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lien-hoan .result-faults code {
+  margin-left: auto;
+  color: var(--dim);
+  font: 10px/1.5 var(--mono);
+}
+
+.lien-hoan .result-faults blockquote {
+  font-size: 12px;
+}
+
+.lien-hoan .result-faults cite {
+  color: var(--dim);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.lien-hoan .replay-result {
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(74, 222, 128, 0.12);
+  font-size: 13px;
+}
+
+.lien-hoan .replay-result[data-replay-match='no'] {
+  background: rgba(255, 107, 107, 0.14);
+}
+
+.lien-hoan .replay-result code {
+  font: 12px/1.5 var(--mono);
+}
+
+.notice {
+  position: absolute;
+  left: 50%;
+  bottom: var(--gap);
+  z-index: 25;
+  max-width: min(60ch, calc(100% - 24px));
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: rgba(52, 40, 6, 0.95);
+  color: var(--text);
+  font-size: 13px;
+  transform: translateX(-50%);
+}
+
+.notice.replay {
+  top: calc(var(--bar-h) + var(--gap));
+  bottom: auto;
+}
+
+.notice.boot {
+  border-color: var(--bad);
+  border-radius: 12px;
+  background: rgba(86, 20, 24, 0.95);
+}
+
+/* Narrower windows ------------------------------------------------------- */
+
+/* Below 1200 px the side columns slim down, the dashboard takes the whole bottom row, and the key
+   legend is closed until the learner opens it (the same number as WIDE_QUERY in Stage.tsx). */
+@media (max-width: 1199px) {
+  :root {
+    --col-left: 236px;
+    --col-right: 248px;
+    --gap: 10px;
+  }
+
+  .hud {
+    grid-template-areas:
+      'left card right'
+      'left free right'
+      'dash dash dash';
+  }
+
+  #stage[data-keys='auto'] .hud-keys {
+    display: none;
+  }
+
+  .topbar-title strong {
+    font-size: 15px;
+  }
+
+  .hud-hill strong {
+    font-size: 19px;
+  }
+
+  .hud-hill .advice {
+    font-size: 15px;
+  }
+
+  .scorebox .score {
+    font-size: 34px;
+  }
+}
+
+@media (max-width: 1040px) {
+  .topbar-steps {
+    display: none;
+  }
+
+  .run-progress ol {
+    display: none;
+  }
+}
+
+/* A small window: one column. The checklist shows only the step to do now, the fault panel only the
+   score and the count, and the scene keeps the middle. */
+@media (max-width: 820px) {
+  :root {
+    --bar-h: 46px;
+    --gap: 8px;
+  }
+
+  .hud {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'card card'
+      'left right'
+      'free free'
+      'dash dash';
+  }
+
+  .hud-left {
+    align-self: start;
+    justify-self: start;
+    max-width: 100%;
+  }
+
+  .hud-steps {
+    padding: 6px 8px;
+  }
+
+  .hud-steps header {
+    display: none;
+  }
+
+  .hud-steps li:not([data-current='yes']) {
+    display: none;
+  }
+
+  .hud-steps li[data-current='yes'] {
+    border-color: transparent;
+    background: transparent;
+    padding: 0;
+  }
+
+  /* Bài 1's card already is the step to do now. */
+  .hud[data-card='next'] .hud-steps {
+    display: none;
+  }
+
+  #stage[data-keys='open'] .hud-keys {
+    max-height: 34vh;
+  }
+
+  .hud-penalties {
+    padding: 6px 10px;
+  }
+
+  .hud-penalties > :not(.scorebox) {
+    display: none;
+  }
+
+  .scorebox {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .scorebox .score {
+    font-size: 24px;
+  }
+
+  .hud-hill {
+    padding: 8px 12px;
+    gap: 4px 12px;
+  }
+
+  .hud-hill .advice {
+    padding-bottom: 6px;
+    font-size: 14px;
+  }
+
+  .hud-hill small,
+  .hud-hill .aid-note {
+    display: none;
+  }
+
+  .hud-hill strong {
+    font-size: 16px;
+  }
+
+  .hud-inset {
+    width: min(150px, 30vh);
+    padding: 6px;
+  }
+
+  .hud-inset h2,
+  .hud-inset .legend {
+    display: none;
+  }
+
+  .hud-drive {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .dash {
+    gap: 14px;
+  }
+
+  .track {
+    height: 40px;
+  }
+
+  .dial strong {
+    font-size: 26px;
+  }
+
+  .gauges {
+    display: none;
+  }
+
+  .topbar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .topbar-title strong,
+  .topbar .tool[data-tool='restart'] .key {
+    display: none;
+  }
+
+  .choice button {
+    padding: 4px 9px;
+    font-size: 12px;
+  }
+
+  .overlay {
+    padding: 10px;
+  }
+
+  .overlay .card {
+    padding: 16px 18px;
+    gap: 8px;
+  }
+
+  .overlay h1,
+  .overlay.result h1 {
+    font-size: 22px;
+  }
+}
+
+/* A short window: the same panels, with less air. */
+@media (max-height: 680px) {
+  .hud-steps li {
+    padding: 3px 8px;
+  }
+
+  .hud-hill .aid-note {
+    display: none;
+  }
+
+  .track {
+    height: 44px;
+  }
+
+  .hud-drive {
+    gap: 6px;
+    padding: 8px 14px;
+  }
+}
+
+/* The home page ----------------------------------------------------------- */
+
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px 24px 56px;
+}
+
+.home-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+/* The learner's plate: a white L on blue. */
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #2f6fed;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 44px 36px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    radial-gradient(900px 320px at 85% -10%, rgba(255, 197, 61, 0.16), transparent 60%),
+    linear-gradient(180deg, #131c26, #0e141b);
+}
+
+.hero h1 {
+  max-width: 18ch;
+  font-size: clamp(30px, 5vw, 46px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+.hero .lead {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.hero .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.hero .button {
+  padding: 12px 20px;
+  font-size: 15px;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.facts strong {
+  margin-right: 4px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.home-section h2 {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.section-lead {
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+
+.lesson-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 12px;
+}
+
+.lesson-card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  height: 100%;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+.lesson-card:hover {
+  border-color: var(--accent);
+  background: #17212c;
+  transform: translateY(-2px);
+}
+
+.lesson-number {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 197, 61, 0.14);
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.lesson-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.lesson-text strong {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.lesson-text span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lesson-go {
+  color: var(--dim);
+  font-size: 22px;
+}
+
+.lesson-card:hover .lesson-go {
+  color: var(--accent);
+}
+
+.lesson-card.featured {
+  border-color: rgba(255, 197, 61, 0.5);
+  background: linear-gradient(135deg, rgba(255, 197, 61, 0.14), rgba(255, 197, 61, 0.03)), var(--panel-solid);
+}
+
+.lesson-card.featured .lesson-number {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.howto {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.howto li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+}
+
+.howto .keys {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.howto .key {
+  padding: 3px 9px;
+  font-size: 13px;
+}
+
+.howto li > span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.need {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.home-foot {
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .home {
+    gap: 32px;
+    padding: 14px 16px 40px;
+  }
+
+  .hero {
+    padding: 28px 20px;
+  }
+
+  .lesson-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Reduced motion: nothing blinks or slides. The fault toast keeps its fade, which is how it leaves. */
+@media (prefers-reduced-motion: reduce) {
+  .hud,
+  .lesson-card {
+    transition: none;
+  }
+
+  .lesson-card:hover {
+    transform: none;
+  }
+
+  .lamp,
+  .hud-link .hazard-lamp,
+  .hud-penalties li {
+    animation: none !important;
+  }
 }
